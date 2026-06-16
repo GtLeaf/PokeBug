@@ -28,9 +28,7 @@ void MenuScene::render() {
     PixelRenderer::fillRect(0, 0, 240, 135, PixelRenderer::rgb565(0, 0, 0));
 
     drawBattery();
-    drawCarousel();
-
-    PixelRenderer::drawPixelText(50, 110, "B:next  A:ok  long:back", PixelRenderer::WHITE, 1);
+    drawList();
 }
 
 void MenuScene::drawBattery() {
@@ -46,28 +44,33 @@ void MenuScene::drawBattery() {
     PixelRenderer::drawPixelText(190, 6, buf, color, 1);
 }
 
-void MenuScene::drawCarousel() {
-    const char* labels[ITEM_COUNT] = { "Feed", "Wood", "Fight", "Set", "Info" };
-    static constexpr int CENTER_X = 120;
-    static constexpr int CENTER_Y = 60;
-    static constexpr int SPACING = 55;
+void MenuScene::drawList() {
+    const char* descs[ITEM_COUNT] = {
+        "Feed",
+        "Wood",
+        "Fight",
+        "Settings",
+        "Info",
+        "Back",
+    };
 
-    // 让 animSelected 直接追上 selected，产生横向滚动补帧动画
+    static constexpr int CENTER_Y = Hal::DISPLAY_H / 2;
+    static constexpr int SPACING = 42;
+    static constexpr float LERP = 0.25f;
+
+    float fs = PixelRenderer::getContentFontScale();
+    LGFX_Sprite& canvas = Hal::ins().canvas();
+
+    // 让 animSelected 平滑追上 selected
     float target = (float)selected;
     float diff = target - animSelected;
-
-    float absDiff = fabsf(diff);
-    float speed = 0.35f;
-    if (absDiff > 2.0f) speed = 0.85f;
-    else if (absDiff > 1.0f) speed = 0.6f;
-
-    if (absDiff < 0.05f) {
+    if (fabsf(diff) < 0.05f) {
         animSelected = target;
     } else {
-        animSelected += diff * speed;
+        animSelected += diff * LERP;
     }
 
-    // 按距离中心远近排序绘制索引，确保选中项最后画在最上层
+    // 按距离中心远近排序，确保选中项最后画
     int order[ITEM_COUNT];
     for (int i = 0; i < ITEM_COUNT; i++) order[i] = i;
     for (int i = 0; i < ITEM_COUNT - 1; i++) {
@@ -80,24 +83,33 @@ void MenuScene::drawCarousel() {
         }
     }
 
+    static constexpr int BOX_W = 56;
+    static constexpr int BOX_H = 32;
+    int boxX = (int)(10 * fs);
+
     for (int k = 0; k < ITEM_COUNT; k++) {
         int i = order[k];
         float rawOffset = (float)i - animSelected;
+        int y = CENTER_Y + (int)(rawOffset * SPACING);
 
-        int x = (int)(CENTER_X + rawOffset * SPACING);
-        float dist = fabsf(rawOffset);
-        float scale = 1.0f + 0.2f * (dist < 1.0f ? (1.0f - dist) : 0.0f);
-        uint16_t boxColor = (dist < 0.5f) ? PixelRenderer::YELLOW : PixelRenderer::GRAY;
-        uint16_t textColor = PixelRenderer::BLACK;
+        bool isSelected = (fabsf(rawOffset) < 0.5f);
+        float relScale = isSelected ? 1.15f : 1.0f;
+        uint16_t boxColor = isSelected ? PixelRenderer::YELLOW : PixelRenderer::GRAY;
+        uint16_t descColor = isSelected ? PixelRenderer::WHITE : PixelRenderer::GRAY;
 
-        int boxW = (int)(44 * scale);
-        int boxH = (int)(36 * scale);
-        PixelRenderer::fillRect(x - boxW / 2, CENTER_Y - boxH / 2, boxW, boxH, boxColor);
+        // 左侧统一尺寸的 item 色块，选中时以左上角为锚点放大 1.15x
+        int drawBoxW = (int)(BOX_W * relScale);
+        int drawBoxH = (int)(BOX_H * relScale);
+        PixelRenderer::fillRect(boxX, y - drawBoxH / 2, drawBoxW, drawBoxH, boxColor);
 
-        LGFX_Sprite& canvas = Hal::ins().canvas();
-        canvas.setTextSize(scale);
-        int textW = canvas.textWidth(labels[i]);
-        PixelRenderer::drawPixelText(x - textW / 2, CENTER_Y - 4, labels[i], textColor, scale);
+        // 右侧说明文字，与色块垂直中心对齐；未选中时半透明（灰色）
+        canvas.setFont(&fonts::Font0);
+        canvas.setTextColor(descColor);
+        canvas.setTextSize(fs);
+        int descX = (boxX + drawBoxW + (int)(10 * fs) + Hal::DISPLAY_W) / 2;
+        canvas.setTextDatum(MC_DATUM);  // 以文字中心为对齐点
+        canvas.drawString(descs[i], descX, y);
+        canvas.setTextDatum(TL_DATUM);  // 恢复左上角对齐
     }
 }
 
@@ -109,7 +121,7 @@ bool MenuScene::onButton(const ButtonEvent& ev) {
 
     if (ev.action == BtnAction::PRESSED) {
         if (ev.btn == 1) {
-            // B：下一个（循环），从末尾回到首位时直接跳变
+            // B：下一个（循环），从末尾跳回首项时直接跳变
             selected++;
             if (selected >= ITEM_COUNT) {
                 selected = 0;
@@ -150,6 +162,9 @@ void MenuScene::executeSelection() {
             break;
         case INFO:
             nextScene = SCENE_INFO;
+            break;
+        case BACK:
+            nextScene = SCENE_TERRARIUM;
             break;
     }
 }

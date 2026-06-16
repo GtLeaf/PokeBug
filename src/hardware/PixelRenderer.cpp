@@ -6,6 +6,9 @@ float PixelRenderer::contentFontScale = 1.0f;
 
 void PixelRenderer::bind(LGFX_Sprite* c) {
     canvas = c;
+    if (canvas) {
+        canvas->setFont(&fonts::Font0);
+    }
 }
 
 void PixelRenderer::setContentFontScale(float scale) {

@@ -1,7 +1,7 @@
 #pragma once
 #include "../core/Scene.h"
 
-// 图标菜单场景（横向循环滚动轮盘）
+// 图标菜单场景（纵向列表，选中项居中）
 class MenuScene : public Scene {
 public:
     MenuScene() = default;
@@ -14,12 +14,12 @@ public:
 
 private:
     int selected = 0;
-    float animSelected = 0.0f;  // 用于横向滚动补帧动画
+    float animSelected = 0.0f;  // 纵向滚动动画位置
     static int lastSelected;
-    static constexpr int ITEM_COUNT = 5;
+    static constexpr int ITEM_COUNT = 6;
 
     void drawBattery();
-    void drawCarousel();
+    void drawList();
     void executeSelection();
 
     enum MenuItem {
@@ -28,5 +28,6 @@ private:
         FIGHT,
         SETTINGS,
         INFO,
+        BACK,
     };
 };
