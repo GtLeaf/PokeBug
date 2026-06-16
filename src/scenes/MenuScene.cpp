@@ -51,14 +51,14 @@ void MenuScene::drawCarousel() {
     static constexpr int CENTER_X = 120;
     static constexpr int CENTER_Y = 60;
     static constexpr int SPACING = 55;
+
     // 让 animSelected 直接追上 selected，产生横向滚动补帧动画
-    // 差值大时提高追及速度，避免快速连按时出现明显延迟
     float target = (float)selected;
     float diff = target - animSelected;
 
     float absDiff = fabsf(diff);
-    float speed = 0.35f;            // 单步切换的基础速度
-    if (absDiff > 2.0f) speed = 0.85f;  // 跨越多项时快速追及
+    float speed = 0.35f;
+    if (absDiff > 2.0f) speed = 0.85f;
     else if (absDiff > 1.0f) speed = 0.6f;
 
     if (absDiff < 0.05f) {

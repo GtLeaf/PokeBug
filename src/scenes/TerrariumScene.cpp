@@ -180,6 +180,7 @@ void TerrariumScene::drawWood() {
 
 void TerrariumScene::drawStatusBar() {
     Bug& bug = GameEngine::ins().getBug();
+    float fs = PixelRenderer::getContentFontScale();
 
     // 右侧状态栏背景
     PixelRenderer::fillRect(200, 0, 40, 135, PixelRenderer::BLACK);
@@ -192,10 +193,10 @@ void TerrariumScene::drawStatusBar() {
         case Stage::PUPA: stageName = "P"; break;
         case Stage::ADULT: stageName = "A"; break;
     }
-    PixelRenderer::drawPixelText(208, 4, stageName, PixelRenderer::WHITE, 2);
+    PixelRenderer::drawPixelText(208, 4, stageName, PixelRenderer::WHITE, 2 * fs);
 
     // 饥饿条
-    PixelRenderer::drawPixelText(204, 30, "HUN", PixelRenderer::WHITE, 1);
+    PixelRenderer::drawPixelText(204, 30, "HUN", PixelRenderer::WHITE);
     uint16_t hungerColor = bug.getHunger() > 50 ? PixelRenderer::GREEN :
                            (bug.getHunger() > 20 ? PixelRenderer::YELLOW : PixelRenderer::RED);
     PixelRenderer::drawProgressBar(204, 42, 32, 6, bug.getHunger() / 100.0f, hungerColor, PixelRenderer::GRAY);
@@ -203,14 +204,15 @@ void TerrariumScene::drawStatusBar() {
     // 背包
     char buf[16];
     snprintf(buf, sizeof(buf), "S:%d", bug.getSap());
-    PixelRenderer::drawPixelText(204, 56, buf, PixelRenderer::WHITE, 1);
+    PixelRenderer::drawPixelText(204, 56, buf, PixelRenderer::WHITE);
     snprintf(buf, sizeof(buf), "W:%d", bug.getRottenWood());
-    PixelRenderer::drawPixelText(204, 68, buf, PixelRenderer::WHITE, 1);
+    PixelRenderer::drawPixelText(204, 68, buf, PixelRenderer::WHITE);
 }
 
 void TerrariumScene::drawDeathScreen() {
+    float fs = PixelRenderer::getContentFontScale();
     PixelRenderer::fillRect(40, 40, 160, 55, PixelRenderer::BLACK);
     PixelRenderer::fillRect(45, 45, 150, 45, PixelRenderer::RED);
-    PixelRenderer::drawPixelText(55, 55, "DIED", PixelRenderer::WHITE, 3);
-    PixelRenderer::drawPixelText(55, 80, "Hold A+B 3s", PixelRenderer::WHITE, 1);
+    PixelRenderer::drawPixelText(55, 55, "DIED", PixelRenderer::WHITE, 3 * fs);
+    PixelRenderer::drawPixelText(55, 80, "Hold A+B 3s", PixelRenderer::WHITE);
 }

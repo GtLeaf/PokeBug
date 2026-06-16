@@ -320,14 +320,15 @@ void BattleScene::render() {
 }
 
 void BattleScene::drawConnecting() {
+    float fs = PixelRenderer::getContentFontScale();
     PixelRenderer::fillRect(0, 0, 240, 135, PixelRenderer::BLACK);
-    PixelRenderer::drawPixelText(50, 50, "Searching...", PixelRenderer::WHITE, 2);
+    PixelRenderer::drawPixelText(50, 50, "Searching...", PixelRenderer::WHITE, 2 * fs);
 
     uint32_t elapsed = Hal::ins().millis() - stateStartMs;
     int dots = (elapsed / 500) % 4;
     char buf[8];
     snprintf(buf, sizeof(buf), "%. *s", dots, "...");
-    PixelRenderer::drawPixelText(100, 80, buf, PixelRenderer::WHITE, 1);
+    PixelRenderer::drawPixelText(100, 80, buf, PixelRenderer::WHITE);
 }
 
 void BattleScene::drawBattleField() {
@@ -336,22 +337,22 @@ void BattleScene::drawBattleField() {
     // 标题
     char buf[32];
     snprintf(buf, sizeof(buf), "ROUND %d/3", roundNum);
-    PixelRenderer::drawPixelText(90, 5, buf, PixelRenderer::WHITE, 1);
+    PixelRenderer::drawPixelText(90, 5, buf, PixelRenderer::WHITE);
 
     // 我方（左侧）
     PixelRenderer::fillRect(30, 35, 30, 20, me.palette == 0 ? PixelRenderer::BROWN : PixelRenderer::CREAM);
     snprintf(buf, sizeof(buf), "HP:%d/%d", me.hp, me.maxHp);
-    PixelRenderer::drawPixelText(10, 60, buf, PixelRenderer::WHITE, 1);
+    PixelRenderer::drawPixelText(10, 60, buf, PixelRenderer::WHITE);
     PixelRenderer::drawProgressBar(10, 72, 80, 6, (float)me.hp / me.maxHp,
                                    me.hp > me.maxHp / 2 ? PixelRenderer::GREEN : PixelRenderer::RED,
                                    PixelRenderer::GRAY);
     snprintf(buf, sizeof(buf), "MOT:%d", me.mot);
-    PixelRenderer::drawPixelText(10, 82, buf, PixelRenderer::WHITE, 1);
+    PixelRenderer::drawPixelText(10, 82, buf, PixelRenderer::WHITE);
 
     // 敌方（右侧）
     PixelRenderer::fillRect(180, 35, 30, 20, enemy.palette == 0 ? PixelRenderer::BROWN : PixelRenderer::CREAM);
     snprintf(buf, sizeof(buf), "HP:%d/%d", enemy.hp, enemy.maxHp);
-    PixelRenderer::drawPixelText(150, 60, buf, PixelRenderer::WHITE, 1);
+    PixelRenderer::drawPixelText(150, 60, buf, PixelRenderer::WHITE);
     PixelRenderer::drawProgressBar(150, 72, 80, 6, (float)enemy.hp / enemy.maxHp,
                                    enemy.hp > enemy.maxHp / 2 ? PixelRenderer::GREEN : PixelRenderer::RED,
                                    PixelRenderer::GRAY);
@@ -365,7 +366,7 @@ void BattleScene::drawBattleField() {
         case State::ROUND_END: msg = myCrit ? "CRIT!" : (enemyCrit ? "OUCH!" : ""); break;
         default: break;
     }
-    PixelRenderer::drawPixelText(80, 100, msg, PixelRenderer::YELLOW, 1);
+    PixelRenderer::drawPixelText(80, 100, msg, PixelRenderer::YELLOW);
 
     // 暴击闪屏（仅一帧）
     if (flashThisFrame) {
@@ -375,6 +376,7 @@ void BattleScene::drawBattleField() {
 }
 
 void BattleScene::drawResult() {
+    float fs = PixelRenderer::getContentFontScale();
     PixelRenderer::fillRect(0, 0, 240, 135, PixelRenderer::BLACK);
     const char* resultText;
     uint16_t color;
@@ -388,6 +390,6 @@ void BattleScene::drawResult() {
         resultText = "LOSE";
         color = PixelRenderer::RED;
     }
-    PixelRenderer::drawPixelText(noOpponent ? 70 : 90, 45, resultText, color, 3);
-    PixelRenderer::drawPixelText(70, 90, "Press A return", PixelRenderer::WHITE, 1);
+    PixelRenderer::drawPixelText(noOpponent ? 70 : 90, 45, resultText, color, 3 * fs);
+    PixelRenderer::drawPixelText(70, 90, "Press A return", PixelRenderer::WHITE);
 }

@@ -89,8 +89,8 @@ void SettingsScene::render() {
 
 void SettingsScene::renderConfirmReset() {
     PixelRenderer::fillRect(20, 40, 200, 60, PixelRenderer::rgb565(40, 40, 50));
-    PixelRenderer::drawPixelText(35, 55, "Reset save?", PixelRenderer::YELLOW, 1);
-    PixelRenderer::drawPixelText(35, 80, "A:Yes  B/Long:No", PixelRenderer::WHITE, 1);
+    PixelRenderer::drawPixelText(35, 55, "Reset save?", PixelRenderer::YELLOW);
+    PixelRenderer::drawPixelText(35, 80, "A:Yes  B/Long:No", PixelRenderer::WHITE);
 }
 
 void SettingsScene::renderMenu() {
