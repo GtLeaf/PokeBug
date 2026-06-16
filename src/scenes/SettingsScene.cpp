@@ -136,7 +136,7 @@ void SettingsScene::renderMenu() {
         uint16_t color = (i == cursor) ? PixelRenderer::YELLOW : PixelRenderer::WHITE;
 
         if (i == cursor) {
-            PixelRenderer::fillRect(4, y + (int)(4 * fs), 4, (int)(8 * fs), PixelRenderer::YELLOW);
+            PixelRenderer::fillRect(4, y, 4, (int)(8 * fs), PixelRenderer::YELLOW);
         }
 
         PixelRenderer::drawPixelText(14, y, items[i], color);

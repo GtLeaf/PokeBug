@@ -52,11 +52,11 @@ void MenuScene::drawBattery() {
 
 void MenuScene::drawList() {
     const char* descs[ITEM_COUNT] = {
+        "Info",
         "Feed",
         "Wood",
         "Fight",
         "Settings",
-        "Info",
         "Back",
     };
 
@@ -125,8 +125,11 @@ bool MenuScene::onButton(const ButtonEvent& ev) {
             nextScene = SCENE_TERRARIUM;
             return true;
         }
-        // 长按 B：在主菜单不执行返回操作（避免和“长按 A 回主界面”冲突）
-        return false;
+        if (ev.btn == 1) {
+            // 长按 B：返回上一级（培养缸）
+            nextScene = SCENE_TERRARIUM;
+            return true;
+        }
     }
 
     if (ev.action == BtnAction::PRESSED) {

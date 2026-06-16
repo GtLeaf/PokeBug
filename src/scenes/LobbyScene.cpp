@@ -123,6 +123,11 @@ void LobbyScene::render() {
 }
 
 bool LobbyScene::onButton(const ButtonEvent& ev) {
+    if (ev.action == BtnAction::LONG_PRESS && ev.btn == 1) {
+        nextScene = SCENE_MENU;
+        return true;
+    }
+
     if (ev.action == BtnAction::LONG_PRESS && ev.btn == 0) {
         nextScene = SCENE_MENU;
         return true;
@@ -132,14 +137,16 @@ bool LobbyScene::onButton(const ButtonEvent& ev) {
 
     if (state == State::MODE_SELECT) {
         if (ev.btn == 1) {
-            selectedMode = (selectedMode == Mode::CREATE) ? Mode::SEARCH : Mode::CREATE;
+            selectedMode = nextMode(selectedMode);
             return true;
         }
         if (ev.btn == 0) {
             if (selectedMode == Mode::CREATE || selectedMode == Mode::NONE) {
                 enterHostWaiting();
-            } else {
+            } else if (selectedMode == Mode::SEARCH) {
                 enterSearchScanning();
+            } else if (selectedMode == Mode::BACK) {
+                nextScene = SCENE_MENU;
             }
             return true;
         }
@@ -171,6 +178,14 @@ void LobbyScene::enterModeSelect() {
     BattleLink::ins().stopRoom();
     stateStartMs = Hal::ins().millis();
     Serial.println("[Lobby] mode select");
+}
+
+LobbyScene::Mode LobbyScene::nextMode(Mode m) {
+    switch (m) {
+        case Mode::SEARCH: return Mode::BACK;
+        case Mode::BACK:   return Mode::CREATE;
+        default:           return Mode::SEARCH;
+    }
 }
 
 void LobbyScene::enterHostWaiting() {
@@ -243,7 +258,7 @@ void LobbyScene::drawListItem(int y, const char* text, bool selected, bool last)
     uint16_t color = selected ? PixelRenderer::YELLOW : PixelRenderer::WHITE;
 
     if (selected) {
-        PixelRenderer::fillRect(4, y + (int)(4 * fs), 4, (int)(8 * fs), PixelRenderer::YELLOW);
+        PixelRenderer::fillRect(4, y, 4, (int)(8 * fs), PixelRenderer::YELLOW);
     }
     PixelRenderer::drawPixelText(14, y, text, color);
 
@@ -253,9 +268,11 @@ void LobbyScene::drawListItem(int y, const char* text, bool selected, bool last)
 }
 
 void LobbyScene::drawModeSelect() {
-    const char* items[2] = { "Create Room", "Search Room" };
-    uint8_t cursor = (selectedMode == Mode::SEARCH) ? 1 : 0;
-    drawSettingsStyleList("FIGHT", items, 2, cursor);
+    const char* items[3] = { "Create Room", "Search Room", "Back" };
+    uint8_t cursor = 0;
+    if (selectedMode == Mode::SEARCH) cursor = 1;
+    else if (selectedMode == Mode::BACK) cursor = 2;
+    drawSettingsStyleList("FIGHT", items, 3, cursor);
 }
 
 void LobbyScene::drawHostWaiting() {

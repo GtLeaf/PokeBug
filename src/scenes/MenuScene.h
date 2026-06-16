@@ -23,11 +23,11 @@ private:
     void executeSelection();
 
     enum MenuItem {
-        FEED = 0,
+        INFO = 0,
+        FEED,
         WOOD,
         FIGHT,
         SETTINGS,
-        INFO,
         BACK,
     };
 };

@@ -28,6 +28,7 @@ private:
         NONE,
         CREATE,
         SEARCH,
+        BACK,
     };
     Mode selectedMode = Mode::NONE;
 
@@ -54,6 +55,8 @@ private:
 
     void drawSettingsStyleList(const char* title, const char* const* items, uint8_t count, uint8_t cursor);
     void drawListItem(int y, const char* text, bool selected, bool last);
+
+    static Mode nextMode(Mode m);
 
     static constexpr uint32_t HOST_TIMEOUT_MS = 30000;
     static constexpr uint32_t SEARCH_SCAN_MS = 1500;
