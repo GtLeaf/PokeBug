@@ -57,6 +57,10 @@ private:
 
     uint32_t stateStartMs = 0;
 
+    // 受击晃动时间戳
+    uint32_t meShakeEndMs = 0;
+    uint32_t enemyShakeEndMs = 0;
+
     // 同步/发送状态
     bool syncSent = false;
     bool roundSent = false;
@@ -82,6 +86,8 @@ private:
     static constexpr uint32_t CHARGE_MS = 1200;
     static constexpr uint32_t CLASH_MS = 800;
     static constexpr uint32_t ROUND_END_MS = 500;
+    static constexpr uint32_t SHAKE_MS = 300;
+    static constexpr int8_t  SHAKE_AMP = 3;
     static constexpr uint32_t SYNC_TIMEOUT_MS = 5000;
     static constexpr uint32_t ROUND_TIMEOUT_MS = 5000;
     static constexpr uint32_t RESULT_TIMEOUT_MS = 5000;

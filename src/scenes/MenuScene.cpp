@@ -32,6 +32,7 @@ void MenuScene::render() {
 }
 
 void MenuScene::drawBattery() {
+    float fs = PixelRenderer::getContentFontScale();
     int level = Hal::ins().batteryLevel();
     char buf[16];
     if (level < 0) {
@@ -41,7 +42,12 @@ void MenuScene::drawBattery() {
         snprintf(buf, sizeof(buf), "%d%%", level);
     }
     uint16_t color = (level < 20) ? PixelRenderer::RED : PixelRenderer::GREEN;
-    PixelRenderer::drawPixelText(190, 6, buf, color, 1);
+
+    LGFX_Sprite& canvas = Hal::ins().canvas();
+    canvas.setTextSize(fs);
+    int w = canvas.textWidth(buf);
+    int x = Hal::DISPLAY_W - w - (int)(6 * fs);
+    PixelRenderer::drawPixelText(x, 6, buf, color, fs);
 }
 
 void MenuScene::drawList() {
@@ -103,20 +109,24 @@ void MenuScene::drawList() {
         PixelRenderer::fillRect(boxX, y - drawBoxH / 2, drawBoxW, drawBoxH, boxColor);
 
         // 右侧说明文字，与色块垂直中心对齐；未选中时半透明（灰色）
-        canvas.setFont(&fonts::Font0);
-        canvas.setTextColor(descColor);
         canvas.setTextSize(fs);
+        int tw = canvas.textWidth(descs[i]);
+        int th = (int)(8 * fs);
         int descX = (boxX + drawBoxW + (int)(10 * fs) + Hal::DISPLAY_W) / 2;
-        canvas.setTextDatum(MC_DATUM);  // 以文字中心为对齐点
-        canvas.drawString(descs[i], descX, y);
-        canvas.setTextDatum(TL_DATUM);  // 恢复左上角对齐
+        int descY = y - th / 2;
+        PixelRenderer::drawPixelText(descX - tw / 2, descY, descs[i], descColor, fs);
     }
 }
 
 bool MenuScene::onButton(const ButtonEvent& ev) {
     if (ev.action == BtnAction::LONG_PRESS) {
-        nextScene = SCENE_TERRARIUM;
-        return true;
+        if (ev.btn == 0) {
+            // 长按 A：返回主界面（培养缸）
+            nextScene = SCENE_TERRARIUM;
+            return true;
+        }
+        // 长按 B：在主菜单不执行返回操作（避免和“长按 A 回主界面”冲突）
+        return false;
     }
 
     if (ev.action == BtnAction::PRESSED) {

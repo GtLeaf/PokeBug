@@ -1,7 +1,7 @@
 #pragma once
 #include "../core/Scene.h"
 
-// 属性信息页场景
+// 属性信息页场景（支持多页切换）
 class InfoScene : public Scene {
 public:
     InfoScene() = default;
@@ -14,4 +14,11 @@ public:
 
 private:
     static const char* STAGE_NAMES[4];
+    static constexpr int PAGE_COUNT = 2;
+
+    int page = 0;
+
+    void renderPageIndicator();
+    void renderStatus();
+    void renderRecord();
 };

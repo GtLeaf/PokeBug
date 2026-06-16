@@ -34,10 +34,17 @@ bool SettingsScene::onButton(const ButtonEvent& ev) {
         return false;
     }
 
-    // 任何子菜单长按都返回培养缸
     if (ev.action == BtnAction::LONG_PRESS) {
-        nextScene = SCENE_TERRARIUM;
-        return true;
+        if (ev.btn == 0) {
+            // 长按 A：返回主界面（培养缸）
+            nextScene = SCENE_TERRARIUM;
+            return true;
+        }
+        if (ev.btn == 1) {
+            // 长按 B：返回上级菜单
+            nextScene = SCENE_MENU;
+            return true;
+        }
     }
 
     if (ev.btn == 1 && ev.action == BtnAction::PRESSED) {

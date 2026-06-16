@@ -164,8 +164,12 @@ void TerrariumScene::drawFoodTray() {
     // 食物盘在左下
     PixelRenderer::fillRect(20, 105, 30, 8, PixelRenderer::GRAY);
     Bug& bug = GameEngine::ins().getBug();
-    if (bug.hasFoodInTray()) {
-        PixelRenderer::fillRect(30, 100, 10, 5, PixelRenderer::YELLOW);
+    if (bug.hasFoodInTray() && bug.getFoodAmount() > 0) {
+        // 食物宽度随剩余量变化，最小保留 2 像素
+        uint8_t w = (bug.getFoodAmount() * 10) / Bug::FOOD_MAX_AMOUNT;
+        if (w < 2) w = 2;
+        uint8_t x = 30 + (10 - w) / 2;
+        PixelRenderer::fillRect(x, 100, w, 5, PixelRenderer::YELLOW);
     }
 }
 

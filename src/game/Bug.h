@@ -21,7 +21,7 @@ public:
     void update(uint64_t now);
 
     // ---------- 玩家交互 ----------
-    // 在食物盘放 1 份树汁（幼虫/成虫均可，只要背包有）
+    // 在食物盘放 1 份树汁；仅当盘中为空且背包有树汁时才成功
     bool placeSapInTray();
     // 戳甲虫（短按 B）
     bool poke(uint64_t now);
@@ -58,6 +58,7 @@ public:
     uint8_t getRottenWood() const { return rottenWood; }
     bool isWoodPlaced() const { return woodPlaced; }
     bool hasFoodInTray() const { return foodInTray; }
+    uint8_t getFoodAmount() const { return foodAmount; }
     bool placeWood();              // 放置腐木到缸内
     void removeWood() { woodPlaced = false; }
 
@@ -83,6 +84,7 @@ public:
     static constexpr uint32_t HUNGER_DROP_MS      = 30ULL * 1000;   // 饥饿度每 30s -1
     static constexpr uint32_t STARVE_DEATH_MS     = 5ULL * 60 * 1000; // 饥饿 0 后持续 5min 死亡
     static constexpr uint32_t ADULT_SAP_PRODUCE_MS = 10ULL * 60 * 1000; // 成虫每 10min 产 1 份树汁
+    static constexpr uint8_t  FOOD_MAX_AMOUNT     = 5;              // 一份树汁分成 5 口吃完
 
 private:
     uint8_t geneVIG = 0, geneATK = 0, geneMNT = 0, geneAPP = 0;
@@ -98,6 +100,8 @@ private:
     uint8_t rottenWood = 0;
     bool woodPlaced = false;
     bool foodInTray = false;
+    uint8_t foodAmount = 0;        // 盘中食物剩余口数
+    uint64_t lastEatTime = 0;      // 上次进食时间（虚拟时间 ms）
 
     uint64_t stageStartTime = 0;
     uint64_t lastFeedTime = 0;
@@ -121,6 +125,7 @@ private:
     void clampAttributes();
     void updateHunger(uint64_t now, uint32_t deltaMs);
     void checkStageTransition(uint64_t now);
+    void eatFromTray(uint64_t now);
 
     static uint8_t dominant(uint8_t gene) { return gene >> 4; }
     static uint8_t recessive(uint8_t gene) { return gene & 0x0F; }

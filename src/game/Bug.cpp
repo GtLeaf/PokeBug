@@ -17,6 +17,8 @@ void Bug::initNew(uint64_t now) {
     rottenWood = 0;
     woodPlaced = false;
     foodInTray = false;
+    foodAmount = 0;
+    lastEatTime = 0;
 
     stageStartTime = now;
     lastFeedTime = 0;
@@ -80,10 +82,8 @@ void Bug::update(uint64_t now) {
         }
     }
 
-    // 食物盘视觉效果自动清除
-    if (foodInTray && now - lastFeedTime > 2000) {
-        foodInTray = false;
-    }
+    // 甲虫自主进食
+    eatFromTray(now);
 
     // 腐木休息 END 成长
     if (stage == Stage::ADULT && woodPlaced && hunger >= 50) {
@@ -173,33 +173,57 @@ void Bug::advanceStage(uint64_t now) {
 }
 
 bool Bug::placeSapInTray() {
+    // 盘中食物剩余超过一半时拒绝放置；消耗超过一半允许替换为新食物
+    if (foodAmount > FOOD_MAX_AMOUNT / 2) return false;
     if (sap == 0) return false;
+    if (stage != Stage::LARVA && stage != Stage::ADULT) return false;
+
+    sap--;
+    foodAmount = FOOD_MAX_AMOUNT;
+    foodInTray = true;
+    lastFeedTime = lastUpdateTime;
+    return true;
+}
+
+void Bug::eatFromTray(uint64_t now) {
+    if (foodAmount == 0) return;
+
+    static constexpr uint32_t EAT_INTERVAL_MS = 2000;
+    if (now - lastEatTime < EAT_INTERVAL_MS) return;
+
+    // 甲虫"选择"是否进食：饱腹或随机挑食时不吃
+    bool hungry = false;
+    uint8_t eatChance = 0;
+    if (stage == Stage::LARVA) {
+        hungry = hunger < 95;
+        eatChance = 90;
+    } else if (stage == Stage::ADULT) {
+        hungry = hunger < 80;
+        eatChance = 70;
+    } else {
+        return;  // 卵/蛹不会进食
+    }
+
+    if (!hungry || random(100) >= eatChance) return;
+
+    // 吃一口
+    foodAmount--;
+    hunger += 6;
+    lastEatTime = now;
 
     if (stage == Stage::LARVA) {
-        sap--;
-        str += 0.3f * strGrowthMult();
-        siz += 0.15f * sizGrowthMult();
-        hunger += 30;
-        larvaFeeds++;
-        lastFeedTime = lastUpdateTime;
-        foodInTray = true;
-        clampAttributes();
-        return true;
+        str += 0.06f * strGrowthMult();
+        siz += 0.03f * sizGrowthMult();
+    } else if (stage == Stage::ADULT) {
+        end += 0.03f;
     }
 
-    if (stage == Stage::ADULT) {
-        if (lastUpdateTime - lastFeedTime < 5ULL * 60 * 1000) return false;
-        sap--;
-        end += 0.15f;
-        hunger += 30;
-        lastFeedTime = lastUpdateTime;
-        foodInTray = true;
-        clampAttributes();
-        return true;
+    if (foodAmount == 0) {
+        foodInTray = false;
+        if (stage == Stage::LARVA) larvaFeeds++;
     }
 
-    // 卵/蛹不能喂食
-    return false;
+    clampAttributes();
 }
 
 bool Bug::placeWood() {
@@ -289,7 +313,7 @@ void Bug::resetAfterDeath(uint64_t now) {
 
 // ---------- 存档格式 ----------
 // 按设计文档 save_data_t 打包，约 40 字节
-static constexpr uint8_t SAVE_VERSION = 2;
+static constexpr uint8_t SAVE_VERSION = 3;
 
 void Bug::save(uint8_t* buf, uint16_t& len) const {
     struct SaveData {
@@ -305,11 +329,13 @@ void Bug::save(uint8_t* buf, uint16_t& len) const {
         uint32_t lastShake;
         uint32_t restStart;
         uint32_t lastUpdate;
+        uint32_t lastEat;
         uint8_t larvaFeeds, pupaShakes;
         uint8_t wins, losses;
         uint8_t generation;
         uint8_t foodInTray;
-        uint8_t reserved[2];
+        uint8_t foodAmount;
+        uint8_t reserved[1];
     } __attribute__((packed));
 
     SaveData sd = {};
@@ -332,12 +358,14 @@ void Bug::save(uint8_t* buf, uint16_t& len) const {
     sd.lastShake = (uint32_t)(lastShakeTrainTime / 1000ULL);
     sd.restStart = (uint32_t)(restStartTime / 1000ULL);
     sd.lastUpdate = (uint32_t)(lastUpdateTime / 1000ULL);
+    sd.lastEat = (uint32_t)(lastEatTime / 1000ULL);
     sd.larvaFeeds = larvaFeeds;
     sd.pupaShakes = pupaShakes;
     sd.wins = wins;
     sd.losses = losses;
     sd.generation = generation;
     sd.foodInTray = foodInTray ? 1 : 0;
+    sd.foodAmount = foodAmount;
 
     memcpy(buf, &sd, sizeof(sd));
     len = sizeof(sd);
@@ -357,11 +385,13 @@ bool Bug::load(const uint8_t* buf, uint16_t len) {
         uint32_t lastShake;
         uint32_t restStart;
         uint32_t lastUpdate;
+        uint32_t lastEat;
         uint8_t larvaFeeds, pupaShakes;
         uint8_t wins, losses;
         uint8_t generation;
         uint8_t foodInTray;
-        uint8_t reserved[2];
+        uint8_t foodAmount;
+        uint8_t reserved[1];
     } __attribute__((packed));
 
     if (len != sizeof(SaveData)) return false;
@@ -383,12 +413,14 @@ bool Bug::load(const uint8_t* buf, uint16_t len) {
     lastShakeTrainTime = (uint64_t)sd.lastShake * 1000ULL;
     restStartTime = (uint64_t)sd.restStart * 1000ULL;
     lastUpdateTime = (uint64_t)sd.lastUpdate * 1000ULL;
+    lastEatTime = (uint64_t)sd.lastEat * 1000ULL;
     larvaFeeds = sd.larvaFeeds;
     pupaShakes = sd.pupaShakes;
     wins = sd.wins;
     losses = sd.losses;
     generation = sd.generation;
     foodInTray = sd.foodInTray != 0;
+    foodAmount = sd.foodAmount;
 
     clampAttributes();
     return true;

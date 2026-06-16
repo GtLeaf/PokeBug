@@ -12,6 +12,8 @@ void BattleScene::onEnter() {
     syncSent = false;
     roundSent = false;
     resultSent = false;
+    meShakeEndMs = 0;
+    enemyShakeEndMs = 0;
     initFromBug();
     BattleLink::ins().begin();
     BattleLink::ins().startDiscovery();
@@ -164,7 +166,8 @@ SceneID BattleScene::update() {
 
         case State::ROUND_END: {
             if (Hal::ins().millis() - stateStartMs >= ROUND_END_MS) {
-                if (me.hp <= 0 || enemy.hp <= 0 || roundNum >= 3) {
+                // 改为持续到一方 HP 归零，不再强制 3 回合结束
+                if (me.hp <= 0 || enemy.hp <= 0) {
                     state = State::RESULT;
                     resultSent = false;
                     Serial.println("[BattleScene] round end -> result");
@@ -241,11 +244,20 @@ void BattleScene::startRound() {
 
 void BattleScene::computeClash() {
     myDmg = BattleCalc::computeDamage(me.str, me.siz, enemy.end, me.spi, me.mot, myCrit);
+    // 我方出招，敌方受击晃动
+    if (myDmg > 0 && Hal::ins().millis() >= enemyShakeEndMs) {
+        enemyShakeEndMs = Hal::ins().millis() + SHAKE_MS;
+    }
 }
 
 void BattleScene::applyRoundResult() {
     me.hp -= enemyDmg;
     if (me.hp < 0) me.hp = 0;
+
+    // 敌方出招，我方受击晃动
+    if (enemyDmg > 0) {
+        meShakeEndMs = Hal::ins().millis() + SHAKE_MS;
+    }
 
     int motLoss = BattleCalc::computeMotLoss(me.spi);
     if (me.mot > motLoss) me.mot -= motLoss;
@@ -333,13 +345,25 @@ void BattleScene::drawConnecting() {
 void BattleScene::drawBattleField() {
     PixelRenderer::fillRect(0, 0, 240, 135, PixelRenderer::rgb565(20, 20, 30));
 
+    // 计算受击晃动偏移
+    uint32_t now = Hal::ins().millis();
+    auto computeShake = [](uint32_t nowMs, uint32_t endMs, int8_t amp, int8_t& outX, int8_t& outY) {
+        if (nowMs >= endMs) { outX = 0; outY = 0; return; }
+        outX = ((nowMs / 50) % 2) ? amp : -amp;
+        outY = ((nowMs / 40) % 2) ? amp : -amp;
+    };
+    int8_t meOffX = 0, meOffY = 0;
+    int8_t enemyOffX = 0, enemyOffY = 0;
+    computeShake(now, meShakeEndMs, SHAKE_AMP, meOffX, meOffY);
+    computeShake(now, enemyShakeEndMs, SHAKE_AMP, enemyOffX, enemyOffY);
+
     // 标题
     char buf[32];
-    snprintf(buf, sizeof(buf), "ROUND %d/3", roundNum);
+    snprintf(buf, sizeof(buf), "ROUND %d", roundNum);
     PixelRenderer::drawPixelText(90, 5, buf, PixelRenderer::WHITE, 1);
 
     // 我方（左侧）
-    PixelRenderer::fillRect(30, 35, 30, 20, me.palette == 0 ? PixelRenderer::BROWN : PixelRenderer::CREAM);
+    PixelRenderer::fillRect(30 + meOffX, 35 + meOffY, 30, 20, me.palette == 0 ? PixelRenderer::BROWN : PixelRenderer::CREAM);
     snprintf(buf, sizeof(buf), "HP:%d/%d", me.hp, me.maxHp);
     PixelRenderer::drawPixelText(10, 60, buf, PixelRenderer::WHITE, 1);
     PixelRenderer::drawProgressBar(10, 72, 80, 6, (float)me.hp / me.maxHp,
@@ -349,7 +373,7 @@ void BattleScene::drawBattleField() {
     PixelRenderer::drawPixelText(10, 82, buf, PixelRenderer::WHITE, 1);
 
     // 敌方（右侧）
-    PixelRenderer::fillRect(180, 35, 30, 20, enemy.palette == 0 ? PixelRenderer::BROWN : PixelRenderer::CREAM);
+    PixelRenderer::fillRect(180 + enemyOffX, 35 + enemyOffY, 30, 20, enemy.palette == 0 ? PixelRenderer::BROWN : PixelRenderer::CREAM);
     snprintf(buf, sizeof(buf), "HP:%d/%d", enemy.hp, enemy.maxHp);
     PixelRenderer::drawPixelText(150, 60, buf, PixelRenderer::WHITE, 1);
     PixelRenderer::drawProgressBar(150, 72, 80, 6, (float)enemy.hp / enemy.maxHp,
