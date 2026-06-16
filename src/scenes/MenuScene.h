@@ -14,6 +14,7 @@ public:
 
 private:
     int selected = 0;
+    float animSelected = 0.0f;  // 用于横向滚动补帧动画
     static int lastSelected;
     static constexpr int ITEM_COUNT = 5;
 

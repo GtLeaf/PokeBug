@@ -16,6 +16,7 @@ private:
     int8_t cursor = 0;
     static constexpr int8_t ITEM_COUNT = 6;
     bool confirmReset = false;
+    int scrollY = 0;  // 纵向滚动偏移
 
     enum Item {
         ITEM_BRIGHTNESS = 0,

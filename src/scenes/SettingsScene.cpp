@@ -5,6 +5,7 @@
 void SettingsScene::onEnter() {
     cursor = 0;
     confirmReset = false;
+    scrollY = 0;
 }
 
 void SettingsScene::onExit() {
@@ -77,9 +78,7 @@ SceneID SettingsScene::update() {
 }
 
 void SettingsScene::render() {
-    PixelRenderer::fillRect(0, 0, 240, 135, PixelRenderer::BLACK);
-    PixelRenderer::fillRect(0, 0, 240, 24, PixelRenderer::rgb565(25, 25, 40));
-    PixelRenderer::drawPixelText(4, 4, "SETTINGS", PixelRenderer::CYAN);
+    PixelRenderer::fillRect(0, 0, Hal::DISPLAY_W, Hal::DISPLAY_H, PixelRenderer::BLACK);
 
     if (confirmReset) {
         renderConfirmReset();
@@ -105,12 +104,28 @@ void SettingsScene::renderMenu() {
     };
 
     float fs = PixelRenderer::getContentFontScale();
-    int rowStep = (int)(26 * fs);
-    int valOffset = (int)(12 * fs);
+    int rowStep = (int)(14 * fs);
+    int startY = 8;
     int sepGap  = (int)(4 * fs);
+    LGFX_Sprite& canvas = Hal::ins().canvas();
+
+    // 根据选中项调整纵向滚动偏移
+    int contentH = startY + ITEM_COUNT * rowStep;
+    if (contentH > Hal::DISPLAY_H) {
+        int selTop = startY + cursor * rowStep;
+        int selBottom = selTop + rowStep;
+        if (selBottom - scrollY > Hal::DISPLAY_H) {
+            scrollY = selBottom - Hal::DISPLAY_H;
+        }
+        if (selTop - scrollY < 0) {
+            scrollY = selTop;
+        }
+    } else {
+        scrollY = 0;
+    }
 
     for (int i = 0; i < ITEM_COUNT; i++) {
-        int y = 28 + i * rowStep;
+        int y = startY + i * rowStep - scrollY;
         uint16_t color = (i == cursor) ? PixelRenderer::YELLOW : PixelRenderer::WHITE;
 
         if (i == cursor) {
@@ -119,29 +134,36 @@ void SettingsScene::renderMenu() {
 
         PixelRenderer::drawPixelText(14, y, items[i], color);
 
-        int valY = y + valOffset;
         char buf[16];
+        bool hasValue = false;
         if (i == ITEM_BRIGHTNESS) {
             snprintf(buf, sizeof(buf), "%d", Hal::ins().getBrightness());
-            PixelRenderer::drawPixelText(14, valY, buf, PixelRenderer::CYAN, 1);
+            hasValue = true;
         } else if (i == ITEM_FONT_SIZE) {
             float curFs = PixelRenderer::getContentFontScale();
             if (curFs < 1.1f)       snprintf(buf, sizeof(buf), "1");
             else if (curFs < 1.3f)  snprintf(buf, sizeof(buf), "2");
             else if (curFs < 1.6f)  snprintf(buf, sizeof(buf), "3");
             else                    snprintf(buf, sizeof(buf), "4");
-            PixelRenderer::drawPixelText(14, valY, buf, PixelRenderer::CYAN, 1);
+            hasValue = true;
         } else if (i == ITEM_GAME_SPEED) {
             snprintf(buf, sizeof(buf), "%.1fx", GameEngine::ins().getGameSpeed());
-            PixelRenderer::drawPixelText(14, valY, buf, PixelRenderer::CYAN, 1);
+            hasValue = true;
         } else if (i == ITEM_IDLE_TIME) {
             uint8_t idx = GameEngine::ins().getIdleTimeoutIndex();
             const char* labels[5] = { "30s", "1m", "2m", "5m", "Never" };
-            PixelRenderer::drawPixelText(14, valY, labels[idx], PixelRenderer::CYAN, 1);
+            snprintf(buf, sizeof(buf), "%s", labels[idx]);
+            hasValue = true;
+        }
+
+        if (hasValue) {
+            canvas.setTextSize(fs);
+            int valW = canvas.textWidth(buf);
+            PixelRenderer::drawPixelText(Hal::DISPLAY_W - valW - 8, y, buf, PixelRenderer::CYAN, fs);
         }
 
         if (i < ITEM_COUNT - 1) {
-            PixelRenderer::fillRect(4, y + rowStep - sepGap, 232, 1, PixelRenderer::GRAY);
+            PixelRenderer::fillRect(4, y + rowStep - sepGap, Hal::DISPLAY_W - 8, 1, PixelRenderer::GRAY);
         }
     }
 }

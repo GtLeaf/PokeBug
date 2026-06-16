@@ -12,6 +12,7 @@ void MenuScene::onEnter() {
     } else {
         selected = lastSelected;
     }
+    animSelected = (float)selected;
 }
 
 void MenuScene::onExit() {
@@ -41,21 +42,8 @@ void MenuScene::drawBattery() {
         if (level > 100) level = 100;
         snprintf(buf, sizeof(buf), "%d%%", level);
     }
-    PixelRenderer::drawPixelText(200, 6, buf, PixelRenderer::WHITE, 1);
-
-    // 电池外框
-    PixelRenderer::fillRect(178, 4, 18, 10, PixelRenderer::WHITE);
-    PixelRenderer::fillRect(180, 6, 14, 6, PixelRenderer::BLACK);
-    PixelRenderer::fillRect(196, 6, 2, 6, PixelRenderer::WHITE);
-
-    // 电量条
-    uint16_t color = (level < 20) ? PixelRenderer::RED :
-                     (level < 50) ? PixelRenderer::YELLOW : PixelRenderer::GREEN;
-    int pct = (level < 0) ? 0 : level;
-    int fillW = (14 * pct) / 100;
-    if (fillW < 0) fillW = 0;
-    if (fillW > 14) fillW = 14;
-    PixelRenderer::fillRect(180, 6, fillW, 6, color);
+    uint16_t color = (level < 20) ? PixelRenderer::RED : PixelRenderer::GREEN;
+    PixelRenderer::drawPixelText(190, 6, buf, color, 1);
 }
 
 void MenuScene::drawCarousel() {
@@ -63,16 +51,33 @@ void MenuScene::drawCarousel() {
     static constexpr int CENTER_X = 120;
     static constexpr int CENTER_Y = 60;
     static constexpr int SPACING = 55;
+    // 让 animSelected 以最短路径（循环）追上 selected，产生横向滚动补帧动画
+    // 差值大时提高追及速度，避免快速连按时出现 1s 左右的延迟
+    float target = (float)selected;
+    float diff = target - animSelected;
+    while (diff > ITEM_COUNT / 2.0f) diff -= ITEM_COUNT;
+    while (diff < -ITEM_COUNT / 2.0f) diff += ITEM_COUNT;
 
-    // 按距离中心远近排序绘制索引
+    float absDiff = fabsf(diff);
+    float speed = 0.35f;            // 单步切换的基础速度
+    if (absDiff > 2.0f) speed = 0.85f;  // 跨越多项时快速追及
+    else if (absDiff > 1.0f) speed = 0.6f;
+
+    if (absDiff < 0.05f) {
+        animSelected = target;
+    } else {
+        animSelected += diff * speed;
+    }
+
+    // 按距离中心远近排序绘制索引，确保选中项最后画在最上层
     int order[ITEM_COUNT];
     for (int i = 0; i < ITEM_COUNT; i++) order[i] = i;
     for (int i = 0; i < ITEM_COUNT - 1; i++) {
         for (int j = i + 1; j < ITEM_COUNT; j++) {
-            int di = abs(order[i] - selected);
-            if (di > ITEM_COUNT / 2) di = ITEM_COUNT - di;
-            int dj = abs(order[j] - selected);
-            if (dj > ITEM_COUNT / 2) dj = ITEM_COUNT - dj;
+            float di = fabsf((float)order[i] - animSelected);
+            if (di > ITEM_COUNT / 2.0f) di = ITEM_COUNT - di;
+            float dj = fabsf((float)order[j] - animSelected);
+            if (dj > ITEM_COUNT / 2.0f) dj = ITEM_COUNT - dj;
             if (dj < di) {
                 int t = order[i]; order[i] = order[j]; order[j] = t;
             }
@@ -81,20 +86,24 @@ void MenuScene::drawCarousel() {
 
     for (int k = 0; k < ITEM_COUNT; k++) {
         int i = order[k];
-        int rawOffset = i - selected;
-        if (rawOffset > ITEM_COUNT / 2) rawOffset -= ITEM_COUNT;
-        if (rawOffset < -ITEM_COUNT / 2) rawOffset += ITEM_COUNT;
+        float rawOffset = (float)i - animSelected;
+        if (rawOffset > ITEM_COUNT / 2.0f) rawOffset -= ITEM_COUNT;
+        if (rawOffset < -ITEM_COUNT / 2.0f) rawOffset += ITEM_COUNT;
 
-        int x = CENTER_X + rawOffset * SPACING;
-        bool isSelected = (i == selected);
-        float scale = isSelected ? 1.2f : 1.0f;
-        uint16_t boxColor = isSelected ? PixelRenderer::YELLOW : PixelRenderer::GRAY;
+        int x = (int)(CENTER_X + rawOffset * SPACING);
+        float dist = fabsf(rawOffset);
+        float scale = 1.0f + 0.2f * (dist < 1.0f ? (1.0f - dist) : 0.0f);
+        uint16_t boxColor = (dist < 0.5f) ? PixelRenderer::YELLOW : PixelRenderer::GRAY;
         uint16_t textColor = PixelRenderer::BLACK;
 
         int boxW = (int)(44 * scale);
         int boxH = (int)(36 * scale);
         PixelRenderer::fillRect(x - boxW / 2, CENTER_Y - boxH / 2, boxW, boxH, boxColor);
-        PixelRenderer::drawPixelText(x - 16, CENTER_Y - 4, labels[i], textColor, scale);
+
+        LGFX_Sprite& canvas = Hal::ins().canvas();
+        canvas.setTextSize(scale);
+        int textW = canvas.textWidth(labels[i]);
+        PixelRenderer::drawPixelText(x - textW / 2, CENTER_Y - 4, labels[i], textColor, scale);
     }
 }
 
