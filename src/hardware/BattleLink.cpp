@@ -1,6 +1,5 @@
 #include "BattleLink.h"
 #include "Hal.h"
-#include <WiFi.h>
 #include <esp_wifi.h>
 #include <cstring>
 
@@ -51,7 +50,7 @@ bool BattleLink::begin() {
 void BattleLink::end() {
     if (!initialized) return;
     Serial.println("[BattleLink] end()");
-    stopDiscovery();
+    stopRoom();
     esp_now_unregister_recv_cb();
     esp_now_unregister_send_cb();
     esp_now_del_peer(BROADCAST_MAC);
@@ -60,7 +59,7 @@ void BattleLink::end() {
     initialized = false;
     sendBusy = false;
     sendState = SendState::IDLE;
-    peerConnected = false;
+    battlePeerSet = false;
 }
 
 bool BattleLink::ensureBroadcastPeer() {
@@ -95,73 +94,167 @@ bool BattleLink::ensureUnicastPeer(const uint8_t mac[6]) {
 }
 
 // ============================================================
-// 发现
+// 房间阶段
 // ============================================================
-void BattleLink::startDiscovery() {
+void BattleLink::startRoomHost(uint8_t roomId) {
     if (!initialized) begin();
-    discoveryActive = true;
-    connectFailed = false;
-    peerConnected = false;
-    discoveryStartMs = Hal::ins().millis();
-    lastDiscoverBroadcastMs = 0;
-    memset(peerMac, 0, 6);
-    pendingSync = false;
-    pendingRound = false;
-    pendingResult = false;
-    pendingAck = false;
-    sendState = SendState::IDLE;
-    Serial.println("[BattleLink] discovery started");
+    roomState = RoomState::HOSTING;
+    hostedRoomId = roomId;
+    lastRoomAdvertMs = 0;
+    pendingJoinReq = false;
+    Serial.printf("[BattleLink] start hosting room %d\n", roomId);
 }
 
-void BattleLink::stopDiscovery() {
-    discoveryActive = false;
-    Serial.println("[BattleLink] discovery stopped");
+void BattleLink::startRoomSearch() {
+    if (!initialized) begin();
+    roomState = RoomState::SEARCHING;
+    memset(roomList, 0, sizeof(roomList));
+    Serial.println("[BattleLink] start searching rooms");
+}
+
+void BattleLink::stopRoom() {
+    roomState = RoomState::IDLE;
+    hostedRoomId = 0;
+    Serial.println("[BattleLink] stop room");
+}
+
+bool BattleLink::takeJoinReq(join_req_t& out) {
+    if (!pendingJoinReq) return false;
+    out = pendingJoinReqData;
+    pendingJoinReq = false;
+    return true;
+}
+
+bool BattleLink::sendJoinAck(bool accept, const uint8_t* clientMac) {
+    if (!initialized || !battlePeerSet) {
+        Serial.println("[BattleLink] sendJoinAck: not ready");
+        return false;
+    }
+    join_ack_t ack;
+    ack.type = MSG_JOIN_ACK;
+    getMyMac(ack.host_mac);
+    memcpy(ack.client_mac, clientMac, 6);
+    ack.accepted = accept ? 1 : 0;
+    Serial.printf("[BattleLink] sendJoinAck accept=%d\n", accept ? 1 : 0);
+    // 大厅消息不占用对战 sendState，避免阻塞后续 sync
+    return sendLobbyPacket(clientMac, (uint8_t*)&ack, sizeof(ack));
+}
+
+uint8_t BattleLink::getRoomListCount() const {
+    uint32_t now = Hal::ins().millis();
+    uint8_t count = 0;
+    for (uint8_t i = 0; i < MAX_ROOM_LIST; i++) {
+        if (roomList[i].lastSeenMs != 0 && now - roomList[i].lastSeenMs < ROOM_ENTRY_TIMEOUT_MS) {
+            count++;
+        }
+    }
+    return count;
+}
+
+const BattleLink::RoomEntry* BattleLink::getRoomListEntry(uint8_t idx) const {
+    uint32_t now = Hal::ins().millis();
+    uint8_t count = 0;
+    for (uint8_t i = 0; i < MAX_ROOM_LIST; i++) {
+        if (roomList[i].lastSeenMs != 0 && now - roomList[i].lastSeenMs < ROOM_ENTRY_TIMEOUT_MS) {
+            if (count == idx) return &roomList[i];
+            count++;
+        }
+    }
+    return nullptr;
+}
+
+bool BattleLink::sendJoinReq(uint8_t roomId, const uint8_t* hostMac) {
+    if (!initialized) return false;
+    join_req_t req;
+    req.type = MSG_JOIN_REQ;
+    getMyMac(req.mac);
+    req.room_id = roomId;
+    Serial.printf("[BattleLink] sendJoinReq room=%d host=%02X:%02X\n",
+                  roomId, hostMac[0], hostMac[5]);
+    // 大厅消息不占用对战 sendState
+    return sendLobbyPacket(hostMac, (uint8_t*)&req, sizeof(req));
+}
+
+bool BattleLink::takeJoinAck(join_ack_t& out) {
+    if (!pendingJoinAck) return false;
+    out = pendingJoinAckData;
+    pendingJoinAck = false;
+    return true;
+}
+
+void BattleLink::setBattlePeer(const uint8_t* mac, bool asHost) {
+    memcpy(battlePeerMac, mac, 6);
+    battleAsHost = asHost;
+    battlePeerSet = true;
+    // 大厅阶段的 join req/ack 可能还在等 ACK，进入对战后不再需要，直接清空发送状态
+    sendState = SendState::IDLE;
+    Serial.printf("[BattleLink] battle peer set host=%d mac=%02X:%02X\n",
+                  asHost ? 1 : 0, mac[0], mac[5]);
 }
 
 // ============================================================
-// 发送 API
+// 对战发送 API
 // ============================================================
 bool BattleLink::sendSync(const battle_sync_t& sync) {
-    if (!peerConnected) { Serial.println("[BattleLink] sendSync: not connected"); return false; }
+    if (!battlePeerSet) { Serial.println("[BattleLink] sendSync: no peer"); return false; }
     if (sendState == SendState::SENDING) { Serial.println("[BattleLink] sendSync: busy"); return false; }
     memcpy(sendCtx.buf, &sync, sizeof(sync));
     sendCtx.len = sizeof(sync);
-    memcpy(sendCtx.targetMac, peerMac, 6);
+    memcpy(sendCtx.targetMac, battlePeerMac, 6);
     sendCtx.retryCount = 0;
     sendCtx.ackReceived = false;
     sendCtx.startMs = Hal::ins().millis();
-    sendState = SendState::SENDING;
     Serial.println("[BattleLink] sendSync");
-    return sendInternal(peerMac, sendCtx.buf, sendCtx.len);
+    if (!sendInternal(battlePeerMac, sendCtx.buf, sendCtx.len)) return false;
+    sendState = SendState::SENDING;
+    return true;
+}
+
+bool BattleLink::sendReady(const battle_ready_t& ready) {
+    if (!battlePeerSet) { Serial.println("[BattleLink] sendReady: no peer"); return false; }
+    if (sendState == SendState::SENDING) { Serial.println("[BattleLink] sendReady: busy"); return false; }
+    memcpy(sendCtx.buf, &ready, sizeof(ready));
+    sendCtx.len = sizeof(ready);
+    memcpy(sendCtx.targetMac, battlePeerMac, 6);
+    sendCtx.retryCount = 0;
+    sendCtx.ackReceived = false;
+    sendCtx.startMs = Hal::ins().millis();
+    Serial.printf("[BattleLink] sendReady round=%d mot=%d\n", ready.round_num, ready.my_mot);
+    if (!sendInternal(battlePeerMac, sendCtx.buf, sendCtx.len)) return false;
+    sendState = SendState::SENDING;
+    return true;
 }
 
 bool BattleLink::sendRound(const battle_round_t& round) {
-    if (!peerConnected) { Serial.println("[BattleLink] sendRound: not connected"); return false; }
+    if (!battlePeerSet) { Serial.println("[BattleLink] sendRound: no peer"); return false; }
     if (sendState == SendState::SENDING) { Serial.println("[BattleLink] sendRound: busy"); return false; }
     memcpy(sendCtx.buf, &round, sizeof(round));
     sendCtx.len = sizeof(round);
-    memcpy(sendCtx.targetMac, peerMac, 6);
+    memcpy(sendCtx.targetMac, battlePeerMac, 6);
     sendCtx.retryCount = 0;
     sendCtx.ackReceived = false;
     sendCtx.startMs = Hal::ins().millis();
+    Serial.printf("[BattleLink] sendRound hDmg=%d cDmg=%d hHp=%d cHp=%d\n",
+                  round.host_dmg, round.client_dmg, round.host_hp, round.client_hp);
+    if (!sendInternal(battlePeerMac, sendCtx.buf, sendCtx.len)) return false;
     sendState = SendState::SENDING;
-    Serial.println("[BattleLink] sendRound");
-    return sendInternal(peerMac, sendCtx.buf, sendCtx.len);
+    return true;
 }
 
 bool BattleLink::sendResult(bool win) {
-    if (!peerConnected) { Serial.println("[BattleLink] sendResult: not connected"); return false; }
+    if (!battlePeerSet) { Serial.println("[BattleLink] sendResult: no peer"); return false; }
     if (sendState == SendState::SENDING) { Serial.println("[BattleLink] sendResult: busy"); return false; }
     battle_result_t res = { MSG_BATTLE_RESULT, win ? (uint8_t)1 : (uint8_t)0 };
     memcpy(sendCtx.buf, &res, sizeof(res));
     sendCtx.len = sizeof(res);
-    memcpy(sendCtx.targetMac, peerMac, 6);
+    memcpy(sendCtx.targetMac, battlePeerMac, 6);
     sendCtx.retryCount = 0;
     sendCtx.ackReceived = false;
     sendCtx.startMs = Hal::ins().millis();
+    Serial.printf("[BattleLink] sendResult win=%d\n", win ? 1 : 0);
+    if (!sendInternal(battlePeerMac, sendCtx.buf, sendCtx.len)) return false;
     sendState = SendState::SENDING;
-    Serial.printf("[BattleLink] sendResult win=%d\n", win);
-    return sendInternal(peerMac, sendCtx.buf, sendCtx.len);
+    return true;
 }
 
 bool BattleLink::sendInternal(const uint8_t mac[6], const uint8_t* data, uint8_t len) {
@@ -172,6 +265,17 @@ bool BattleLink::sendInternal(const uint8_t mac[6], const uint8_t* data, uint8_t
     if (err != ESP_OK) {
         sendBusy = false;
         Serial.printf("[BattleLink] send failed, err=%d\n", err);
+        return false;
+    }
+    return true;
+}
+
+bool BattleLink::sendLobbyPacket(const uint8_t mac[6], const uint8_t* data, uint8_t len) {
+    if (!initialized) return false;
+    ensureUnicastPeer(mac);
+    esp_err_t err = esp_now_send(mac, data, len);
+    if (err != ESP_OK) {
+        Serial.printf("[BattleLink] lobby send failed, err=%d\n", err);
         return false;
     }
     return true;
@@ -191,6 +295,13 @@ bool BattleLink::takeReceivedSync(battle_sync_t& out) {
     if (!pendingSync) return false;
     out = pendingSyncData;
     pendingSync = false;
+    return true;
+}
+
+bool BattleLink::takeReceivedReady(battle_ready_t& out) {
+    if (!pendingReady) return false;
+    out = pendingReadyData;
+    pendingReady = false;
     return true;
 }
 
@@ -234,21 +345,43 @@ void BattleLink::onSent(const uint8_t* mac, esp_now_send_status_t status) {
 }
 
 void BattleLink::onRecv(const uint8_t* mac, const uint8_t* data, int len) {
-    if (len < 2) return;
+    if (len < 1) return;
     uint8_t type = data[0];
 
     switch (type) {
-        case MSG_DISCOVER:
-            handleDiscover(mac, data, (uint8_t)len);
+        case MSG_ROOM_ADVERT:
+            if (len == sizeof(room_advert_t)) {
+                room_advert_t a;
+                memcpy(&a, data, sizeof(a));
+                handleRoomAdvert(mac, a);
+            }
             break;
-        case MSG_DISCOVER_ACK:
-            handleDiscoverAck(mac, data, (uint8_t)len);
+        case MSG_JOIN_REQ:
+            if (len == sizeof(join_req_t)) {
+                join_req_t r;
+                memcpy(&r, data, sizeof(r));
+                handleJoinReq(mac, r);
+            }
+            break;
+        case MSG_JOIN_ACK:
+            if (len == sizeof(join_ack_t)) {
+                join_ack_t a;
+                memcpy(&a, data, sizeof(a));
+                handleJoinAck(mac, a);
+            }
             break;
         case MSG_BATTLE_SYNC:
             if (len == sizeof(battle_sync_t)) {
                 battle_sync_t s;
                 memcpy(&s, data, sizeof(s));
                 handleSync(mac, s);
+            }
+            break;
+        case MSG_BATTLE_READY:
+            if (len == sizeof(battle_ready_t)) {
+                battle_ready_t r;
+                memcpy(&r, data, sizeof(r));
+                handleReady(mac, r);
             }
             break;
         case MSG_BATTLE_ROUND:
@@ -275,51 +408,52 @@ void BattleLink::onRecv(const uint8_t* mac, const uint8_t* data, int len) {
     }
 }
 
-void BattleLink::handleDiscover(const uint8_t* mac, const uint8_t* data, uint8_t len) {
-    if (len != sizeof(discover_msg_t)) return;
-    discover_msg_t d;
-    memcpy(&d, data, sizeof(d));
-
-    // 忽略本机
+// ============================================================
+// 消息处理
+// ============================================================
+void BattleLink::handleRoomAdvert(const uint8_t* mac, const room_advert_t& advert) {
     uint8_t myMac[6];
-    WiFi.macAddress(myMac);
-    if (memcmp(d.mac, myMac, 6) == 0) return;
-
-    Serial.printf("[BattleLink] discover from %02X...%02X\n", mac[0], mac[5]);
-
-    // 回复 ACK
-    discover_msg_t ack = { MSG_DISCOVER_ACK, {0} };
-    WiFi.macAddress(ack.mac);
-    sendInternal(mac, (uint8_t*)&ack, sizeof(ack));
-
-    // 如果还没连接，把这个设备作为对手
-    if (!peerConnected) {
-        memcpy(peerMac, mac, 6);
-        peerConnected = true;
-        discoveryActive = false;
-        Serial.println("[BattleLink] peer connected (as responder)");
-    }
+    getMyMac(myMac);
+    if (memcmp(advert.mac, myMac, 6) == 0) return;
+    if (roomState != RoomState::SEARCHING) return;
+    Serial.printf("[BattleLink] room advert from %02X:%02X room=%d\n",
+                  mac[0], mac[5], advert.room_id);
+    addOrUpdateRoom(advert.mac, advert.room_id);
 }
 
-void BattleLink::handleDiscoverAck(const uint8_t* mac, const uint8_t* data, uint8_t len) {
-    if (len != sizeof(discover_msg_t)) return;
-    if (peerConnected) return;
-
-    discover_msg_t d;
-    memcpy(&d, data, sizeof(d));
-
+void BattleLink::handleJoinReq(const uint8_t* mac, const join_req_t& req) {
     uint8_t myMac[6];
-    WiFi.macAddress(myMac);
-    if (memcmp(d.mac, myMac, 6) == 0) return;
+    getMyMac(myMac);
+    if (memcmp(req.mac, myMac, 6) == 0) return;
+    if (roomState != RoomState::HOSTING) return;
+    if (req.room_id != hostedRoomId) return;
+    if (pendingJoinReq) return;  // 只保留一个请求
+    pendingJoinReq = true;
+    pendingJoinReqData = req;
+    Serial.printf("[BattleLink] join req for room=%d from %02X:%02X\n",
+                  req.room_id, mac[0], mac[5]);
+}
 
-    memcpy(peerMac, mac, 6);
-    peerConnected = true;
-    discoveryActive = false;
-    Serial.printf("[BattleLink] peer connected (as initiator) %02X...%02X\n", mac[0], mac[5]);
+void BattleLink::handleJoinAck(const uint8_t* mac, const join_ack_t& ack) {
+    (void)mac;
+    if (roomState != RoomState::SEARCHING) return;
+    pendingJoinAck = true;
+    pendingJoinAckData = ack;
+    Serial.printf("[BattleLink] join ack accepted=%d\n", ack.accepted);
+}
+
+void BattleLink::handleReady(const uint8_t* mac, const battle_ready_t& ready) {
+    (void)mac;
+    if (!battlePeerSet) return;
+    pendingReady = true;
+    pendingReadyData = ready;
+    queueAck(mac, MSG_BATTLE_READY);
+    Serial.printf("[BattleLink] ready received: round=%d mot=%d\n", ready.round_num, ready.my_mot);
 }
 
 void BattleLink::handleSync(const uint8_t* mac, const battle_sync_t& sync) {
     (void)mac;
+    if (!battlePeerSet) return;
     pendingSync = true;
     pendingSyncData = sync;
     queueAck(mac, MSG_BATTLE_SYNC);
@@ -329,15 +463,17 @@ void BattleLink::handleSync(const uint8_t* mac, const battle_sync_t& sync) {
 
 void BattleLink::handleRound(const uint8_t* mac, const battle_round_t& round) {
     (void)mac;
+    if (!battlePeerSet) return;
     pendingRound = true;
     pendingRoundData = round;
     queueAck(mac, MSG_BATTLE_ROUND);
-    Serial.printf("[BattleLink] round %d received: dmg=%d hp=%d mot=%d crit=%d\n",
-                  round.round_num, round.my_dmg, round.my_hp, round.my_mot, round.my_crit);
+    Serial.printf("[BattleLink] round %d received: hDmg=%d cDmg=%d hHp=%d cHp=%d\n",
+                  round.round_num, round.host_dmg, round.client_dmg, round.host_hp, round.client_hp);
 }
 
 void BattleLink::handleResult(const uint8_t* mac, const battle_result_t& result) {
     (void)mac;
+    if (!battlePeerSet) return;
     pendingResult = true;
     pendingResultWin = (result.win != 0);
     queueAck(mac, MSG_BATTLE_RESULT);
@@ -354,36 +490,32 @@ void BattleLink::handleAck(const uint8_t* mac, const ack_msg_t& ack) {
     }
 }
 
-void BattleLink::queueAck(const uint8_t mac[6], uint8_t ackedType) {
-    pendingAck = true;
-    memcpy(pendingAckMac, mac, 6);
-    pendingAckType = ackedType;
-    Serial.printf("[BattleLink] ack queued for type=%d\n", ackedType);
-}
-
 // ============================================================
 // 轮询
 // ============================================================
 void BattleLink::update() {
     uint32_t now = Hal::ins().millis();
 
-    // 发现广播
-    if (discoveryActive) {
-        if (now - discoveryStartMs > DISCOVER_TIMEOUT_MS) {
-            connectFailed = true;
-            discoveryActive = false;
-            Serial.println("[BattleLink] discovery timeout");
-        } else if (now - lastDiscoverBroadcastMs > DISCOVER_INTERVAL_MS) {
+    // 房主广播房间
+    if (roomState == RoomState::HOSTING) {
+        if (now - lastRoomAdvertMs >= ROOM_ADVERT_INTERVAL_MS) {
             if (!sendBusy) {
                 ensureBroadcastPeer();
-                discover_msg_t d = { MSG_DISCOVER, {0} };
-                WiFi.macAddress(d.mac);
+                room_advert_t advert;
+                advert.type = MSG_ROOM_ADVERT;
+                getMyMac(advert.mac);
+                advert.room_id = hostedRoomId;
                 sendBusy = true;
-                esp_err_t err = esp_now_send(BROADCAST_MAC, (uint8_t*)&d, sizeof(d));
+                esp_err_t err = esp_now_send(BROADCAST_MAC, (uint8_t*)&advert, sizeof(advert));
                 if (err != ESP_OK) sendBusy = false;
-                lastDiscoverBroadcastMs = now;
+                lastRoomAdvertMs = now;
             }
         }
+    }
+
+    // 搜索者清理过期房间
+    if (roomState == RoomState::SEARCHING) {
+        expireRooms();
     }
 
     // ACK 超时重试
@@ -409,4 +541,53 @@ void BattleLink::update() {
         sendInternal(pendingAckMac, (uint8_t*)&ack, sizeof(ack));
         pendingAck = false;
     }
+}
+
+// ============================================================
+// 房间列表管理
+// ============================================================
+void BattleLink::addOrUpdateRoom(const uint8_t* mac, uint8_t roomId) {
+    uint32_t now = Hal::ins().millis();
+    // 查找是否已存在
+    for (uint8_t i = 0; i < MAX_ROOM_LIST; i++) {
+        if (roomList[i].lastSeenMs != 0 && memcmp(roomList[i].mac, mac, 6) == 0) {
+            roomList[i].room_id = roomId;
+            roomList[i].lastSeenMs = now;
+            return;
+        }
+    }
+    // 找空位或最旧的条目
+    uint8_t slot = 0xFF;
+    uint32_t oldest = now;
+    for (uint8_t i = 0; i < MAX_ROOM_LIST; i++) {
+        if (roomList[i].lastSeenMs == 0) {
+            slot = i;
+            break;
+        }
+        if (roomList[i].lastSeenMs < oldest) {
+            oldest = roomList[i].lastSeenMs;
+            slot = i;
+        }
+    }
+    if (slot < MAX_ROOM_LIST) {
+        memcpy(roomList[slot].mac, mac, 6);
+        roomList[slot].room_id = roomId;
+        roomList[slot].lastSeenMs = now;
+    }
+}
+
+void BattleLink::expireRooms() {
+    uint32_t now = Hal::ins().millis();
+    for (uint8_t i = 0; i < MAX_ROOM_LIST; i++) {
+        if (roomList[i].lastSeenMs != 0 && now - roomList[i].lastSeenMs >= ROOM_ENTRY_TIMEOUT_MS) {
+            roomList[i].lastSeenMs = 0;
+        }
+    }
+}
+
+void BattleLink::queueAck(const uint8_t mac[6], uint8_t ackedType) {
+    pendingAck = true;
+    memcpy(pendingAckMac, mac, 6);
+    pendingAckType = ackedType;
+    Serial.printf("[BattleLink] ack queued for type=%d\n", ackedType);
 }

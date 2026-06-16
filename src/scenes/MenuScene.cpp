@@ -165,7 +165,7 @@ void MenuScene::executeSelection() {
             nextScene = SCENE_TERRARIUM;
             break;
         case FIGHT:
-            nextScene = SCENE_BATTLE;
+            nextScene = SCENE_LOBBY;
             break;
         case SETTINGS:
             nextScene = SCENE_SETTINGS;

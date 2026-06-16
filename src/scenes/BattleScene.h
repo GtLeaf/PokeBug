@@ -63,8 +63,16 @@ private:
 
     // 同步/发送状态
     bool syncSent = false;
+    bool syncAcked = false;
+    bool foeSyncReceived = false;
     bool roundSent = false;
     bool resultSent = false;
+
+    // 主机 authoritative 发送缓冲（处理 sendBusy 导致的延迟/重试）
+    bool roundComputed = false;
+    battle_round_t hostRound;
+    bool hasPendingClientReady = false;
+    battle_ready_t pendingClientReady;
 
     // 日志看门狗：每 2 秒打印一次当前状态，便于定位卡死
     State lastLoggedState = State::CONNECTING;
@@ -72,10 +80,10 @@ private:
     void maybeLogStateStall();
 
     void initFromBug();
-    void buildSync();
+    bool buildSync();
     void startRound();
-    void computeClash();
-    void applyRoundResult();
+    battle_round_t computeAuthoritativeRound();
+    void applyAuthoritativeRound(const battle_round_t& round);
     void computeAndSendResult();
     void applyBattleResult();
 

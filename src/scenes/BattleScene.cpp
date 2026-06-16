@@ -10,18 +10,20 @@ void BattleScene::onEnter() {
     resultApplied = false;
     noOpponent = false;
     syncSent = false;
+    syncAcked = false;
+    foeSyncReceived = false;
     roundSent = false;
     resultSent = false;
+    roundComputed = false;
+    hasPendingClientReady = false;
     meShakeEndMs = 0;
     enemyShakeEndMs = 0;
     initFromBug();
     BattleLink::ins().begin();
-    BattleLink::ins().startDiscovery();
     stateStartMs = Hal::ins().millis();
 }
 
 void BattleScene::onExit() {
-    BattleLink::ins().stopDiscovery();
     BattleLink::ins().end();
 }
 
@@ -42,7 +44,7 @@ void BattleScene::initFromBug() {
     enemy = me;  // 占位，等待同步后覆盖
 }
 
-void BattleScene::buildSync() {
+bool BattleScene::buildSync() {
     Bug& bug = GameEngine::ins().getBug();
     battle_sync_t sync;
     sync.type = MSG_BATTLE_SYNC;
@@ -53,7 +55,7 @@ void BattleScene::buildSync() {
     sync.motivation = bug.getMot();
     sync.hunger = bug.getHunger();
     sync.palette_id = bug.getPaletteId();
-    BattleLink::ins().sendSync(sync);
+    return BattleLink::ins().sendSync(sync);
 }
 
 SceneID BattleScene::update() {
@@ -61,47 +63,63 @@ SceneID BattleScene::update() {
 
     switch (state) {
         case State::CONNECTING: {
-            if (BattleLink::ins().isPeerConnected()) {
+            if (BattleLink::ins().isBattlePeerSet()) {
                 state = State::SYNCING;
                 syncSent = false;
-                Serial.println("[BattleScene] peer connected, syncing");
-            } else if (BattleLink::ins().getConnectState() == BattleLink::ConnectState::FAILED) {
-                state = State::DONE;
+                Serial.println("[BattleScene] peer set by lobby, syncing");
+            } else {
+                Serial.println("[BattleScene] no battle peer -> NO FOE");
                 noOpponent = true;
                 localWin = false;
+                state = State::DONE;
             }
             break;
         }
 
         case State::SYNCING: {
             if (!syncSent) {
-                buildSync();
-                syncSent = true;
-                stateStartMs = Hal::ins().millis();
-                Serial.println("[BattleScene] sync sent, waiting opponent sync");
-            }
-            battle_sync_t sync;
-            if (BattleLink::ins().takeReceivedSync(sync)) {
-                enemy.siz = sync.siz;
-                enemy.str = sync.str;
-                enemy.end = sync.end;
-                enemy.spi = sync.spi;
-                enemy.mot = sync.motivation;
-                enemy.palette = sync.palette_id;
-                enemy.maxHp = BattleCalc::computeHp(enemy.siz, enemy.end);
-                enemy.hp = enemy.maxHp;
-                startRound();
-                Serial.println("[BattleScene] sync done, round 1");
-                break;
-            }
-            // 检测发送失败或超时
-            if (syncSent && !BattleLink::ins().isSending()) {
-                if (!BattleLink::ins().takeLastSendSuccess()) {
-                    Serial.println("[BattleScene] sync send failed");
+                if (buildSync()) {
+                    syncSent = true;
+                    stateStartMs = Hal::ins().millis();
+                    Serial.println("[BattleScene] sync sent, waiting opponent sync");
+                } else {
+                    Serial.println("[BattleScene] sync send failed, retry");
+                }
+            } else if (!syncAcked && !BattleLink::ins().isSending()) {
+                if (BattleLink::ins().takeLastSendSuccess()) {
+                    syncAcked = true;
+                    Serial.println("[BattleScene] sync acked");
+                } else {
+                    syncSent = false;
+                    Serial.println("[BattleScene] sync send failed, retry");
                 }
             }
+
+            if (!foeSyncReceived) {
+                battle_sync_t sync;
+                if (BattleLink::ins().takeReceivedSync(sync)) {
+                    enemy.siz = sync.siz;
+                    enemy.str = sync.str;
+                    enemy.end = sync.end;
+                    enemy.spi = sync.spi;
+                    enemy.mot = sync.motivation;
+                    enemy.palette = sync.palette_id;
+                    enemy.maxHp = BattleCalc::computeHp(enemy.siz, enemy.end);
+                    enemy.hp = enemy.maxHp;
+                    foeSyncReceived = true;
+                    Serial.printf("[BattleScene] foe sync received, I am %s\n",
+                                  BattleLink::ins().isHost() ? "HOST" : "CLIENT");
+                }
+            }
+
+            if (syncAcked && foeSyncReceived) {
+                Serial.printf("[BattleScene] sync done, I am %s\n",
+                              BattleLink::ins().isHost() ? "HOST" : "CLIENT");
+                startRound();
+            }
+
             if (Hal::ins().millis() - stateStartMs >= SYNC_TIMEOUT_MS) {
-                Serial.println("[BattleScene] sync timeout");
+                Serial.println("[BattleScene] sync timeout -> NO FOE");
                 noOpponent = true;
                 state = State::DONE;
             }
@@ -124,40 +142,85 @@ SceneID BattleScene::update() {
         }
 
         case State::CLASH: {
-            if (!roundSent) {
-                computeClash();
-                battle_round_t round;
-                round.type = MSG_BATTLE_ROUND;
-                round.round_num = (uint8_t)roundNum;
-                round.my_dmg = (uint8_t)myDmg;
-                round.my_hp = (uint8_t)me.hp;
-                round.my_mot = me.mot;
-                round.my_crit = myCrit ? 1 : 0;
-                BattleLink::ins().sendRound(round);
-                roundSent = true;
-                stateStartMs = Hal::ins().millis();
-                Serial.printf("[BattleScene] round %d clash sent, myDmg=%d\n", roundNum, myDmg);
-            }
+            if (BattleLink::ins().isHost()) {
+                // 主机：等从机汇报 MOT，计算完整回合状态后下发
+                // 先尝试取新 ready；再检查是否有缓存的未来回合 ready
+                battle_ready_t ready;
+                bool gotReady = false;
+                if (hasPendingClientReady && pendingClientReady.round_num == roundNum) {
+                    ready = pendingClientReady;
+                    hasPendingClientReady = false;
+                    gotReady = true;
+                } else if (BattleLink::ins().takeReceivedReady(ready)) {
+                    gotReady = true;
+                }
 
-            battle_round_t enemyRound;
-            if (BattleLink::ins().takeReceivedRound(enemyRound)) {
-                enemyDmg = enemyRound.my_dmg;
-                enemyCrit = (enemyRound.my_crit != 0);
-                // 用对方汇报的 HP 更新显示
-                enemy.hp = enemyRound.my_hp;
-                enemy.mot = enemyRound.my_mot;
-                applyRoundResult();
-                state = State::ROUND_END;
-                stateStartMs = Hal::ins().millis();
-                break;
-            }
-            if (roundSent && !BattleLink::ins().isSending()) {
-                if (!BattleLink::ins().takeLastSendSuccess()) {
-                    Serial.printf("[BattleScene] round %d send failed\n", roundNum);
+                if (gotReady) {
+                    if (ready.round_num == roundNum) {
+                        enemy.mot = ready.my_mot;
+                        if (!roundComputed) {
+                            hostRound = computeAuthoritativeRound();
+                            roundComputed = true;
+                            Serial.printf("[BattleScene] host round %d computed\n", roundNum);
+                        }
+                    } else if (ready.round_num > roundNum) {
+                        // 从机已跑到下一回合，缓存 ready 等主机追上
+                        pendingClientReady = ready;
+                        hasPendingClientReady = true;
+                        Serial.printf("[BattleScene] host ready future got=%d expected=%d, buffered\n",
+                                      ready.round_num, roundNum);
+                    } else {
+                        Serial.printf("[BattleScene] host ready round mismatch got=%d expected=%d\n",
+                                      ready.round_num, roundNum);
+                    }
+                }
+
+                // 已拿到从机 MOT 并计算出回合，持续重试发送直到 ACK 成功
+                if (roundComputed && !roundSent && !BattleLink::ins().isSending()) {
+                    if (BattleLink::ins().takeLastSendSuccess()) {
+                        applyAuthoritativeRound(hostRound);
+                        roundSent = true;
+                        state = State::ROUND_END;
+                        stateStartMs = Hal::ins().millis();
+                        Serial.printf("[BattleScene] host round %d sent and acked\n", roundNum);
+                    } else if (BattleLink::ins().sendRound(hostRound)) {
+                        Serial.printf("[BattleScene] host round %d send queued\n", roundNum);
+                    } else {
+                        Serial.println("[BattleScene] host sendRound failed, retry");
+                    }
+                }
+            } else {
+                // 从机：发送本回合 MOT（含加油），等待主机下发的完整状态
+                if (!roundSent) {
+                    battle_ready_t ready;
+                    ready.type = MSG_BATTLE_READY;
+                    ready.round_num = (uint8_t)roundNum;
+                    ready.my_mot = me.mot;
+                    if (BattleLink::ins().sendReady(ready)) {
+                        roundSent = true;
+                        Serial.printf("[BattleScene] client round %d ready sent mot=%d\n", roundNum, me.mot);
+                    } else {
+                        Serial.println("[BattleScene] client sendReady failed, retry");
+                    }
+                }
+
+                battle_round_t round;
+                if (BattleLink::ins().takeReceivedRound(round)) {
+                    if (round.round_num == roundNum) {
+                        applyAuthoritativeRound(round);
+                        state = State::ROUND_END;
+                        stateStartMs = Hal::ins().millis();
+                        Serial.printf("[BattleScene] client round %d applied\n", roundNum);
+                    } else {
+                        Serial.printf("[BattleScene] client round mismatch got=%d expected=%d\n",
+                                      round.round_num, roundNum);
+                    }
+                    break;
                 }
             }
+
             if (Hal::ins().millis() - stateStartMs >= ROUND_TIMEOUT_MS) {
-                Serial.printf("[BattleScene] round %d timeout\n", roundNum);
+                Serial.printf("[BattleScene] round %d timeout -> NO FOE\n", roundNum);
                 noOpponent = true;
                 state = State::DONE;
             }
@@ -170,7 +233,8 @@ SceneID BattleScene::update() {
                 if (me.hp <= 0 || enemy.hp <= 0) {
                     state = State::RESULT;
                     resultSent = false;
-                    Serial.println("[BattleScene] round end -> result");
+                    Serial.printf("[BattleScene] round end -> result (me.hp=%d enemy.hp=%d)\n",
+                                  me.hp, enemy.hp);
                 } else {
                     roundNum++;
                     startRound();
@@ -193,7 +257,7 @@ SceneID BattleScene::update() {
                 applyBattleResult();
                 state = State::DONE;
                 stateStartMs = Hal::ins().millis();
-                Serial.println("[BattleScene] result received, battle done");
+                Serial.printf("[BattleScene] result received enemyWin=%d -> DONE\n", enemyWin);
                 break;
             }
             if (resultSent && !BattleLink::ins().isSending()) {
@@ -202,7 +266,7 @@ SceneID BattleScene::update() {
                 }
             }
             if (Hal::ins().millis() - stateStartMs >= RESULT_TIMEOUT_MS) {
-                Serial.println("[BattleScene] result timeout");
+                Serial.println("[BattleScene] result timeout -> DONE");
                 applyBattleResult();
                 state = State::DONE;
             }
@@ -223,7 +287,7 @@ void BattleScene::maybeLogStateStall() {
     uint32_t now = Hal::ins().millis();
     if (state != lastLoggedState || now - lastStateLogMs >= 2000) {
         Serial.printf("[BattleScene] state=%d round=%d peer=%d sendIdle=%d elapsed=%u\n",
-                      (int)state, roundNum, BattleLink::ins().isPeerConnected(),
+                      (int)state, roundNum, BattleLink::ins().isBattlePeerSet(),
                       BattleLink::ins().isSendIdle(), now - stateStartMs);
         lastLoggedState = state;
         lastStateLogMs = now;
@@ -239,34 +303,77 @@ void BattleScene::startRound() {
     myCrit = false;
     enemyCrit = false;
     roundSent = false;
+    roundComputed = false;
+    // 若缓存的从机 ready 属于下一回合则保留，否则丢弃
+    if (hasPendingClientReady && pendingClientReady.round_num != roundNum) {
+        hasPendingClientReady = false;
+    }
     Serial.printf("[BattleScene] round %d start\n", roundNum);
 }
 
-void BattleScene::computeClash() {
-    myDmg = BattleCalc::computeDamage(me.str, me.siz, enemy.end, me.spi, me.mot, myCrit);
-    // 我方出招，敌方受击晃动
-    if (myDmg > 0 && Hal::ins().millis() >= enemyShakeEndMs) {
-        enemyShakeEndMs = Hal::ins().millis() + SHAKE_MS;
-    }
+battle_round_t BattleScene::computeAuthoritativeRound() {
+    battle_round_t round;
+    round.type = MSG_BATTLE_ROUND;
+    round.round_num = (uint8_t)roundNum;
+
+    bool hostCrit = false, clientCrit = false;
+    round.host_dmg = (uint8_t)BattleCalc::computeDamage(me.str, me.siz, enemy.end, me.spi, me.mot, hostCrit);
+    round.client_dmg = (uint8_t)BattleCalc::computeDamage(enemy.str, enemy.siz, me.end, enemy.spi, enemy.mot, clientCrit);
+
+    int hostHp = me.hp - (int)round.client_dmg;
+    int clientHp = enemy.hp - (int)round.host_dmg;
+    if (hostHp < 0) hostHp = 0;
+    if (clientHp < 0) clientHp = 0;
+    round.host_hp = (uint8_t)hostHp;
+    round.client_hp = (uint8_t)clientHp;
+
+    int hostMotLoss = BattleCalc::computeMotLoss(me.spi);
+    int clientMotLoss = BattleCalc::computeMotLoss(enemy.spi);
+    int hostMot = (int)me.mot - hostMotLoss;
+    int clientMot = (int)enemy.mot - clientMotLoss;
+    if (hostMot < 0) hostMot = 0;
+    if (clientMot < 0) clientMot = 0;
+    round.host_mot = (uint8_t)hostMot;
+    round.client_mot = (uint8_t)clientMot;
+
+    round.crits = (hostCrit ? 0x01 : 0x00) | (clientCrit ? 0x02 : 0x00);
+
+    myCrit = hostCrit;
+    enemyCrit = clientCrit;
+    myDmg = round.host_dmg;
+    enemyDmg = round.client_dmg;
+
+    return round;
 }
 
-void BattleScene::applyRoundResult() {
-    me.hp -= enemyDmg;
-    if (me.hp < 0) me.hp = 0;
-
-    // 敌方出招，我方受击晃动
-    if (enemyDmg > 0) {
-        meShakeEndMs = Hal::ins().millis() + SHAKE_MS;
+void BattleScene::applyAuthoritativeRound(const battle_round_t& round) {
+    if (BattleLink::ins().isHost()) {
+        me.hp = round.host_hp;
+        enemy.hp = round.client_hp;
+        me.mot = round.host_mot;
+        enemy.mot = round.client_mot;
+        myDmg = round.host_dmg;
+        enemyDmg = round.client_dmg;
+        myCrit = (round.crits & 0x01) != 0;
+        enemyCrit = (round.crits & 0x02) != 0;
+    } else {
+        me.hp = round.client_hp;
+        enemy.hp = round.host_hp;
+        me.mot = round.client_mot;
+        enemy.mot = round.host_mot;
+        myDmg = round.client_dmg;
+        enemyDmg = round.host_dmg;
+        myCrit = (round.crits & 0x02) != 0;
+        enemyCrit = (round.crits & 0x01) != 0;
     }
 
-    int motLoss = BattleCalc::computeMotLoss(me.spi);
-    if (me.mot > motLoss) me.mot -= motLoss;
-    else me.mot = 0;
+    if (enemyDmg > 0) meShakeEndMs = Hal::ins().millis() + SHAKE_MS;
+    if (myDmg > 0) enemyShakeEndMs = Hal::ins().millis() + SHAKE_MS;
 
     flashThisFrame = myCrit || enemyCrit;
 
-    Serial.printf("[BattleScene] round %d: myDmg=%d enemyDmg=%d myHp=%d enemyHp=%d\n",
-                  roundNum, myDmg, enemyDmg, me.hp, enemy.hp);
+    Serial.printf("[BattleScene] round %d applied: hostDmg=%d clientDmg=%d hostHp=%d clientHp=%d\n",
+                  roundNum, round.host_dmg, round.client_dmg, round.host_hp, round.client_hp);
 }
 
 void BattleScene::computeAndSendResult() {

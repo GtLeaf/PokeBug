@@ -658,17 +658,19 @@ motivation = max(0, motivation - mot_loss);
 
 ```
 双方都选对战 → 广播发现 → 收到对方广播 → 互相配对
-→ 交换属性(battle_sync_t) → 自动对战 → 交换回合结果 → 结算
+→ 进入 LobbyScene → 创建房间 / 搜索房间列表 → 加入确认 → 交换属性(battle_sync_t) → 主机 authoritative 自动对战 → 结算
 
-发现流程:
-- 广播: esp_now_send(broadcast, {type:DISCOVER, my_mac})
-- 收到: esp_now_add_peer(sender_mac), 回复 {type:DISCOVER_ACK}
-- 配对成功: LED常亮, 开始对战
-- 超时10秒: LED灭, 返回菜单
+房间流程:
+- 创建房间: 生成 room_id, 广播 `MSG_ROOM_ADVERT`
+- 搜索房间: 监听 `MSG_ROOM_ADVERT`, 列表展示附近房间
+- 加入房间: 选中房间后发送 `MSG_JOIN_REQ`, 等待房主 `MSG_JOIN_ACK`
+- 配对成功: 房主为主机, 加入者为从机, 开始对战
+- 超时: 返回大厅重试
 
 对战通信:
-- 双方同时计算伤害(各自用对方属性), 回合结果互相发送
-- 这样避免了"谁算谁不算"的主从问题
+- 主机统一计算双方伤害、HP、MOT，通过 `battle_round_t` 下发完整状态
+- 从机在冲锋结束后通过 `MSG_BATTLE_READY` 上报本回合 MOT（含按 A 加油）给主机
+- 这样保证双方 HP/胜负完全一致，避免主从分歧
 ```
 
 > 4人房间管理（房主/加入/观战/掉线处理）代码量大，且不是养成核心。
@@ -678,15 +680,17 @@ motivation = max(0, motivation - mot_loss);
 ### 9.7 对战流程
 
 ```
-对战开始 → 交换属性 → 计算双方HP → 自动战斗直到一方HP归零 → 结算
+对战开始 → 交换属性 → 自动战斗直到一方HP归零 → 结算
 
 每回合(约4秒):
   1. 双方甲虫冲锋动画（~1秒）
   2. 玩家可在冲锋动画中按A → MOT+15（每回合1次）
-  3. 双方同时出伤害（按公式计算）
-  4. 暴击时播放特殊动画 + 屏幕微闪
-  5. 更新HP + MOT衰减（MOT-8+SPI/2）
-  6. 某方HP≤0 → 战斗结束
+  3. 从机通过 `MSG_BATTLE_READY` 上报当前 MOT 给主机
+  4. 主机按公式统一计算双方伤害、暴击、HP、MOT
+  5. 主机通过 `MSG_BATTLE_ROUND` 下发完整回合状态
+  6. 双方按主机状态更新画面：暴击时播放特殊动画 + 屏幕微闪 + 受击晃动
+  7. 更新HP + MOT衰减（MOT-8+SPI/2）
+  8. 某方HP≤0 → 战斗结束
   一方HP归零后结算；若因通信异常中断，按当前已计算的HP百分比判定
 
 战后:

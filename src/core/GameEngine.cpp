@@ -4,6 +4,7 @@
 #include "../scenes/MenuScene.h"
 #include "../scenes/InfoScene.h"
 #include "../scenes/SettingsScene.h"
+#include "../scenes/LobbyScene.h"
 #include "../scenes/BattleScene.h"
 
 GameEngine& GameEngine::ins() {
@@ -187,6 +188,9 @@ void GameEngine::switchScene(SceneID id) {
             break;
         case SCENE_SETTINGS:
             curScene = new SettingsScene();
+            break;
+        case SCENE_LOBBY:
+            curScene = new LobbyScene();
             break;
         case SCENE_BATTLE:
             curScene = new BattleScene();

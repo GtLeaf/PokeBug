@@ -8,6 +8,7 @@ enum SceneID {
     SCENE_MENU,         // 图标菜单
     SCENE_INFO,         // 属性信息页
     SCENE_SETTINGS,     // 设置
+    SCENE_LOBBY,        // 对战房间大厅（创建/搜索）
     SCENE_BATTLE,       // 对战
 };
 

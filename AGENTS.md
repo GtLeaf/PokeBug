@@ -54,6 +54,7 @@ src/
 └── scenes/                       # 场景实现
     ├── TerrariumScene.{h,cpp}    # 培养缸主场景
     ├── MenuScene.{h,cpp}         # 图标菜单
+    ├── LobbyScene.{h,cpp}        # 对战大厅（创建/搜索房间）
     ├── InfoScene.{h,cpp}         # 属性信息页
     ├── SettingsScene.{h,cpp}     # 设置界面（亮度/字体/速度/idle/重置）
     └── BattleScene.{h,cpp}       # 对战场景
@@ -162,8 +163,10 @@ pio run --target clean
 
 ### 5.4 对战
 
-- 通过 `BattleLink` 广播发现 → 配对 → 同步属性 → 自动战斗直到一方 HP 归零 → 结算。
-- 每回合冲锋阶段可按 A 加油，MOT +15。
+- 通过 `LobbyScene` 进入对战大厅：创建房间或搜索附近房间，选择后加入。
+- 房主（创建者）自动成为 **主机 authoritative**，统一计算双方伤害、HP、MOT；加入者为从机，按主机下发的状态更新画面。
+- 同步属性后自动战斗直到一方 HP 归零 → 结算。
+- 每回合冲锋阶段可按 A 加油，MOT +15；从机加油后的 MOT 会在 CLASH 阶段通过 `MSG_BATTLE_READY` 上报主机。
 - 伤害公式见 `src/game/BattleCalc.h`；通信协议与包结构见 `src/hardware/BattleLink.h`。
 
 ### 5.5 省电
