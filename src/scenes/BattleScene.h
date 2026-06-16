@@ -1,0 +1,88 @@
+#pragma once
+#include "../core/Scene.h"
+#include "../hardware/BattleLink.h"
+
+// 对战场景
+class BattleScene : public Scene {
+public:
+    BattleScene() = default;
+
+    void onEnter() override;
+    void onExit() override;
+    SceneID update() override;
+    void render() override;
+    bool onButton(const ButtonEvent& ev) override;
+
+private:
+    enum class State {
+        CONNECTING,
+        SYNCING,
+        ROUND_START,
+        CHARGE,
+        CLASH,
+        ROUND_END,
+        RESULT,
+        DONE,
+    };
+    State state = State::CONNECTING;
+
+    // 我方/敌方战斗数值
+    struct Combatant {
+        int hp = 0;
+        int maxHp = 0;
+        uint8_t str = 0;
+        uint8_t siz = 0;
+        uint8_t end = 0;
+        uint8_t spi = 0;
+        uint8_t mot = 0;
+        uint8_t palette = 0;
+    };
+    Combatant me;
+    Combatant enemy;
+
+    int roundNum = 1;
+    bool roundBoosted = false;
+
+    // 本回合计算结果
+    int myDmg = 0;
+    bool myCrit = false;
+    int enemyDmg = 0;
+    bool enemyCrit = false;
+    bool flashThisFrame = false;
+
+    // 对战结果
+    bool localWin = false;
+    bool resultApplied = false;
+    bool noOpponent = false;
+
+    uint32_t stateStartMs = 0;
+
+    // 同步/发送状态
+    bool syncSent = false;
+    bool roundSent = false;
+    bool resultSent = false;
+
+    // 日志看门狗：每 2 秒打印一次当前状态，便于定位卡死
+    State lastLoggedState = State::CONNECTING;
+    uint32_t lastStateLogMs = 0;
+    void maybeLogStateStall();
+
+    void initFromBug();
+    void buildSync();
+    void startRound();
+    void computeClash();
+    void applyRoundResult();
+    void computeAndSendResult();
+    void applyBattleResult();
+
+    void drawConnecting();
+    void drawBattleField();
+    void drawResult();
+
+    static constexpr uint32_t CHARGE_MS = 1200;
+    static constexpr uint32_t CLASH_MS = 800;
+    static constexpr uint32_t ROUND_END_MS = 500;
+    static constexpr uint32_t SYNC_TIMEOUT_MS = 5000;
+    static constexpr uint32_t ROUND_TIMEOUT_MS = 5000;
+    static constexpr uint32_t RESULT_TIMEOUT_MS = 5000;
+};

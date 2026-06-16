@@ -1,0 +1,53 @@
+#include <Arduino.h>
+#include "esp_sleep.h"
+#include "core/GameEngine.h"
+#include "core/SaveManager.h"
+#include "hardware/PixelRenderer.h"
+#include "game/Bug.h"
+
+void setup() {
+    Serial.begin(115200);
+    delay(100);
+
+    // Deep Sleep 定时器唤醒：最小化更新路径
+    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+    if (cause == ESP_SLEEP_WAKEUP_TIMER) {
+        Serial.println("[Boot] Deep sleep timer wakeup");
+
+        Bug bug;
+        if (!SaveManager::ins().load(bug)) {
+            bug.initNew(0);
+        }
+
+        float fontScale = 1.5f;
+        uint8_t brightness = 128;
+        float gameSpeed = 1.0f;
+        uint8_t idleTimeout = 0;
+        SaveManager::ins().loadSettings(fontScale, brightness, gameSpeed, idleTimeout);
+
+        // 推进虚拟时间 10 分钟并更新
+        uint64_t gameNow = bug.getLastUpdateTime() + (uint64_t)(600000 * gameSpeed);
+        bug.update(gameNow);
+
+        SaveManager::ins().save(bug);
+        SaveManager::ins().saveSettings(fontScale, brightness, gameSpeed, idleTimeout);
+        Serial.println("[Boot] Bug updated, re-entering deep sleep");
+
+        esp_sleep_enable_timer_wakeup(600 * 1000000ULL);
+        esp_deep_sleep_start();
+    }
+
+    // 正常上电/复位路径
+    Serial.println("[Boot] Starting PokeBug...");
+
+    randomSeed(esp_random());
+
+    GameEngine::ins().begin();
+    PixelRenderer::bind(&Hal::ins().canvas());
+
+    Serial.println("[Boot] Init done");
+}
+
+void loop() {
+    GameEngine::ins().run();
+}
