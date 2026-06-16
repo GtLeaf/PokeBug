@@ -51,12 +51,10 @@ void MenuScene::drawCarousel() {
     static constexpr int CENTER_X = 120;
     static constexpr int CENTER_Y = 60;
     static constexpr int SPACING = 55;
-    // 让 animSelected 以最短路径（循环）追上 selected，产生横向滚动补帧动画
-    // 差值大时提高追及速度，避免快速连按时出现 1s 左右的延迟
+    // 让 animSelected 直接追上 selected，产生横向滚动补帧动画
+    // 差值大时提高追及速度，避免快速连按时出现明显延迟
     float target = (float)selected;
     float diff = target - animSelected;
-    while (diff > ITEM_COUNT / 2.0f) diff -= ITEM_COUNT;
-    while (diff < -ITEM_COUNT / 2.0f) diff += ITEM_COUNT;
 
     float absDiff = fabsf(diff);
     float speed = 0.35f;            // 单步切换的基础速度
@@ -75,9 +73,7 @@ void MenuScene::drawCarousel() {
     for (int i = 0; i < ITEM_COUNT - 1; i++) {
         for (int j = i + 1; j < ITEM_COUNT; j++) {
             float di = fabsf((float)order[i] - animSelected);
-            if (di > ITEM_COUNT / 2.0f) di = ITEM_COUNT - di;
             float dj = fabsf((float)order[j] - animSelected);
-            if (dj > ITEM_COUNT / 2.0f) dj = ITEM_COUNT - dj;
             if (dj < di) {
                 int t = order[i]; order[i] = order[j]; order[j] = t;
             }
@@ -87,8 +83,6 @@ void MenuScene::drawCarousel() {
     for (int k = 0; k < ITEM_COUNT; k++) {
         int i = order[k];
         float rawOffset = (float)i - animSelected;
-        if (rawOffset > ITEM_COUNT / 2.0f) rawOffset -= ITEM_COUNT;
-        if (rawOffset < -ITEM_COUNT / 2.0f) rawOffset += ITEM_COUNT;
 
         int x = (int)(CENTER_X + rawOffset * SPACING);
         float dist = fabsf(rawOffset);
@@ -115,9 +109,12 @@ bool MenuScene::onButton(const ButtonEvent& ev) {
 
     if (ev.action == BtnAction::PRESSED) {
         if (ev.btn == 1) {
-            // B：下一个（循环）
+            // B：下一个（循环），从末尾回到首位时直接跳变
             selected++;
-            if (selected >= ITEM_COUNT) selected = 0;
+            if (selected >= ITEM_COUNT) {
+                selected = 0;
+                animSelected = 0.0f;
+            }
             return true;
         }
         if (ev.btn == 0) {
