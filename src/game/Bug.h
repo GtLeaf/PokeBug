@@ -81,6 +81,8 @@ public:
     static constexpr uint32_t EGG_DURATION_MS     = 10ULL * 1000;   // 测试 10s；设计值 5 min
     static constexpr uint32_t LARVA_DURATION_MS   = 60ULL * 1000;   // 测试 60s；设计值 30 min
     static constexpr uint32_t PUPA_DURATION_MS    = 20ULL * 1000;   // 测试 20s；设计值 10 min
+    static constexpr uint32_t EGG_SHAKE_DELAY_MS  = 30ULL * 1000;   // 每次摇晃卵延长 30s
+    static constexpr uint32_t EGG_SHAKE_DELAY_MAX_MS = 2ULL * 60 * 1000; // 累计最多延长 2min
     static constexpr uint32_t HUNGER_DROP_MS      = 30ULL * 1000;   // 饥饿度每 30s -1
     static constexpr uint32_t STARVE_DEATH_MS     = 5ULL * 60 * 1000; // 饥饿 0 后持续 5min 死亡
     static constexpr uint32_t ADULT_SAP_PRODUCE_MS = 10ULL * 60 * 1000; // 成虫每 10min 产 1 份树汁
@@ -107,6 +109,7 @@ private:
     uint64_t lastFeedTime = 0;
     uint64_t lastSapProduceTime = 0;
     uint64_t lastShakeTrainTime = 0;
+    uint32_t eggShakeDelayAcc = 0;
     uint64_t restStartTime = 0;
     uint64_t lastPokeTime = 0;
 

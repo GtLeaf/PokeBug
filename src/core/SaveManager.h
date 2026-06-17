@@ -19,8 +19,10 @@ public:
     bool hasSave() const;
 
     // 保存/加载全局设置
-    bool saveSettings(float fontScale, uint8_t brightness, float gameSpeed, uint8_t idleTimeout);
-    bool loadSettings(float& fontScale, uint8_t& brightness, float& gameSpeed, uint8_t& idleTimeout);
+    bool saveSettings(float fontScale, uint8_t brightness, float gameSpeed,
+                      uint8_t idleTimeout, uint8_t mainSceneBg);
+    bool loadSettings(float& fontScale, uint8_t& brightness, float& gameSpeed,
+                      uint8_t& idleTimeout, uint8_t& mainSceneBg);
 
 private:
     SaveManager() = default;
@@ -31,8 +33,9 @@ private:
     static constexpr const char* KEY_BRI   = "brightness";
     static constexpr const char* KEY_SPEED = "gamespeed";
     static constexpr const char* KEY_IDLE  = "idletime";
+    static constexpr const char* KEY_BG    = "mainbg";
     static constexpr const char* KEY_VER   = "savever";
-    static constexpr uint8_t SAVE_VERSION = 2;
+    static constexpr uint8_t SAVE_VERSION = 4;
 
     bool isSaving = false;  // 防并发写入锁
 };

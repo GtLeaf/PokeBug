@@ -24,6 +24,7 @@ void Bug::initNew(uint64_t now) {
     lastFeedTime = 0;
     lastSapProduceTime = now;
     lastShakeTrainTime = 0;
+    eggShakeDelayAcc = 0;
     restStartTime = 0;
     lastPokeTime = 0;
 
@@ -125,6 +126,7 @@ void Bug::updateHunger(uint64_t now, uint32_t deltaMs) {
 }
 
 bool Bug::canAdvanceStage(uint64_t now) const {
+    if (now <= stageStartTime) return false;
     uint64_t elapsed = now - stageStartTime;
     switch (stage) {
         case Stage::EGG:
@@ -245,9 +247,15 @@ bool Bug::poke(uint64_t now) {
 bool Bug::onShake(uint64_t now) {
     switch (stage) {
         case Stage::EGG:
-            // 摇晃延长孵化时间：直接推进阶段起始时间
-            if (stageStartTime > 30ULL * 1000) stageStartTime -= 30ULL * 1000;
-            else stageStartTime = 0;
+            // 摇晃延长孵化时间，累计最多 2 分钟。
+            if (eggShakeDelayAcc >= EGG_SHAKE_DELAY_MAX_MS) return false;
+            {
+                uint32_t delay = EGG_SHAKE_DELAY_MS;
+                uint32_t remaining = EGG_SHAKE_DELAY_MAX_MS - eggShakeDelayAcc;
+                if (delay > remaining) delay = remaining;
+                stageStartTime += delay;
+                eggShakeDelayAcc += delay;
+            }
             return true;
 
         case Stage::LARVA:
@@ -312,8 +320,8 @@ void Bug::resetAfterDeath(uint64_t now) {
 }
 
 // ---------- 存档格式 ----------
-// 按设计文档 save_data_t 打包，约 40 字节
-static constexpr uint8_t SAVE_VERSION = 3;
+// 按设计文档 save_data_t 打包，当前 v4 增加卵期摇晃延迟累计值。
+static constexpr uint8_t SAVE_VERSION = 4;
 
 void Bug::save(uint8_t* buf, uint16_t& len) const {
     struct SaveData {
@@ -327,6 +335,7 @@ void Bug::save(uint8_t* buf, uint16_t& len) const {
         uint32_t lastFeed;
         uint32_t lastSap;
         uint32_t lastShake;
+        uint32_t eggShakeDelay;
         uint32_t restStart;
         uint32_t lastUpdate;
         uint32_t lastEat;
@@ -356,6 +365,7 @@ void Bug::save(uint8_t* buf, uint16_t& len) const {
     sd.lastFeed = (uint32_t)(lastFeedTime / 1000ULL);
     sd.lastSap = (uint32_t)(lastSapProduceTime / 1000ULL);
     sd.lastShake = (uint32_t)(lastShakeTrainTime / 1000ULL);
+    sd.eggShakeDelay = eggShakeDelayAcc / 1000UL;
     sd.restStart = (uint32_t)(restStartTime / 1000ULL);
     sd.lastUpdate = (uint32_t)(lastUpdateTime / 1000ULL);
     sd.lastEat = (uint32_t)(lastEatTime / 1000ULL);
@@ -372,7 +382,29 @@ void Bug::save(uint8_t* buf, uint16_t& len) const {
 }
 
 bool Bug::load(const uint8_t* buf, uint16_t len) {
-    struct SaveData {
+    if (len == 0) return false;
+
+    struct SaveDataV2 {
+        uint8_t version;
+        uint8_t geneVIG, geneATK, geneMNT, geneAPP;
+        uint8_t siz, str, end, spi;
+        uint8_t mot, hunger;
+        uint8_t stage, alive;
+        uint8_t sap, rottenWood, woodPlaced;
+        uint32_t stageStart;
+        uint32_t lastFeed;
+        uint32_t lastSap;
+        uint32_t lastShake;
+        uint32_t restStart;
+        uint32_t lastUpdate;
+        uint8_t larvaFeeds, pupaShakes;
+        uint8_t wins, losses;
+        uint8_t generation;
+        uint8_t foodInTray;
+        uint8_t reserved[2];
+    } __attribute__((packed));
+
+    struct SaveDataV3 {
         uint8_t version;
         uint8_t geneVIG, geneATK, geneMNT, geneAPP;
         uint8_t siz, str, end, spi;
@@ -394,8 +426,96 @@ bool Bug::load(const uint8_t* buf, uint16_t len) {
         uint8_t reserved[1];
     } __attribute__((packed));
 
-    if (len != sizeof(SaveData)) return false;
-    const SaveData& sd = *reinterpret_cast<const SaveData*>(buf);
+    struct SaveDataV4 {
+        uint8_t version;
+        uint8_t geneVIG, geneATK, geneMNT, geneAPP;
+        uint8_t siz, str, end, spi;
+        uint8_t mot, hunger;
+        uint8_t stage, alive;
+        uint8_t sap, rottenWood, woodPlaced;
+        uint32_t stageStart;
+        uint32_t lastFeed;
+        uint32_t lastSap;
+        uint32_t lastShake;
+        uint32_t eggShakeDelay;
+        uint32_t restStart;
+        uint32_t lastUpdate;
+        uint32_t lastEat;
+        uint8_t larvaFeeds, pupaShakes;
+        uint8_t wins, losses;
+        uint8_t generation;
+        uint8_t foodInTray;
+        uint8_t foodAmount;
+        uint8_t reserved[1];
+    } __attribute__((packed));
+
+    uint8_t version = buf[0];
+    if (version == 2 && len == sizeof(SaveDataV2)) {
+        const SaveDataV2& sd = *reinterpret_cast<const SaveDataV2*>(buf);
+
+        geneVIG = sd.geneVIG; geneATK = sd.geneATK; geneMNT = sd.geneMNT; geneAPP = sd.geneAPP;
+        this->siz = sd.siz; this->str = sd.str; this->end = sd.end; this->spi = sd.spi;
+        mot = sd.mot;
+        hunger = sd.hunger;
+        stage = (Stage)sd.stage;
+        alive = sd.alive != 0;
+        sap = sd.sap;
+        rottenWood = sd.rottenWood;
+        woodPlaced = sd.woodPlaced != 0;
+        stageStartTime = (uint64_t)sd.stageStart * 1000ULL;
+        lastFeedTime = (uint64_t)sd.lastFeed * 1000ULL;
+        lastSapProduceTime = (uint64_t)sd.lastSap * 1000ULL;
+        lastShakeTrainTime = (uint64_t)sd.lastShake * 1000ULL;
+        eggShakeDelayAcc = 0;
+        restStartTime = (uint64_t)sd.restStart * 1000ULL;
+        lastUpdateTime = (uint64_t)sd.lastUpdate * 1000ULL;
+        lastEatTime = 0;
+        larvaFeeds = sd.larvaFeeds;
+        pupaShakes = sd.pupaShakes;
+        wins = sd.wins;
+        losses = sd.losses;
+        generation = sd.generation;
+        foodInTray = sd.foodInTray != 0;
+        foodAmount = foodInTray ? FOOD_MAX_AMOUNT : 0;
+
+        clampAttributes();
+        return true;
+    }
+
+    if (version == 3 && len == sizeof(SaveDataV3)) {
+        const SaveDataV3& sd = *reinterpret_cast<const SaveDataV3*>(buf);
+
+        geneVIG = sd.geneVIG; geneATK = sd.geneATK; geneMNT = sd.geneMNT; geneAPP = sd.geneAPP;
+        this->siz = sd.siz; this->str = sd.str; this->end = sd.end; this->spi = sd.spi;
+        mot = sd.mot;
+        hunger = sd.hunger;
+        stage = (Stage)sd.stage;
+        alive = sd.alive != 0;
+        sap = sd.sap;
+        rottenWood = sd.rottenWood;
+        woodPlaced = sd.woodPlaced != 0;
+        stageStartTime = (uint64_t)sd.stageStart * 1000ULL;
+        lastFeedTime = (uint64_t)sd.lastFeed * 1000ULL;
+        lastSapProduceTime = (uint64_t)sd.lastSap * 1000ULL;
+        lastShakeTrainTime = (uint64_t)sd.lastShake * 1000ULL;
+        eggShakeDelayAcc = 0;
+        restStartTime = (uint64_t)sd.restStart * 1000ULL;
+        lastUpdateTime = (uint64_t)sd.lastUpdate * 1000ULL;
+        lastEatTime = (uint64_t)sd.lastEat * 1000ULL;
+        larvaFeeds = sd.larvaFeeds;
+        pupaShakes = sd.pupaShakes;
+        wins = sd.wins;
+        losses = sd.losses;
+        generation = sd.generation;
+        foodInTray = sd.foodInTray != 0;
+        foodAmount = sd.foodAmount;
+
+        clampAttributes();
+        return true;
+    }
+
+    if (version != SAVE_VERSION || len != sizeof(SaveDataV4)) return false;
+    const SaveDataV4& sd = *reinterpret_cast<const SaveDataV4*>(buf);
     if (sd.version != SAVE_VERSION) return false;
 
     geneVIG = sd.geneVIG; geneATK = sd.geneATK; geneMNT = sd.geneMNT; geneAPP = sd.geneAPP;
@@ -411,6 +531,8 @@ bool Bug::load(const uint8_t* buf, uint16_t len) {
     lastFeedTime = (uint64_t)sd.lastFeed * 1000ULL;
     lastSapProduceTime = (uint64_t)sd.lastSap * 1000ULL;
     lastShakeTrainTime = (uint64_t)sd.lastShake * 1000ULL;
+    eggShakeDelayAcc = sd.eggShakeDelay * 1000UL;
+    if (eggShakeDelayAcc > EGG_SHAKE_DELAY_MAX_MS) eggShakeDelayAcc = EGG_SHAKE_DELAY_MAX_MS;
     restStartTime = (uint64_t)sd.restStart * 1000ULL;
     lastUpdateTime = (uint64_t)sd.lastUpdate * 1000ULL;
     lastEatTime = (uint64_t)sd.lastEat * 1000ULL;

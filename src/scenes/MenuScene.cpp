@@ -1,11 +1,14 @@
 #include "MenuScene.h"
 #include "../core/GameEngine.h"
+#include "../core/SaveManager.h"
 #include "../hardware/Hal.h"
 #include "../hardware/PixelRenderer.h"
 
 int MenuScene::lastSelected = 0;
+int MenuScene::lastBoxSelected = 0;
 
 void MenuScene::onEnter() {
+    mode = Mode::MAIN;
     // 从培养缸进入时重置；从子菜单返回时保持上次位置
     if (GameEngine::ins().getPrevSceneID() == SCENE_TERRARIUM) {
         selected = 0;
@@ -16,7 +19,11 @@ void MenuScene::onEnter() {
 }
 
 void MenuScene::onExit() {
-    lastSelected = selected;
+    if (mode == Mode::BOX) {
+        lastBoxSelected = selected;
+    } else {
+        lastSelected = selected;
+    }
 }
 
 
@@ -51,15 +58,6 @@ void MenuScene::drawBattery() {
 }
 
 void MenuScene::drawList() {
-    const char* descs[ITEM_COUNT] = {
-        "Info",
-        "Feed",
-        "Wood",
-        "Fight",
-        "Settings",
-        "Back",
-    };
-
     static constexpr int CENTER_Y = Hal::DISPLAY_H / 2;
     static constexpr int SPACING = 42;
     static constexpr float LERP = 0.25f;
@@ -77,10 +75,11 @@ void MenuScene::drawList() {
     }
 
     // 按距离中心远近排序，确保选中项最后画
-    int order[ITEM_COUNT];
-    for (int i = 0; i < ITEM_COUNT; i++) order[i] = i;
-    for (int i = 0; i < ITEM_COUNT - 1; i++) {
-        for (int j = i + 1; j < ITEM_COUNT; j++) {
+    int count = itemCount();
+    int order[MAIN_ITEM_COUNT];
+    for (int i = 0; i < count; i++) order[i] = i;
+    for (int i = 0; i < count - 1; i++) {
+        for (int j = i + 1; j < count; j++) {
             float di = fabsf((float)order[i] - animSelected);
             float dj = fabsf((float)order[j] - animSelected);
             if (dj < di) {
@@ -93,7 +92,7 @@ void MenuScene::drawList() {
     static constexpr int BOX_H = 32;
     int boxX = (int)(10 * fs);
 
-    for (int k = 0; k < ITEM_COUNT; k++) {
+    for (int k = 0; k < count; k++) {
         int i = order[k];
         float rawOffset = (float)i - animSelected;
         int y = CENTER_Y + (int)(rawOffset * SPACING);
@@ -109,12 +108,14 @@ void MenuScene::drawList() {
         PixelRenderer::fillRect(boxX, y - drawBoxH / 2, drawBoxW, drawBoxH, boxColor);
 
         // 右侧说明文字，与色块垂直中心对齐；未选中时半透明（灰色）
+        char label[24];
+        const char* desc = itemLabel(i, label, sizeof(label));
         canvas.setTextSize(fs);
-        int tw = canvas.textWidth(descs[i]);
+        int tw = canvas.textWidth(desc);
         int th = (int)(8 * fs);
         int descX = (boxX + drawBoxW + (int)(10 * fs) + Hal::DISPLAY_W) / 2;
         int descY = y - th / 2;
-        PixelRenderer::drawPixelText(descX - tw / 2, descY, descs[i], descColor, fs);
+        PixelRenderer::drawPixelText(descX - tw / 2, descY, desc, descColor, fs);
     }
 }
 
@@ -126,8 +127,12 @@ bool MenuScene::onButton(const ButtonEvent& ev) {
             return true;
         }
         if (ev.btn == 1) {
-            // 长按 B：返回上一级（培养缸）
-            nextScene = SCENE_TERRARIUM;
+            // 长按 B：返回上一级
+            if (mode == Mode::BOX) {
+                enterMode(Mode::MAIN);
+            } else {
+                nextScene = SCENE_TERRARIUM;
+            }
             return true;
         }
     }
@@ -136,7 +141,7 @@ bool MenuScene::onButton(const ButtonEvent& ev) {
         if (ev.btn == 1) {
             // B：下一个（循环），从末尾跳回首项时直接跳变
             selected++;
-            if (selected >= ITEM_COUNT) {
+            if (selected >= itemCount()) {
                 selected = 0;
                 animSelected = 0.0f;
             }
@@ -154,6 +159,26 @@ bool MenuScene::onButton(const ButtonEvent& ev) {
 
 void MenuScene::executeSelection() {
     Bug& bug = GameEngine::ins().getBug();
+    if (mode == Mode::BOX) {
+        switch (selected) {
+            case BOX_WOOD:
+                if (bug.placeWood()) {
+                    Serial.println("[Menu] Placed wood");
+                }
+                nextScene = SCENE_TERRARIUM;
+                break;
+            case BOX_BG:
+                GameEngine::ins().cycleMainSceneBg();
+                saveSettingsNow();
+                Serial.printf("[Menu] Main scene bg: %s\n", GameEngine::ins().getMainSceneBgName());
+                break;
+            case BOX_BACK:
+                enterMode(Mode::MAIN);
+                break;
+        }
+        return;
+    }
+
     switch (selected) {
         case FEED:
             if (bug.placeSapInTray()) {
@@ -161,11 +186,8 @@ void MenuScene::executeSelection() {
             }
             nextScene = SCENE_TERRARIUM;
             break;
-        case WOOD:
-            if (bug.placeWood()) {
-                Serial.println("[Menu] Placed wood");
-            }
-            nextScene = SCENE_TERRARIUM;
+        case BOX:
+            enterMode(Mode::BOX);
             break;
         case FIGHT:
             nextScene = SCENE_LOBBY;
@@ -180,4 +202,55 @@ void MenuScene::executeSelection() {
             nextScene = SCENE_TERRARIUM;
             break;
     }
+}
+
+void MenuScene::enterMode(Mode nextMode) {
+    if (mode == Mode::BOX) lastBoxSelected = selected;
+    else lastSelected = selected;
+
+    mode = nextMode;
+    selected = (mode == Mode::BOX) ? lastBoxSelected : lastSelected;
+    int count = itemCount();
+    if (selected >= count) selected = 0;
+    animSelected = (float)selected;
+}
+
+int MenuScene::itemCount() const {
+    return mode == Mode::BOX ? BOX_ITEM_COUNT : MAIN_ITEM_COUNT;
+}
+
+const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
+    if (mode == Mode::BOX) {
+        switch (index) {
+            case BOX_WOOD:
+                return "Wood";
+            case BOX_BG:
+                snprintf(buf, bufSize, "BG:%s", GameEngine::ins().getMainSceneBgName());
+                return buf;
+            case BOX_BACK:
+            default:
+                return "Back";
+        }
+    }
+
+    switch (index) {
+        case INFO: return "Info";
+        case FEED: return "Feed";
+        case BOX: return "Box";
+        case FIGHT: return "Fight";
+        case SETTINGS: return "Settings";
+        case BACK:
+        default:
+            return "Back";
+    }
+}
+
+void MenuScene::saveSettingsNow() {
+    SaveManager::ins().saveSettings(
+        PixelRenderer::getContentFontScale(),
+        Hal::ins().getBrightness(),
+        GameEngine::ins().getGameSpeed(),
+        GameEngine::ins().getIdleTimeoutIndex(),
+        GameEngine::ins().getMainSceneBg()
+    );
 }

@@ -1,6 +1,7 @@
 #include "TerrariumScene.h"
 #include "../core/GameEngine.h"
 #include "../hardware/Hal.h"
+#include "../assets/MainSceneAssets.h"
 
 const uint16_t TerrariumScene::PALETTE[4][2] = {
     { PixelRenderer::BROWN, PixelRenderer::DARK_BROWN },
@@ -93,9 +94,22 @@ bool TerrariumScene::onButton(const ButtonEvent& ev) {
 }
 
 void TerrariumScene::drawBackground() {
-    PixelRenderer::fillRect(0, 0, 240, 135, PixelRenderer::rgb565(30, 40, 30));  // 深绿黑底
-    // 底材
-    PixelRenderer::fillRect(0, 120, 200, 15, PixelRenderer::rgb565(60, 50, 35));
+    if (GameEngine::ins().getMainSceneBg() == GameEngine::BG_BEGINNER) {
+        PixelRenderer::drawRgb565(0, 0,
+                                  MainSceneAssets::BEGINNER_FULL_W,
+                                  MainSceneAssets::BEGINNER_FULL_H,
+                                  MainSceneAssets::BEGINNER_FULL);
+        return;
+    }
+
+    PixelRenderer::drawRgb565(0, 0,
+                              MainSceneAssets::MOSS_BG_W,
+                              MainSceneAssets::MOSS_BG_H,
+                              MainSceneAssets::MOSS_BG);
+    PixelRenderer::drawRgb565(0, 120,
+                              MainSceneAssets::MOSS_GROUND_W,
+                              MainSceneAssets::MOSS_GROUND_H,
+                              MainSceneAssets::MOSS_GROUND);
 }
 
 void TerrariumScene::drawBug() {
@@ -185,8 +199,12 @@ void TerrariumScene::drawWood() {
 void TerrariumScene::drawStatusBar() {
     Bug& bug = GameEngine::ins().getBug();
 
-    // 右侧状态栏背景
-    PixelRenderer::fillRect(200, 0, 40, 135, PixelRenderer::BLACK);
+    if (GameEngine::ins().getMainSceneBg() == GameEngine::BG_MOSS) {
+        PixelRenderer::drawRgb565(200, 0,
+                                  MainSceneAssets::MOSS_STATE_W,
+                                  MainSceneAssets::MOSS_STATE_H,
+                                  MainSceneAssets::MOSS_STATE);
+    }
 
     // 阶段图标
     const char* stageName = "?";

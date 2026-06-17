@@ -15,7 +15,7 @@ bool SaveManager::load(Bug& bug) {
     }
 
     uint8_t ver = prefs.getUChar(KEY_VER, 0);
-    if (ver != SAVE_VERSION) {
+    if (ver != SAVE_VERSION && ver != 3 && ver != 2) {
         Serial.printf("[Save] Version mismatch: stored=%d expected=%d\n", ver, SAVE_VERSION);
         prefs.end();
         return false;
@@ -86,7 +86,8 @@ bool SaveManager::hasSave() const {
     return exists;
 }
 
-bool SaveManager::saveSettings(float fontScale, uint8_t brightness, float gameSpeed, uint8_t idleTimeout) {
+bool SaveManager::saveSettings(float fontScale, uint8_t brightness, float gameSpeed,
+                               uint8_t idleTimeout, uint8_t mainSceneBg) {
     if (isSaving) {
         Serial.println("[Save] Skip concurrent settings save");
         return false;
@@ -102,15 +103,17 @@ bool SaveManager::saveSettings(float fontScale, uint8_t brightness, float gameSp
     prefs.putUChar(KEY_BRI, brightness);
     prefs.putFloat(KEY_SPEED, gameSpeed);
     prefs.putUChar(KEY_IDLE, idleTimeout);
+    prefs.putUChar(KEY_BG, mainSceneBg);
     prefs.end();
 
     isSaving = false;
-    Serial.printf("[Save] Settings saved: font=%.2f bri=%d speed=%.1f idle=%d\n",
-                  fontScale, brightness, gameSpeed, idleTimeout);
+    Serial.printf("[Save] Settings saved: font=%.2f bri=%d speed=%.1f idle=%d bg=%d\n",
+                  fontScale, brightness, gameSpeed, idleTimeout, mainSceneBg);
     return true;
 }
 
-bool SaveManager::loadSettings(float& fontScale, uint8_t& brightness, float& gameSpeed, uint8_t& idleTimeout) {
+bool SaveManager::loadSettings(float& fontScale, uint8_t& brightness, float& gameSpeed,
+                               uint8_t& idleTimeout, uint8_t& mainSceneBg) {
     Preferences prefs;
     if (!prefs.begin(NAMESPACE, true)) return false;
 
@@ -129,6 +132,10 @@ bool SaveManager::loadSettings(float& fontScale, uint8_t& brightness, float& gam
     }
     if (prefs.isKey(KEY_IDLE)) {
         idleTimeout = prefs.getUChar(KEY_IDLE, 1);
+        ok = true;
+    }
+    if (prefs.isKey(KEY_BG)) {
+        mainSceneBg = prefs.getUChar(KEY_BG, 0);
         ok = true;
     }
     prefs.end();

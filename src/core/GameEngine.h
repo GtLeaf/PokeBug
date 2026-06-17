@@ -55,6 +55,17 @@ public:
     void setIdleTimeoutIndex(uint8_t idx);
     uint32_t getIdleTimeoutMs() const;
 
+    // 主场景背景主题
+    enum MainSceneBg : uint8_t {
+        BG_MOSS = 0,
+        BG_BEGINNER = 1,
+        BG_COUNT = 2,
+    };
+    uint8_t getMainSceneBg() const { return mainSceneBg; }
+    void setMainSceneBg(uint8_t id);
+    void cycleMainSceneBg();
+    const char* getMainSceneBgName() const;
+
 private:
     GameEngine() = default;
 
@@ -66,7 +77,7 @@ private:
     uint32_t lastInputTime = 0;
     uint32_t frames = 0;
     uint32_t idleTimer = 0;        // 无操作计时（ms）
-    uint8_t idleTimeoutIndex = 1;  // Idle 触发档位（默认 1=30s）
+    uint8_t idleTimeoutIndex = 0;  // Idle 触发档位（默认 0=30s）
     bool idleRendered = false;     // idle 时是否已渲染过一次
 
     enum class SystemState {
@@ -85,6 +96,7 @@ private:
     float fontScale = 1.5f;
 
     uint8_t brightness = 128;
+    uint8_t mainSceneBg = BG_MOSS;
 
     static constexpr uint32_t ACTIVE_FRAME_MS  = 50;    // ~20fps
     static constexpr uint32_t IDLE_FRAME_MS    = 100;   // 10fps

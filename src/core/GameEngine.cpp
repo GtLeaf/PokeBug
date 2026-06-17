@@ -31,15 +31,17 @@ void GameEngine::begin() {
     uint8_t loadedBri = 128;
     float loadedSpeed = 1.0f;
     uint8_t loadedIdle = 0;  // 默认 30s
-    if (SaveManager::ins().loadSettings(loadedFont, loadedBri, loadedSpeed, loadedIdle)) {
+    uint8_t loadedBg = BG_MOSS;
+    if (SaveManager::ins().loadSettings(loadedFont, loadedBri, loadedSpeed, loadedIdle, loadedBg)) {
         fontScale = loadedFont;
         brightness = loadedBri;
         gameSpeed = loadedSpeed;
         idleTimeoutIndex = loadedIdle;
+        setMainSceneBg(loadedBg);
         PixelRenderer::setContentFontScale(fontScale);
         Hal::ins().setBrightness(brightness);
-        Serial.printf("[Engine] Settings loaded: font=%.2f bri=%d speed=%.1f idle=%d\n",
-                      fontScale, brightness, gameSpeed, idleTimeoutIndex);
+        Serial.printf("[Engine] Settings loaded: font=%.2f bri=%d speed=%.1f idle=%d bg=%d\n",
+                      fontScale, brightness, gameSpeed, idleTimeoutIndex, mainSceneBg);
     } else {
         PixelRenderer::setContentFontScale(fontScale);
     }
@@ -150,7 +152,8 @@ void GameEngine::run() {
     // Deep Sleep 入口
     if (systemState == SystemState::DEEP_SLEEP) {
         forceSave();
-        SaveManager::ins().saveSettings(PixelRenderer::getContentFontScale(), brightness, gameSpeed, idleTimeoutIndex);
+        SaveManager::ins().saveSettings(PixelRenderer::getContentFontScale(), brightness,
+                                        gameSpeed, idleTimeoutIndex, mainSceneBg);
         Serial.println("[Engine] Enter deep sleep");
         Hal::ins().setBrightness(0);
         esp_sleep_enable_timer_wakeup(600 * 1000000ULL);
@@ -255,6 +258,25 @@ void GameEngine::resetIdleTimer() {
 void GameEngine::setIdleTimeoutIndex(uint8_t idx) {
     if (idx > 4) idx = 4;
     idleTimeoutIndex = idx;
+}
+
+void GameEngine::setMainSceneBg(uint8_t id) {
+    if (id >= BG_COUNT) id = BG_MOSS;
+    mainSceneBg = id;
+}
+
+void GameEngine::cycleMainSceneBg() {
+    mainSceneBg++;
+    if (mainSceneBg >= BG_COUNT) mainSceneBg = BG_MOSS;
+}
+
+const char* GameEngine::getMainSceneBgName() const {
+    switch (mainSceneBg) {
+        case BG_BEGINNER: return "Beginner";
+        case BG_MOSS:
+        default:
+            return "Moss";
+    }
 }
 
 uint32_t GameEngine::getIdleTimeoutMs() const {

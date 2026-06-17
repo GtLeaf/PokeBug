@@ -4,6 +4,13 @@
 #include "../hardware/PixelRenderer.h"
 #include "../game/BattleCalc.h"
 
+static uint8_t battleStatWithHunger(float value, uint8_t hunger) {
+    int stat = (int)roundf(value);
+    if (hunger < 10) stat -= 2;
+    if (stat < 1) stat = 1;
+    return (uint8_t)stat;
+}
+
 void BattleScene::onEnter() {
     state = State::CONNECTING;
     roundNum = 1;
@@ -30,11 +37,10 @@ void BattleScene::onExit() {
 void BattleScene::initFromBug() {
     Bug& bug = GameEngine::ins().getBug();
     uint8_t hunger = bug.getHunger();
-    int8_t hungerPenalty = (hunger < 10) ? -2 : 0;
 
     me.siz = (uint8_t)roundf(bug.getSiz());
-    me.str = (uint8_t)roundf(bug.getStr()) + hungerPenalty;
-    me.end = (uint8_t)roundf(bug.getEnd()) + hungerPenalty;
+    me.str = battleStatWithHunger(bug.getStr(), hunger);
+    me.end = battleStatWithHunger(bug.getEnd(), hunger);
     me.spi = (uint8_t)roundf(bug.getSpi());
     me.mot = bug.getMot();
     me.palette = bug.getPaletteId();
@@ -46,14 +52,15 @@ void BattleScene::initFromBug() {
 
 bool BattleScene::buildSync() {
     Bug& bug = GameEngine::ins().getBug();
+    uint8_t hunger = bug.getHunger();
     battle_sync_t sync;
     sync.type = MSG_BATTLE_SYNC;
     sync.siz = (uint8_t)roundf(bug.getSiz());
-    sync.str = (uint8_t)roundf(bug.getStr());
-    sync.end = (uint8_t)roundf(bug.getEnd());
+    sync.str = battleStatWithHunger(bug.getStr(), hunger);
+    sync.end = battleStatWithHunger(bug.getEnd(), hunger);
     sync.spi = (uint8_t)roundf(bug.getSpi());
     sync.motivation = bug.getMot();
-    sync.hunger = bug.getHunger();
+    sync.hunger = hunger;
     sync.palette_id = bug.getPaletteId();
     return BattleLink::ins().sendSync(sync);
 }
@@ -445,7 +452,7 @@ void BattleScene::drawConnecting() {
     uint32_t elapsed = Hal::ins().millis() - stateStartMs;
     int dots = (elapsed / 500) % 4;
     char buf[8];
-    snprintf(buf, sizeof(buf), "%. *s", dots, "...");
+    snprintf(buf, sizeof(buf), "%.*s", dots, "...");
     PixelRenderer::drawPixelText(100, 80, buf, PixelRenderer::WHITE, 1);
 }
 

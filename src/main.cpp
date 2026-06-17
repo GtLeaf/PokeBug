@@ -23,14 +23,15 @@ void setup() {
         uint8_t brightness = 128;
         float gameSpeed = 1.0f;
         uint8_t idleTimeout = 0;
-        SaveManager::ins().loadSettings(fontScale, brightness, gameSpeed, idleTimeout);
+        uint8_t mainSceneBg = 0;
+        SaveManager::ins().loadSettings(fontScale, brightness, gameSpeed, idleTimeout, mainSceneBg);
 
         // 推进虚拟时间 10 分钟并更新
         uint64_t gameNow = bug.getLastUpdateTime() + (uint64_t)(600000 * gameSpeed);
         bug.update(gameNow);
 
         SaveManager::ins().save(bug);
-        SaveManager::ins().saveSettings(fontScale, brightness, gameSpeed, idleTimeout);
+        SaveManager::ins().saveSettings(fontScale, brightness, gameSpeed, idleTimeout, mainSceneBg);
         Serial.println("[Boot] Bug updated, re-entering deep sleep");
 
         esp_sleep_enable_timer_wakeup(600 * 1000000ULL);

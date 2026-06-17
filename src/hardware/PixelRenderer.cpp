@@ -83,6 +83,10 @@ void PixelRenderer::fillRect(int x, int y, int w, int h, uint16_t color) {
     if (canvas) canvas->fillRect(x, y, w, h, color);
 }
 
+void PixelRenderer::drawRgb565(int x, int y, int w, int h, const uint16_t* data) {
+    if (canvas && data) canvas->pushImage(x, y, w, h, data);
+}
+
 uint16_t PixelRenderer::rgb565(uint8_t r, uint8_t g, uint8_t b) {
     return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
 }

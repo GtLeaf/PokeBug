@@ -39,6 +39,9 @@ public:
     // 填充矩形
     static void fillRect(int x, int y, int w, int h, uint16_t color);
 
+    // 绘制 RGB565 图块（可传入 PROGMEM 中的 uint16_t 数组）
+    static void drawRgb565(int x, int y, int w, int h, const uint16_t* data);
+
     // ========== 颜色工具 ==========
     static uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b);
 
