@@ -15,7 +15,7 @@ bool SaveManager::load(Bug& bug) {
     }
 
     uint8_t ver = prefs.getUChar(KEY_VER, 0);
-    if (ver != SAVE_VERSION && ver != 3 && ver != 2) {
+    if (ver != SAVE_VERSION && ver != 4 && ver != 3 && ver != 2) {
         Serial.printf("[Save] Version mismatch: stored=%d expected=%d\n", ver, SAVE_VERSION);
         prefs.end();
         return false;
@@ -87,7 +87,8 @@ bool SaveManager::hasSave() const {
 }
 
 bool SaveManager::saveSettings(float fontScale, uint8_t brightness, float gameSpeed,
-                               uint8_t idleTimeout, uint8_t mainSceneBg, uint8_t woodStyle) {
+                               uint8_t idleTimeout, uint8_t mainSceneBg,
+                               uint8_t woodStyle, uint8_t bowlStyle, uint8_t foodStyle) {
     if (isSaving) {
         Serial.println("[Save] Skip concurrent settings save");
         return false;
@@ -105,16 +106,20 @@ bool SaveManager::saveSettings(float fontScale, uint8_t brightness, float gameSp
     prefs.putUChar(KEY_IDLE, idleTimeout);
     prefs.putUChar(KEY_BG, mainSceneBg);
     prefs.putUChar(KEY_WOOD, woodStyle);
+    prefs.putUChar(KEY_BOWL, bowlStyle);
+    prefs.putUChar(KEY_FOOD, foodStyle);
     prefs.end();
 
     isSaving = false;
-    Serial.printf("[Save] Settings saved: font=%.2f bri=%d speed=%.1f idle=%d bg=%d wood=%d\n",
-                  fontScale, brightness, gameSpeed, idleTimeout, mainSceneBg, woodStyle);
+    Serial.printf("[Save] Settings saved: font=%.2f bri=%d speed=%.1f idle=%d bg=%d wood=%d bowl=%d food=%d\n",
+                  fontScale, brightness, gameSpeed, idleTimeout,
+                  mainSceneBg, woodStyle, bowlStyle, foodStyle);
     return true;
 }
 
 bool SaveManager::loadSettings(float& fontScale, uint8_t& brightness, float& gameSpeed,
-                               uint8_t& idleTimeout, uint8_t& mainSceneBg, uint8_t& woodStyle) {
+                               uint8_t& idleTimeout, uint8_t& mainSceneBg,
+                               uint8_t& woodStyle, uint8_t& bowlStyle, uint8_t& foodStyle) {
     Preferences prefs;
     if (!prefs.begin(NAMESPACE, true)) return false;
 
@@ -141,6 +146,14 @@ bool SaveManager::loadSettings(float& fontScale, uint8_t& brightness, float& gam
     }
     if (prefs.isKey(KEY_WOOD)) {
         woodStyle = prefs.getUChar(KEY_WOOD, 0);
+        ok = true;
+    }
+    if (prefs.isKey(KEY_BOWL)) {
+        bowlStyle = prefs.getUChar(KEY_BOWL, 0);
+        ok = true;
+    }
+    if (prefs.isKey(KEY_FOOD)) {
+        foodStyle = prefs.getUChar(KEY_FOOD, 0);
         ok = true;
     }
     prefs.end();

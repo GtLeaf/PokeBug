@@ -28,6 +28,10 @@ void Bug::initNew(uint64_t now) {
     restStartTime = 0;
     lastPokeTime = 0;
 
+    pokeAnger = 0;
+    motBuffAmount = 0;
+    motBuffEndTime = 0;
+
     larvaFeeds = 0;
     pupaShakes = 0;
     wins = 0;
@@ -74,6 +78,15 @@ void Bug::update(uint64_t now) {
     // 饥饿度自然下降
     updateHunger(now, delta);
     if (!alive) return;  // 饥饿致死则不再执行后续成长
+
+    // MOT buff 过期恢复
+    if (motBuffAmount > 0 && now >= motBuffEndTime) {
+        if (mot > motBuffAmount) mot -= motBuffAmount;
+        else mot = 0;
+        Serial.printf("[Bug] MOT buff expired, -%d, mot=%d\n", motBuffAmount, mot);
+        motBuffAmount = 0;
+        motBuffEndTime = 0;
+    }
 
     // 成虫产树汁
     if (stage == Stage::ADULT) {
@@ -236,11 +249,48 @@ bool Bug::placeWood() {
 }
 
 bool Bug::poke(uint64_t now) {
-    if (now - lastPokeTime < 30ULL * 1000) return false;
-    lastPokeTime = now;
-    mot += 5;
-    if (mot > 100) mot = 100;
-    if (hunger < 30 && mot > 50) mot = 50;
+    // 愤怒值随时间自然衰减（根据距离上次被戳的时间）
+    if (pokeAnger > 0 && now > lastPokeTime) {
+        uint64_t elapsed = now - lastPokeTime;
+        uint32_t decayTicks = (uint32_t)(elapsed / POKE_ANGER_DECAY_MS);
+        uint32_t decay = decayTicks * POKE_ANGER_DECAY_VALUE;
+        if (pokeAnger > decay) pokeAnger -= decay;
+        else pokeAnger = 0;
+    }
+
+    // 冷却中：只播放戳动画，不增加愤怒值、不触发 MOT
+    if (now - lastPokeTime < POKE_COOLDOWN_MS) {
+        Serial.printf("[Bug] poke in cooldown, remain %.1fs, anger=%d (anim only)\n",
+                      (POKE_COOLDOWN_MS - (now - lastPokeTime)) / 1000.0f, pokeAnger);
+        return true;
+    }
+
+    // 每次戳增加愤怒值
+    uint16_t newAnger = (uint16_t)pokeAnger + POKE_ANGER_PER_POKE;
+    if (newAnger > 100) newAnger = 100;
+    pokeAnger = (uint8_t)newAnger;
+
+    uint32_t roll = random(100);
+    Serial.printf("[Bug] poke anger=%d roll=%d\n", pokeAnger, roll);
+
+    if (roll < pokeAnger) {
+        // 触发成功：增加 MOT buff，愤怒清零，进入冷却
+        lastPokeTime = now;
+        pokeAnger = 0;
+
+        motBuffAmount = POKE_MOT_BUFF;
+        motBuffEndTime = now + MOT_BUFF_DURATION_MS;
+        mot += motBuffAmount;
+        if (mot > 100) mot = 100;
+        if (hunger < 30 && mot > 50) mot = 50;
+
+        Serial.printf("[Bug] poke triggered! MOT+%d buff until %llu (now=%llu)\n",
+                      motBuffAmount, motBuffEndTime, now);
+        return true;
+    }
+
+    // 未触发：仍播放戳动画，愤怒保留并继续衰减
+    Serial.printf("[Bug] poke missed, anger=%d\n", pokeAnger);
     return true;
 }
 
@@ -320,8 +370,8 @@ void Bug::resetAfterDeath(uint64_t now) {
 }
 
 // ---------- 存档格式 ----------
-// 按设计文档 save_data_t 打包，当前 v4 增加卵期摇晃延迟累计值。
-static constexpr uint8_t SAVE_VERSION = 4;
+// 按设计文档 save_data_t 打包，当前 v5 增加戳甲虫概率累计与 MOT buff。
+static constexpr uint8_t SAVE_VERSION = 5;
 
 void Bug::save(uint8_t* buf, uint16_t& len) const {
     struct SaveData {
@@ -344,7 +394,10 @@ void Bug::save(uint8_t* buf, uint16_t& len) const {
         uint8_t generation;
         uint8_t foodInTray;
         uint8_t foodAmount;
-        uint8_t reserved[1];
+        uint32_t motBuffEnd;       // MOT buff 结束时间（秒）
+        uint8_t motBuffAmount;     // MOT buff 增加值
+        uint8_t pokeAnger;         // 当前愤怒值 0-100
+        uint8_t reserved[2];
     } __attribute__((packed));
 
     SaveData sd = {};
@@ -376,6 +429,9 @@ void Bug::save(uint8_t* buf, uint16_t& len) const {
     sd.generation = generation;
     sd.foodInTray = foodInTray ? 1 : 0;
     sd.foodAmount = foodAmount;
+    sd.motBuffEnd = (uint32_t)(motBuffEndTime / 1000ULL);
+    sd.motBuffAmount = motBuffAmount;
+    sd.pokeAnger = pokeAnger;
 
     memcpy(buf, &sd, sizeof(sd));
     len = sizeof(sd);
@@ -449,6 +505,32 @@ bool Bug::load(const uint8_t* buf, uint16_t len) {
         uint8_t reserved[1];
     } __attribute__((packed));
 
+    struct SaveDataV5 {
+        uint8_t version;
+        uint8_t geneVIG, geneATK, geneMNT, geneAPP;
+        uint8_t siz, str, end, spi;
+        uint8_t mot, hunger;
+        uint8_t stage, alive;
+        uint8_t sap, rottenWood, woodPlaced;
+        uint32_t stageStart;
+        uint32_t lastFeed;
+        uint32_t lastSap;
+        uint32_t lastShake;
+        uint32_t eggShakeDelay;
+        uint32_t restStart;
+        uint32_t lastUpdate;
+        uint32_t lastEat;
+        uint8_t larvaFeeds, pupaShakes;
+        uint8_t wins, losses;
+        uint8_t generation;
+        uint8_t foodInTray;
+        uint8_t foodAmount;
+        uint32_t motBuffEnd;
+        uint8_t motBuffAmount;
+        uint8_t pokeAnger;
+        uint8_t reserved[2];
+    } __attribute__((packed));
+
     uint8_t version = buf[0];
     if (version == 2 && len == sizeof(SaveDataV2)) {
         const SaveDataV2& sd = *reinterpret_cast<const SaveDataV2*>(buf);
@@ -514,8 +596,45 @@ bool Bug::load(const uint8_t* buf, uint16_t len) {
         return true;
     }
 
-    if (version != SAVE_VERSION || len != sizeof(SaveDataV4)) return false;
-    const SaveDataV4& sd = *reinterpret_cast<const SaveDataV4*>(buf);
+    if (version == 4 && len == sizeof(SaveDataV4)) {
+        const SaveDataV4& sd = *reinterpret_cast<const SaveDataV4*>(buf);
+        geneVIG = sd.geneVIG; geneATK = sd.geneATK; geneMNT = sd.geneMNT; geneAPP = sd.geneAPP;
+        this->siz = sd.siz; this->str = sd.str; this->end = sd.end; this->spi = sd.spi;
+        mot = sd.mot;
+        hunger = sd.hunger;
+        stage = (Stage)sd.stage;
+        alive = sd.alive != 0;
+        sap = sd.sap;
+        rottenWood = sd.rottenWood;
+        woodPlaced = sd.woodPlaced != 0;
+        stageStartTime = (uint64_t)sd.stageStart * 1000ULL;
+        lastFeedTime = (uint64_t)sd.lastFeed * 1000ULL;
+        lastSapProduceTime = (uint64_t)sd.lastSap * 1000ULL;
+        lastShakeTrainTime = (uint64_t)sd.lastShake * 1000ULL;
+        eggShakeDelayAcc = sd.eggShakeDelay * 1000UL;
+        if (eggShakeDelayAcc > EGG_SHAKE_DELAY_MAX_MS) eggShakeDelayAcc = EGG_SHAKE_DELAY_MAX_MS;
+        restStartTime = (uint64_t)sd.restStart * 1000ULL;
+        lastUpdateTime = (uint64_t)sd.lastUpdate * 1000ULL;
+        lastEatTime = (uint64_t)sd.lastEat * 1000ULL;
+        larvaFeeds = sd.larvaFeeds;
+        pupaShakes = sd.pupaShakes;
+        wins = sd.wins;
+        losses = sd.losses;
+        generation = sd.generation;
+        foodInTray = sd.foodInTray != 0;
+        foodAmount = sd.foodAmount;
+
+        // v4 没有愤怒值与 MOT buff，初始化为 0
+        pokeAnger = 0;
+        motBuffAmount = 0;
+        motBuffEndTime = 0;
+
+        clampAttributes();
+        return true;
+    }
+
+    if (version != SAVE_VERSION || len != sizeof(SaveDataV5)) return false;
+    const SaveDataV5& sd = *reinterpret_cast<const SaveDataV5*>(buf);
     if (sd.version != SAVE_VERSION) return false;
 
     geneVIG = sd.geneVIG; geneATK = sd.geneATK; geneMNT = sd.geneMNT; geneAPP = sd.geneAPP;
@@ -543,6 +662,9 @@ bool Bug::load(const uint8_t* buf, uint16_t len) {
     generation = sd.generation;
     foodInTray = sd.foodInTray != 0;
     foodAmount = sd.foodAmount;
+    motBuffEndTime = (uint64_t)sd.motBuffEnd * 1000ULL;
+    motBuffAmount = sd.motBuffAmount;
+    pokeAnger = sd.pokeAnger;
 
     clampAttributes();
     return true;

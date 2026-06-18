@@ -48,6 +48,13 @@ public:
                               const uint16_t* data, uint16_t offset,
                               uint16_t length, bool flipX = false);
 
+    // 绘制被吃掉一部分的 RLE 精灵。remaining/maxAmount 决定剩余比例，
+    // 边界带固定噪声，避免像简单矩形裁切。
+    static void drawRgb565RleEaten(int x, int y, int w, int h,
+                                   const uint16_t* data, uint16_t offset,
+                                   uint16_t length, uint8_t remaining,
+                                   uint8_t maxAmount, bool flipX = false);
+
     // ========== 颜色工具 ==========
     static uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b);
 

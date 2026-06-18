@@ -7,6 +7,8 @@
 int MenuScene::lastSelected = 0;
 int MenuScene::lastBoxSelected = 0;
 int MenuScene::lastWoodSelected = 0;
+int MenuScene::lastBowlSelected = 0;
+int MenuScene::lastFoodSelected = 0;
 
 void MenuScene::onEnter() {
     mode = Mode::MAIN;
@@ -20,7 +22,11 @@ void MenuScene::onEnter() {
 }
 
 void MenuScene::onExit() {
-    if (mode == Mode::WOOD) {
+    if (mode == Mode::FOOD) {
+        lastFoodSelected = selected;
+    } else if (mode == Mode::BOWL) {
+        lastBowlSelected = selected;
+    } else if (mode == Mode::WOOD) {
         lastWoodSelected = selected;
     } else if (mode == Mode::BOX) {
         lastBoxSelected = selected;
@@ -131,7 +137,11 @@ bool MenuScene::onButton(const ButtonEvent& ev) {
         }
         if (ev.btn == 1) {
             // 长按 B：返回上一级
-            if (mode == Mode::WOOD) {
+            if (mode == Mode::FOOD) {
+                enterMode(Mode::MAIN);
+            } else if (mode == Mode::BOWL) {
+                enterMode(Mode::BOX);
+            } else if (mode == Mode::WOOD) {
                 enterMode(Mode::BOX);
             } else if (mode == Mode::BOX) {
                 enterMode(Mode::MAIN);
@@ -164,6 +174,42 @@ bool MenuScene::onButton(const ButtonEvent& ev) {
 
 void MenuScene::executeSelection() {
     Bug& bug = GameEngine::ins().getBug();
+    if (mode == Mode::FOOD) {
+        switch (selected) {
+            case FOOD_STYLE:
+                GameEngine::ins().cycleFoodStyle();
+                saveSettingsNow();
+                Serial.printf("[Menu] Food style: %s\n", GameEngine::ins().getFoodStyleName());
+                break;
+            case FOOD_PLACE:
+                if (bug.placeSapInTray()) {
+                    Serial.printf("[Menu] Fed bug: %s\n", GameEngine::ins().getFoodStyleName());
+                }
+                nextScene = SCENE_TERRARIUM;
+                break;
+            case FOOD_BACK:
+            default:
+                enterMode(Mode::MAIN);
+                break;
+        }
+        return;
+    }
+
+    if (mode == Mode::BOWL) {
+        switch (selected) {
+            case BOWL_STYLE:
+                GameEngine::ins().cycleBowlStyle();
+                saveSettingsNow();
+                Serial.printf("[Menu] Bowl style: %s\n", GameEngine::ins().getBowlStyleName());
+                break;
+            case BOWL_BACK:
+            default:
+                enterMode(Mode::BOX);
+                break;
+        }
+        return;
+    }
+
     if (mode == Mode::WOOD) {
         switch (selected) {
             case WOOD_STYLE:
@@ -190,6 +236,9 @@ void MenuScene::executeSelection() {
             case BOX_WOOD:
                 enterMode(Mode::WOOD);
                 break;
+            case BOX_BOWL:
+                enterMode(Mode::BOWL);
+                break;
             case BOX_BG:
                 GameEngine::ins().cycleMainSceneBg();
                 saveSettingsNow();
@@ -204,10 +253,7 @@ void MenuScene::executeSelection() {
 
     switch (selected) {
         case FEED:
-            if (bug.placeSapInTray()) {
-                Serial.println("[Menu] Fed bug");
-            }
-            nextScene = SCENE_TERRARIUM;
+            enterMode(Mode::FOOD);
             break;
         case BOX:
             enterMode(Mode::BOX);
@@ -228,12 +274,16 @@ void MenuScene::executeSelection() {
 }
 
 void MenuScene::enterMode(Mode nextMode) {
-    if (mode == Mode::WOOD) lastWoodSelected = selected;
+    if (mode == Mode::FOOD) lastFoodSelected = selected;
+    else if (mode == Mode::BOWL) lastBowlSelected = selected;
+    else if (mode == Mode::WOOD) lastWoodSelected = selected;
     else if (mode == Mode::BOX) lastBoxSelected = selected;
     else lastSelected = selected;
 
     mode = nextMode;
-    if (mode == Mode::WOOD) selected = lastWoodSelected;
+    if (mode == Mode::FOOD) selected = lastFoodSelected;
+    else if (mode == Mode::BOWL) selected = lastBowlSelected;
+    else if (mode == Mode::WOOD) selected = lastWoodSelected;
     else if (mode == Mode::BOX) selected = lastBoxSelected;
     else selected = lastSelected;
     int count = itemCount();
@@ -242,12 +292,38 @@ void MenuScene::enterMode(Mode nextMode) {
 }
 
 int MenuScene::itemCount() const {
+    if (mode == Mode::FOOD) return FOOD_ITEM_COUNT;
+    if (mode == Mode::BOWL) return BOWL_ITEM_COUNT;
     if (mode == Mode::WOOD) return WOOD_ITEM_COUNT;
     if (mode == Mode::BOX) return BOX_ITEM_COUNT;
     return MAIN_ITEM_COUNT;
 }
 
 const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
+    if (mode == Mode::FOOD) {
+        switch (index) {
+            case FOOD_STYLE:
+                snprintf(buf, bufSize, "Type:%s", GameEngine::ins().getFoodStyleName());
+                return buf;
+            case FOOD_PLACE:
+                return "Place";
+            case FOOD_BACK:
+            default:
+                return "Back";
+        }
+    }
+
+    if (mode == Mode::BOWL) {
+        switch (index) {
+            case BOWL_STYLE:
+                snprintf(buf, bufSize, "Type:%s", GameEngine::ins().getBowlStyleName());
+                return buf;
+            case BOWL_BACK:
+            default:
+                return "Back";
+        }
+    }
+
     if (mode == Mode::WOOD) {
         switch (index) {
             case WOOD_STYLE:
@@ -265,6 +341,8 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
         switch (index) {
             case BOX_WOOD:
                 return "Wood";
+            case BOX_BOWL:
+                return "Bowl";
             case BOX_BG:
                 snprintf(buf, bufSize, "BG:%s", GameEngine::ins().getMainSceneBgName());
                 return buf;
@@ -276,7 +354,7 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
 
     switch (index) {
         case INFO: return "Info";
-        case FEED: return "Feed";
+        case FEED: return "Food";
         case BOX: return "Box";
         case FIGHT: return "Fight";
         case SETTINGS: return "Settings";
@@ -293,6 +371,8 @@ void MenuScene::saveSettingsNow() {
         GameEngine::ins().getGameSpeed(),
         GameEngine::ins().getIdleTimeoutIndex(),
         GameEngine::ins().getMainSceneBg(),
-        GameEngine::ins().getWoodStyle()
+        GameEngine::ins().getWoodStyle(),
+        GameEngine::ins().getBowlStyle(),
+        GameEngine::ins().getFoodStyle()
     );
 }

@@ -17,6 +17,8 @@ private:
         MAIN,
         BOX,
         WOOD,
+        BOWL,
+        FOOD,
     };
 
     Mode mode = Mode::MAIN;
@@ -25,9 +27,13 @@ private:
     static int lastSelected;
     static int lastBoxSelected;
     static int lastWoodSelected;
+    static int lastBowlSelected;
+    static int lastFoodSelected;
     static constexpr int MAIN_ITEM_COUNT = 6;
-    static constexpr int BOX_ITEM_COUNT = 3;
+    static constexpr int BOX_ITEM_COUNT = 4;
     static constexpr int WOOD_ITEM_COUNT = 3;
+    static constexpr int BOWL_ITEM_COUNT = 2;
+    static constexpr int FOOD_ITEM_COUNT = 3;
 
     void drawBattery();
     void drawList();
@@ -48,6 +54,7 @@ private:
 
     enum BoxItem {
         BOX_WOOD = 0,
+        BOX_BOWL,
         BOX_BG,
         BOX_BACK,
     };
@@ -56,5 +63,16 @@ private:
         WOOD_STYLE = 0,
         WOOD_PLACE,
         WOOD_BACK,
+    };
+
+    enum BowlItem {
+        BOWL_STYLE = 0,
+        BOWL_BACK,
+    };
+
+    enum FoodItem {
+        FOOD_STYLE = 0,
+        FOOD_PLACE,
+        FOOD_BACK,
     };
 };

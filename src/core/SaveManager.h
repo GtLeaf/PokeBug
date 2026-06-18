@@ -20,9 +20,11 @@ public:
 
     // 保存/加载全局设置
     bool saveSettings(float fontScale, uint8_t brightness, float gameSpeed,
-                      uint8_t idleTimeout, uint8_t mainSceneBg, uint8_t woodStyle);
+                      uint8_t idleTimeout, uint8_t mainSceneBg,
+                      uint8_t woodStyle, uint8_t bowlStyle, uint8_t foodStyle);
     bool loadSettings(float& fontScale, uint8_t& brightness, float& gameSpeed,
-                      uint8_t& idleTimeout, uint8_t& mainSceneBg, uint8_t& woodStyle);
+                      uint8_t& idleTimeout, uint8_t& mainSceneBg,
+                      uint8_t& woodStyle, uint8_t& bowlStyle, uint8_t& foodStyle);
 
 private:
     SaveManager() = default;
@@ -35,8 +37,10 @@ private:
     static constexpr const char* KEY_IDLE  = "idletime";
     static constexpr const char* KEY_BG    = "mainbg";
     static constexpr const char* KEY_WOOD  = "woodstyle";
+    static constexpr const char* KEY_BOWL  = "bowlstyle";
+    static constexpr const char* KEY_FOOD  = "foodstyle";
     static constexpr const char* KEY_VER   = "savever";
-    static constexpr uint8_t SAVE_VERSION = 4;
+    static constexpr uint8_t SAVE_VERSION = 5;
 
     bool isSaving = false;  // 防并发写入锁
 };

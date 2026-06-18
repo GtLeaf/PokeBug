@@ -116,6 +116,46 @@ void PixelRenderer::drawRgb565Rle(int x, int y, int w, int h,
     }
 }
 
+void PixelRenderer::drawRgb565RleEaten(int x, int y, int w, int h,
+                                       const uint16_t* data, uint16_t offset,
+                                       uint16_t length, uint8_t remaining,
+                                       uint8_t maxAmount, bool flipX) {
+    if (!canvas || !data || w <= 0 || h <= 0 || maxAmount == 0 || remaining == 0) return;
+    if (remaining > maxAmount) remaining = maxAmount;
+
+    const uint16_t total = (uint16_t)(w * h);
+    int keepBase = (w * remaining) / maxAmount;
+    uint16_t idx = 0;
+    uint16_t pixel = 0;
+    while (idx < length && pixel < total) {
+        uint16_t token = pgm_read_word(&data[offset + idx++]);
+        uint16_t run = token & 0x7FFF;
+        if (run == 0) continue;
+
+        if (token & 0x8000) {
+            pixel += run;
+            if (pixel > total) pixel = total;
+            continue;
+        }
+
+        for (uint16_t i = 0; i < run && idx < length && pixel < total; ++i, ++pixel) {
+            uint16_t color = pgm_read_word(&data[offset + idx++]);
+            int srcCol = pixel % w;
+            int row = pixel / w;
+
+            uint8_t edgeNoise = (uint8_t)((srcCol * 13 + row * 7 + row * row * 3) & 0x07);
+            int biteEdge = keepBase - 3 + edgeNoise;
+            bool kept = srcCol < biteEdge;
+            if (remaining == maxAmount) kept = true;
+
+            if (kept) {
+                int col = flipX ? (w - 1 - srcCol) : srcCol;
+                canvas->drawPixel(x + col, y + row, color);
+            }
+        }
+    }
+}
+
 uint16_t PixelRenderer::rgb565(uint8_t r, uint8_t g, uint8_t b) {
     return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
 }

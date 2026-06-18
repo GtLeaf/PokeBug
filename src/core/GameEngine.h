@@ -72,6 +72,16 @@ public:
     void cycleWoodStyle();
     const char* getWoodStyleName() const;
 
+    uint8_t getBowlStyle() const { return bowlStyle; }
+    void setBowlStyle(uint8_t id);
+    void cycleBowlStyle();
+    const char* getBowlStyleName() const;
+
+    uint8_t getFoodStyle() const { return foodStyle; }
+    void setFoodStyle(uint8_t id);
+    void cycleFoodStyle();
+    const char* getFoodStyleName() const;
+
 private:
     GameEngine() = default;
 
@@ -104,6 +114,8 @@ private:
     uint8_t brightness = 128;
     uint8_t mainSceneBg = BG_MOSS;
     uint8_t woodStyle = 0;
+    uint8_t bowlStyle = 0;
+    uint8_t foodStyle = 0;
 
     static constexpr uint32_t ACTIVE_FRAME_MS  = 50;    // ~20fps
     static constexpr uint32_t IDLE_FRAME_MS    = 100;   // 10fps

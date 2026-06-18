@@ -88,6 +88,14 @@ public:
     static constexpr uint32_t ADULT_SAP_PRODUCE_MS = 10ULL * 60 * 1000; // 成虫每 10min 产 1 份树汁
     static constexpr uint8_t  FOOD_MAX_AMOUNT     = 5;              // 一份树汁分成 5 口吃完
 
+    // 戳甲虫机制：愤怒值概率触发 MOT buff，触发后进入冷却；愤怒值会随时间衰减
+    static constexpr uint32_t POKE_COOLDOWN_MS       = 30ULL * 1000;       // 触发后冷却 30s
+    static constexpr uint32_t MOT_BUFF_DURATION_MS   = 30ULL * 60 * 1000;  // MOT buff 持续 30min
+    static constexpr uint8_t  POKE_ANGER_PER_POKE    = 20;                 // 每次戳 +20 愤怒
+    static constexpr uint32_t POKE_ANGER_DECAY_MS    = 60ULL * 1000;       // 愤怒每 60s 衰减一次
+    static constexpr uint8_t  POKE_ANGER_DECAY_VALUE = 10;                 // 每次衰减 -10
+    static constexpr uint8_t  POKE_MOT_BUFF          = 5;                  // 触发后 MOT +5
+
 private:
     uint8_t geneVIG = 0, geneATK = 0, geneMNT = 0, geneAPP = 0;
 
@@ -112,6 +120,11 @@ private:
     uint32_t eggShakeDelayAcc = 0;
     uint64_t restStartTime = 0;
     uint64_t lastPokeTime = 0;
+
+    // 戳甲虫愤怒值与 MOT buff
+    uint8_t pokeAnger = 0;              // 当前愤怒值 0-100，决定触发概率
+    uint8_t motBuffAmount = 0;          // 当前 MOT buff 增加值
+    uint64_t motBuffEndTime = 0;        // MOT buff 结束时间
 
     uint8_t larvaFeeds = 0;
     uint8_t pupaShakes = 0;

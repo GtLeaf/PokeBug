@@ -33,17 +33,23 @@ void GameEngine::begin() {
     uint8_t loadedIdle = 0;  // 默认 30s
     uint8_t loadedBg = BG_MOSS;
     uint8_t loadedWood = 0;
-    if (SaveManager::ins().loadSettings(loadedFont, loadedBri, loadedSpeed, loadedIdle, loadedBg, loadedWood)) {
+    uint8_t loadedBowl = 0;
+    uint8_t loadedFood = 0;
+    if (SaveManager::ins().loadSettings(loadedFont, loadedBri, loadedSpeed, loadedIdle,
+                                        loadedBg, loadedWood, loadedBowl, loadedFood)) {
         fontScale = loadedFont;
         brightness = loadedBri;
         gameSpeed = loadedSpeed;
         idleTimeoutIndex = loadedIdle;
         setMainSceneBg(loadedBg);
         setWoodStyle(loadedWood);
+        setBowlStyle(loadedBowl);
+        setFoodStyle(loadedFood);
         PixelRenderer::setContentFontScale(fontScale);
         Hal::ins().setBrightness(brightness);
-        Serial.printf("[Engine] Settings loaded: font=%.2f bri=%d speed=%.1f idle=%d bg=%d wood=%d\n",
-                      fontScale, brightness, gameSpeed, idleTimeoutIndex, mainSceneBg, woodStyle);
+        Serial.printf("[Engine] Settings loaded: font=%.2f bri=%d speed=%.1f idle=%d bg=%d wood=%d bowl=%d food=%d\n",
+                      fontScale, brightness, gameSpeed, idleTimeoutIndex,
+                      mainSceneBg, woodStyle, bowlStyle, foodStyle);
     } else {
         PixelRenderer::setContentFontScale(fontScale);
     }
@@ -155,7 +161,8 @@ void GameEngine::run() {
     if (systemState == SystemState::DEEP_SLEEP) {
         forceSave();
         SaveManager::ins().saveSettings(PixelRenderer::getContentFontScale(), brightness,
-                                        gameSpeed, idleTimeoutIndex, mainSceneBg, woodStyle);
+                                        gameSpeed, idleTimeoutIndex, mainSceneBg,
+                                        woodStyle, bowlStyle, foodStyle);
         Serial.println("[Engine] Enter deep sleep");
         Hal::ins().setBrightness(0);
         esp_sleep_enable_timer_wakeup(600 * 1000000ULL);
@@ -301,6 +308,49 @@ const char* GameEngine::getWoodStyleName() const {
         case 0:
         default:
             return "Twig";
+    }
+}
+
+void GameEngine::setBowlStyle(uint8_t id) {
+    if (id >= 3) id = 0;
+    bowlStyle = id;
+}
+
+void GameEngine::cycleBowlStyle() {
+    bowlStyle++;
+    if (bowlStyle >= 3) bowlStyle = 0;
+}
+
+const char* GameEngine::getBowlStyleName() const {
+    switch (bowlStyle) {
+        case 1: return "Block";
+        case 2: return "Root";
+        case 0:
+        default:
+            return "Low";
+    }
+}
+
+void GameEngine::setFoodStyle(uint8_t id) {
+    if (id >= 6) id = 0;
+    foodStyle = id;
+}
+
+void GameEngine::cycleFoodStyle() {
+    foodStyle++;
+    if (foodStyle >= 6) foodStyle = 0;
+}
+
+const char* GameEngine::getFoodStyleName() const {
+    switch (foodStyle) {
+        case 1: return "Cube";
+        case 2: return "Slice";
+        case 3: return "Citrus";
+        case 4: return "Jelly";
+        case 5: return "Berry";
+        case 0:
+        default:
+            return "Drop";
     }
 }
 
