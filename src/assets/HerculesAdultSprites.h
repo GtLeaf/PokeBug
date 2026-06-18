@@ -5,7 +5,7 @@
 namespace HerculesAdultSprites {
 
 static constexpr uint8_t MAX_FRAME_W = 58;
-static constexpr uint8_t MAX_FRAME_H = 32;
+static constexpr uint8_t MAX_FRAME_H = 39;
 
 struct RleFrame {
     uint16_t offset;

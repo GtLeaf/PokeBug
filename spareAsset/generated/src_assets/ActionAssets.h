@@ -4,12 +4,16 @@
 
 namespace ActionAssets {
 
-static constexpr uint8_t FINGER_FRAME_W = 48;
-static constexpr uint8_t FINGER_FRAME_H = 40;
+static constexpr uint8_t FINGER_MAX_FRAME_W = 39;
+static constexpr uint8_t FINGER_MAX_FRAME_H = 29;
 
 struct RleFrame {
     uint16_t offset;
     uint16_t length;
+    uint8_t width;
+    uint8_t height;
+    uint8_t tipX;
+    uint8_t tipY;
 };
 
 extern const uint8_t FINGER_FRAME_COUNT;

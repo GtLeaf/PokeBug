@@ -116,9 +116,16 @@ bool TerrariumScene::onButton(const ButtonEvent& ev) {
         uint64_t gameNow = GameEngine::ins().getGameNow();
         bool ok = bug.poke(gameNow);
         if (ok) {
-            pokeReactionStartMs = Hal::ins().millis();
-            pokeReactionEndMs = pokeReactionStartMs + 600;  // 手指动画保持 600ms
-            pokeThreatenEndMs = pokeReactionStartMs + POKE_REACTION_MS;  // 威吓保持约 3s
+            uint32_t now = Hal::ins().millis();
+            // 若已在 threaten 持续阶段（已播完动作、正 hold 最后一帧），只重置持续时间，
+            // 不要从第 0 帧重新播放。
+            bool inThreatenHold = (pokeThreatenEndMs != 0) &&
+                                  (now >= pokeReactionStartMs + THREATEN_PLAY_MS);
+            if (!inThreatenHold) {
+                pokeReactionStartMs = now;
+            }
+            pokeReactionEndMs = now + 600;  // 手指动画保持 600ms
+            pokeThreatenEndMs = now + POKE_REACTION_MS;  // 威吓保持约 3s
             pokeReactionWasPoked = true;
             pokeFingerFromRight = random(2) == 0;
             pokeFingerFrameIndex = random(ActionAssets::FINGER_FRAME_COUNT);
@@ -360,6 +367,13 @@ void TerrariumScene::startWalkTo(int x) {
 void TerrariumScene::updateAdultMovement() {
     Bug& bug = GameEngine::ins().getBug();
     stateTimer++;
+
+    // threaten（威吓）期间不主动移动，但允许因倾斜而滑落
+    if (pokeThreatenEndMs != 0 && Hal::ins().millis() < pokeThreatenEndMs) {
+        if (adultState != AdultState::SLIDE) {
+            return;
+        }
+    }
 
     switch (adultState) {
         case AdultState::IDLE:
@@ -742,6 +756,14 @@ void TerrariumScene::onTilt(TiltDir dir, float magnitude) {
         return;
     }
 
+    // threaten（威吓）期间只响应大角度滑落，不响应小角度爬行
+    if (pokeThreatenEndMs != 0 && Hal::ins().millis() < pokeThreatenEndMs) {
+        if (magnitude <= TILT_SLIDE_THRESHOLD_G) {
+            Serial.println("[Tilt] ignored: threatening");
+            return;
+        }
+    }
+
     // 低处在左 => 高处在右；低处在右 => 高处在左
     bool lowIsLeft = (dir == TiltDir::LEFT);
     tiltHighSideIsRight = !lowIsLeft;
@@ -856,16 +878,16 @@ void TerrariumScene::drawPokeAction() {
     uint16_t offset = pgm_read_word(&ActionAssets::FINGER_FRAMES[frameIndex].offset);
     uint16_t length = pgm_read_word(&ActionAssets::FINGER_FRAMES[frameIndex].length);
 
-    static constexpr uint8_t TIP_X[] = { 47, 47, 46 };
-    static constexpr uint8_t TIP_Y[] = { 18, 19, 19 };
     static constexpr int CONTACT_OFFSET_X = 18;
 
     const int targetX = bugX + (pokeFingerFromRight ? CONTACT_OFFSET_X : -CONTACT_OFFSET_X);
     const int targetY = getPokeTargetY() + pokeFingerYOffset;
-    uint8_t tipX = TIP_X[frameIndex];
-    uint8_t tipY = TIP_Y[frameIndex];
+    uint8_t frameW = pgm_read_byte(&ActionAssets::FINGER_FRAMES[frameIndex].width);
+    uint8_t frameH = pgm_read_byte(&ActionAssets::FINGER_FRAMES[frameIndex].height);
+    uint8_t tipX = pgm_read_byte(&ActionAssets::FINGER_FRAMES[frameIndex].tipX);
+    uint8_t tipY = pgm_read_byte(&ActionAssets::FINGER_FRAMES[frameIndex].tipY);
     if (pokeFingerFromRight) {
-        tipX = ActionAssets::FINGER_FRAME_W - 1 - tipX;
+        tipX = frameW - 1 - tipX;
     }
 
     int x;
@@ -877,8 +899,8 @@ void TerrariumScene::drawPokeAction() {
     int y = targetY - tipY;
 
     PixelRenderer::drawRgb565Rle(x, y,
-                                 ActionAssets::FINGER_FRAME_W,
-                                 ActionAssets::FINGER_FRAME_H,
+                                 frameW,
+                                 frameH,
                                  ActionAssets::FINGER_RLE,
                                  offset, length,
                                  pokeFingerFromRight);
