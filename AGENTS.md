@@ -10,8 +10,8 @@
 
 **PokeBug（口袋昆虫）** 是一款运行在 **M5Stack StickS3**（ESP32-S3）上的像素风口袋昆虫养成电子宠物。
 
-- 玩家通过按键与 IMU 体感交互，饲养一只独角仙，经历 **卵 → 幼虫 → 蛹 → 成虫** 的完整生命周期。
-- 养成阶段的喂食、静置、摇晃等行为会影响 5 项属性（SIZ / STR / END / SPI / MOT），最终通过 **ESP-NOW 1v1 直连对战** 验证养成成果。
+- 玩家通过按键与 IMU 体感交互，饲养一只独角仙，经历 **卵 → 幼虫 → 蛹 → 青年期 → 成虫** 的完整生命周期。
+- 养成阶段的喂食、静置、摇晃等行为会影响 6 项属性（SIZ / STR / END / SPI / SPD / MOT），最终通过 **ESP-NOW 1v1 直连对战** 验证养成成果。
 - 项目当前处于 **MVP（v0.1）** 阶段，详细设计文档见 `doc/PokeBug-脑暴.md`。
 
 ### 1.1 技术栈
@@ -53,7 +53,7 @@ src/
 │   └── SaveManager.{h,cpp}           # NVS 存档读写（Bug 数据 + 用户设置）
 ├── game/                             # 游戏逻辑
 │   ├── Bug.{h,cpp}                   # 独角仙实体：生命周期、属性、基因、背包、存档序列化
-│   └── BattleCalc.h                  # 对战公式：HP、伤害、暴击、MOT 衰减
+│   └── BattleCalc.h                  # 对战公式：HP、伤害、暴击、先攻、MOT 衰减
 ├── hardware/                         # 硬件抽象与通信
 │   ├── Hal.{h,cpp}                   # M5Unified 封装：显示、按键、IMU、电池、背光
 │   ├── PixelRenderer.{h,cpp}         # 像素精灵/UI 渲染辅助（基于 M5GFX/LGFX_Sprite）
@@ -165,22 +165,28 @@ pio run --target clean
 
 ### 5.1 生命周期与阶段时长
 
-当前为便于调试，阶段时长被缩短；正式上线前应改回设计值：
+当前阶段时长由 `gameSpeed` 控制，无单独测试值。深睡 10 分钟唤醒会一次性推进 10 分钟虚拟时间。正式上线时阶段时长如下：
 
-| 阶段 | 当前代码值 | 设计值（脑暴文档） |
-|---|---|---|
-| 卵期 | 10 s | 5 min |
-| 幼虫期 | 60 s | 30 min |
-| 蛹期 | 20 s | 10 min |
+| 阶段 | 设计值 |
+|---|---|
+| 卵期 | 5 min |
+| 幼虫期 | 30 min |
+| 蛹期 | **30 min** |
+| 青年期 | **60 min**（可喂食、可对站） |
+| 成虫期 | ∞（无自然上限，饥饿死亡） |
 
-定义位置：`src/game/Bug.h` 中的 `EGG_DURATION_MS`、`LARVA_DURATION_MS`、`PUPA_DURATION_MS`。
+定义位置：`src/game/Bug.h` 中的 `*_DURATION_MS` 常量。
 
 ### 5.2 属性与基因
 
 - 每只独角仙有 4 组基因（VIG / ATK / MNT / APP），每组 1 字节 `[显性4bit | 隐性4bit]`。
 - 基因在 `Bug::initNew()` 时均匀随机生成；显性值影响成长倍率（0.8 ~ 2.3），显+隐平均值影响属性上限（6 ~ 10）。
+- **VIG** → SIZ + END；**ATK** → STR；**MNT** → SPI；**APP** → SPD + 外观调色板（`getPaletteId()`）。
 - MVP 中基因数值不直接展示，仅通过孵化提示语（`Bug::getHatchHint()`）和外观调色板（`Bug::getPaletteId()`，0-3）让玩家感知差异。
-- 属性：SIZ / STR / END / SPI 为 1-10 的浮点；MOT 为 0-100 的整数；饥饿度 hunger 为 0-100。
+- 属性：SIZ / STR / END / SPI / **SPD** 为 1-10 的浮点；MOT 为 0-100 的整数；饥饿度 hunger 为 0-100。
+- **基因 APP 同时影响调色板（外观）与 SPD 上限/倍率**。
+- **卵期气质（Temperament）**：参考宝可梦性格，卵期交互行为（倾斜 ≥ 30% 总时长 / 戳 ≥ 4 次 / 喷水 ≥ 4 次 / 摇晃 ≥ 4 次 + 剧烈 ≥ 1 次）决定 6 种气质之一（迅捷/韧甲/巨体/蛮力/均衡/灵心），其中 5 种提升一项属性 ×1.10、降低一项属性 ×0.90，**均衡**无增益无减益，**灵心**兜底。判定三层：L1 倾斜（最高优先级）→ L2 操作类次数最高者（平局最近触发）→ L3 均衡（操作类 1~3）→ L4 灵心兜底。倾斜按虚拟时间累计，受 `gameSpeed` 影响。气质终身影响所有阶段成长。详见 `doc/PokeBug-FoodSystem.md` §11。
+- **环境物品加成**：食物盘有食物时所有属性吸收 × 1.05，特定食物再 × 1.03（对应属性）；空盘 MOT 衰减 +20%。腐木 5 种风格各有 3% 属性倾向，成虫休息时对应属性恢复 +0.02/min。食物盘 + 腐木是长期投资，影响整个阶段。详见 `doc/PokeBug-FoodSystem.md` §13。
 
 ### 5.3 交互映射
 
@@ -201,6 +207,8 @@ pio run --target clean
 - 通过 `LobbyScene` 进入对战大厅：创建房间或搜索附近房间，选择后加入。
 - 房主（创建者）自动成为 **主机 authoritative**，统一计算双方伤害、HP、MOT；加入者为从机，按主机下发的状态更新画面。
 - 同步属性后自动战斗直到一方 HP 归零 → 结算。
+- **先攻判定**：每回合开始时按 SPD 对比，高 SPD 方先出手；相同则随机。先攻方 KO 敌方则敌方无反击。
+- **SPD 多段攻击**：每回合 SPD 高的一方将 SPD 差值累加到 `spdGauge`；当 gauge >= 10 时，下回合获得一次额外攻击（50% 伤害），gauge 清0。详见 `doc/PokeBug-FoodSystem.md` §10。
 - 每回合冲锋阶段（CHARGE）可按 A 加油，MOT +15；从机加油后的 MOT 会在 CLASH 阶段通过 `MSG_BATTLE_READY` 上报主机。
 - 伤害公式见 `src/game/BattleCalc.h`；通信协议与包结构见 `src/hardware/BattleLink.h`。
 
@@ -258,6 +266,7 @@ pio run --target clean
 
 - `platformio.ini`：构建配置。
 - `doc/PokeBug-脑暴.md`：完整游戏设计文档（中文），包含数值设计、UI 布局、迭代路线。
+- `doc/PokeBug-FoodSystem.md`：食物系统与属性成长规格（6 种食物 × 5 阶段 × 阶段吸收系数模型）。
 - `default_8MB.csv`：Flash 分区表。
 - PlatformIO 文档：https://docs.platformio.org/
 - M5Unified / M5GFX 文档：https://docs.m5stack.com/
