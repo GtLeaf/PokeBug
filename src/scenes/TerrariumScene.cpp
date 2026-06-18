@@ -131,6 +131,11 @@ bool TerrariumScene::onButton(const ButtonEvent& ev) {
             pokeFingerFrameIndex = random(ActionAssets::FINGER_FRAME_COUNT);
             pokeFingerYOffset = (int8_t)random(-3, 4);
             if (bug.getStage() == Stage::ADULT) {
+                // 若从夜间休息中被戳醒，设置随机清醒冷却，不能马上重新入睡
+                if (adultState == AdultState::REST) {
+                    restResumeAllowedMs = now + random(REST_WAKEUP_COOLDOWN_MIN_MS,
+                                                       REST_WAKEUP_COOLDOWN_MAX_MS + 1);
+                }
                 // 成虫朝向戳来的方向后退戒备
                 faceRight = pokeFingerFromRight;
                 turnTargetFaceRight = faceRight;
@@ -288,6 +293,13 @@ void TerrariumScene::drawAdult(int x, int y, uint8_t palette) {
             frameIndex = frameCount - 1;
         }
         flipSprite = !faceRight;
+    } else if (adultState == AdultState::REST) {
+        // 夜间休息：趴在腐木上，使用 reset 第 0 帧作为趴姿
+        frames = HerculesAdultSprites::RESET_FRAMES;
+        data = HerculesAdultSprites::RESET_RLE;
+        frameCount = HerculesAdultSprites::RESET_FRAME_COUNT;
+        frameIndex = 0;
+        flipSprite = !faceRight;
     } else if (adultState == AdultState::EAT) {
         // 进食动画
         frames = HerculesAdultSprites::EAT_FRAMES;
@@ -368,10 +380,44 @@ void TerrariumScene::updateAdultMovement() {
     Bug& bug = GameEngine::ins().getBug();
     stateTimer++;
 
-    // threaten（威吓）期间不主动移动，但允许因倾斜而滑落
-    if (pokeThreatenEndMs != 0 && Hal::ins().millis() < pokeThreatenEndMs) {
+    // threaten（威吓）和 REST（夜间休息）期间不主动移动，
+    // 但允许因大角度倾斜而滑落；滑动会唤醒休息中的甲虫。
+    if ((pokeThreatenEndMs != 0 && Hal::ins().millis() < pokeThreatenEndMs) ||
+        adultState == AdultState::REST) {
         if (adultState != AdultState::SLIDE) {
             return;
+        }
+    }
+
+    // 夜间休息逻辑：成虫 + 腐木已放置 + 夜间 + 非威吓期间 + 清醒冷却结束
+    bool shouldRest = (bug.getStage() == Stage::ADULT) &&
+                      bug.isWoodPlaced() &&
+                      GameEngine::ins().isNight() &&
+                      (pokeThreatenEndMs == 0 || Hal::ins().millis() >= pokeThreatenEndMs) &&
+                      Hal::ins().millis() >= restResumeAllowedMs;
+
+    if (adultState == AdultState::REST) {
+        if (!shouldRest) {
+            adultState = AdultState::IDLE;
+            stateTimer = 0;
+            stateDuration = random(30, 90);
+        }
+    }
+
+    if (shouldRest) {
+        if (adultState != AdultState::REST &&
+            adultState != AdultState::SLIDE &&
+            adultState != AdultState::CLIMB &&
+            adultState != AdultState::TURN) {
+            if (abs(WOOD_REST_X - bugX) <= 2) {
+                // 已走到腐木旁，入睡
+                adultState = AdultState::REST;
+                stateTimer = 0;
+                stateDuration = 0;
+            } else {
+                // 清醒后先走回腐木旁边
+                startWalkTo(WOOD_REST_X);
+            }
         }
     }
 
@@ -505,6 +551,23 @@ void TerrariumScene::updateAdultMovement() {
                 stateDuration = random(30, 90);
             }
             break;
+
+        case AdultState::REST:
+            // 夜间趴在腐木上休息：缓慢移动到腐木位置
+            {
+                int dx = (WOOD_REST_X > bugX) ? 1 : -1;
+                faceRight = (dx > 0);
+                if (stateTimer % 3 == 0 && abs(WOOD_REST_X - bugX) > 2) {
+                    bugX += dx;
+                    if (bugX < MIN_X) bugX = MIN_X;
+                    if (bugX > MAX_X) bugX = MAX_X;
+                }
+                if (abs(WOOD_REST_X - bugX) <= 2) {
+                    // 到达后脸朝左（朝外）
+                    faceRight = false;
+                }
+            }
+            break;
     }
 }
 
@@ -547,8 +610,8 @@ void TerrariumScene::drawWood() {
     if (style >= WoodAssets::SPRITE_COUNT) style = 0;
     uint16_t offset = pgm_read_word(&WoodAssets::SPRITE_FRAMES[style].offset);
     uint16_t length = pgm_read_word(&WoodAssets::SPRITE_FRAMES[style].length);
-    PixelRenderer::drawRgb565Rle(200 - WoodAssets::FRAME_W,
-                                 GROUND_Y - WoodAssets::FRAME_H + 5,
+    PixelRenderer::drawRgb565Rle(197 - WoodAssets::FRAME_W,
+                                 GROUND_Y - WoodAssets::FRAME_H + 6,
                                  WoodAssets::FRAME_W,
                                  WoodAssets::FRAME_H,
                                  WoodAssets::SPRITE_RLE,
@@ -756,7 +819,8 @@ void TerrariumScene::onTilt(TiltDir dir, float magnitude) {
         return;
     }
 
-    // threaten（威吓）期间只响应大角度滑落，不响应小角度爬行
+    // threaten（威吓）和 REST（夜间休息）期间只响应大角度滑落，
+    // 小角度爬行被忽略；大角度滑落会唤醒休息中的甲虫。
     if (pokeThreatenEndMs != 0 && Hal::ins().millis() < pokeThreatenEndMs) {
         if (magnitude <= TILT_SLIDE_THRESHOLD_G) {
             Serial.println("[Tilt] ignored: threatening");
@@ -775,7 +839,11 @@ void TerrariumScene::onTilt(TiltDir dir, float magnitude) {
     climbTargetX = highTarget;
 
     if (magnitude > TILT_SLIDE_THRESHOLD_G) {
-        // 大角度：先向低处滑落
+        // 大角度：先向低处滑落；若从夜间休息中滑落，设置随机清醒冷却
+        if (adultState == AdultState::REST) {
+            restResumeAllowedMs = Hal::ins().millis() + random(REST_WAKEUP_COOLDOWN_MIN_MS,
+                                                               REST_WAKEUP_COOLDOWN_MAX_MS + 1);
+        }
         int lowTarget = bugX + (lowIsLeft ? -TILT_SLIDE_DISTANCE : +TILT_SLIDE_DISTANCE);
         if (lowTarget < MIN_X) lowTarget = MIN_X;
         if (lowTarget > MAX_X) lowTarget = MAX_X;

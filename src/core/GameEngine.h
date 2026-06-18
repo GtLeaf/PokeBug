@@ -46,6 +46,14 @@ public:
     uint64_t getGameNow() const { return gameNow; }
     void resetGameNow() { gameNow = 0; }
 
+    // 昼夜判断：20:00 - 次日 06:00 为夜间
+    bool isNight() const {
+        static constexpr uint64_t HOUR_MS = 60ULL * 60 * 1000;
+        static constexpr uint64_t DAY_MS = 24ULL * HOUR_MS;
+        uint64_t hour = (gameNow % DAY_MS) / HOUR_MS;
+        return hour >= 20 || hour < 6;
+    }
+
     // 全局字体缩放
     float getFontScale() const { return fontScale; }
     void setFontScale(float s) { fontScale = s; PixelRenderer::setContentFontScale(s); }

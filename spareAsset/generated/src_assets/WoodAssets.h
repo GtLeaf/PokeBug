@@ -4,8 +4,8 @@
 
 namespace WoodAssets {
 
-static constexpr uint8_t FRAME_W = 92;
-static constexpr uint8_t FRAME_H = 40;
+static constexpr uint8_t FRAME_W = 87;
+static constexpr uint8_t FRAME_H = 59;
 
 struct RleFrame {
     uint16_t offset;

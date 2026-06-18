@@ -10,7 +10,8 @@ enum class AdultState {
     EAT,    // 在食物旁进食
     TURN,   // 原地转身
     SLIDE,  // 大角度倾斜：向低处滑落
-    CLIMB   // 倾斜恢复/小角度：向高处缓慢爬行
+    CLIMB,  // 倾斜恢复/小角度：向高处缓慢爬行
+    REST    // 夜间趴在腐木上休息
 };
 
 // 倾斜方向
@@ -53,9 +54,13 @@ private:
     bool tiltHighSideIsRight = false;  // 高处是否在右侧
     uint32_t stateTimer = 0;      // 当前状态已持续帧数
     uint32_t stateDuration = 0;   // 当前状态目标持续帧数
+    uint32_t restResumeAllowedMs = 0; // 允许重新进入夜间休息的时间戳
 
     static constexpr int GROUND_Y = 125;   // 甲虫贴地时脚所在的 Y 坐标
     static constexpr int FOOD_X = 55;      // 食物盘旁站立位置（中心点）
+    static constexpr int WOOD_REST_X = 154; // 腐木上的休息位置（腐木中心）
+    static constexpr uint32_t REST_WAKEUP_COOLDOWN_MIN_MS = 10000; // 唤醒后清醒最短时间 10s
+    static constexpr uint32_t REST_WAKEUP_COOLDOWN_MAX_MS = 30000; // 唤醒后清醒最长时间 30s
     static constexpr int MIN_X = 30;       // 左边界
     static constexpr int MAX_X = 171;      // 右边界，避免最大成虫帧进入右侧状态栏
     static constexpr uint32_t TURN_DURATION_FRAMES = 16;  // 20fps 下约 0.8 秒
