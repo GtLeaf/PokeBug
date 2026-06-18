@@ -2,6 +2,8 @@
 #include "../core/GameEngine.h"
 #include "../hardware/Hal.h"
 #include "../assets/MainSceneAssets.h"
+#include "../assets/HerculesAdultSprites.h"
+#include "../assets/WoodAssets.h"
 
 const uint16_t TerrariumScene::PALETTE[4][2] = {
     { PixelRenderer::BROWN, PixelRenderer::DARK_BROWN },
@@ -14,6 +16,16 @@ void TerrariumScene::onEnter() {
     animFrame = 0;
     resetPressStart = 0;
     resetting = false;
+
+    // 初始化成虫状态
+    adultState = AdultState::IDLE;
+    faceRight = true;
+    turnTargetFaceRight = true;
+    walkAfterTurn = false;
+    turnFrameIndex = 0;
+    targetX = bugX;
+    stateTimer = 0;
+    stateDuration = random(30, 90);
 }
 
 void TerrariumScene::onExit() {}
@@ -38,14 +50,12 @@ SceneID TerrariumScene::update() {
         return SCENE_NONE;
     }
 
-    // 成虫简单游走动画
-    if (bug.getStage() == Stage::ADULT) {
-        int dx = (animFrame % 120 < 60) ? 1 : -1;
-        bugX += dx;
-        if (bugX < 30) bugX = 30;
-        if (bugX > 170) bugX = 170;
-    } else {
+    // 成虫使用状态机自然移动：贴地、走走停停、有食物会靠近吃
+    if (bug.getStage() == Stage::ADULT && !bug.isDead()) {
+        updateAdultMovement();
+    } else if (bug.getStage() != Stage::ADULT) {
         bugX = 120;
+        faceRight = true;
     }
 
     return nextScene;
@@ -101,6 +111,13 @@ void TerrariumScene::drawBackground() {
                                   MainSceneAssets::BEGINNER_FULL);
         return;
     }
+    if (GameEngine::ins().getMainSceneBg() == GameEngine::BG_CHILD_ROOM) {
+        PixelRenderer::drawRgb565(0, 0,
+                                  MainSceneAssets::CHILD_ROOM_FULL_W,
+                                  MainSceneAssets::CHILD_ROOM_FULL_H,
+                                  MainSceneAssets::CHILD_ROOM_FULL);
+        return;
+    }
 
     PixelRenderer::drawRgb565(0, 0,
                               MainSceneAssets::MOSS_BG_W,
@@ -128,7 +145,7 @@ void TerrariumScene::drawBug() {
             break;
         case Stage::ADULT:
         default:
-            drawAdult(bugX, 95, pal);
+            drawAdult(bugX, GROUND_Y, pal);
             break;
     }
 }
@@ -159,41 +176,203 @@ void TerrariumScene::drawPupa(int x, int y, uint8_t palette) {
 }
 
 void TerrariumScene::drawAdult(int x, int y, uint8_t palette) {
-    uint16_t body = PALETTE[palette][0];
-    uint16_t dark = PALETTE[palette][1];
-    // 头胸部
-    PixelRenderer::fillRect(x - 8, y - 6, 16, 12, body);
-    // 腹部
-    PixelRenderer::fillRect(x + 8, y - 8, 12, 16, body);
-    // 角
-    PixelRenderer::fillRect(x - 10, y - 10, 4, 6, dark);
-    PixelRenderer::fillRect(x - 14, y - 14, 4, 6, dark);
-    // 腿
-    PixelRenderer::fillRect(x - 6, y + 6, 2, 6, dark);
-    PixelRenderer::fillRect(x + 2, y + 6, 2, 6, dark);
-    PixelRenderer::fillRect(x + 10, y + 8, 2, 5, dark);
+    (void)palette;
+
+    Bug& bug = GameEngine::ins().getBug();
+    const HerculesAdultSprites::RleFrame* frames = HerculesAdultSprites::WALK_FRAMES;
+    const uint16_t* data = HerculesAdultSprites::WALK_RLE;
+    uint8_t frameCount = HerculesAdultSprites::WALK_FRAME_COUNT;
+    uint8_t frameIndex = (animFrame / 10) % frameCount;
+    bool flipSprite = !faceRight;
+
+    if (bug.isDead()) {
+        // 死亡叠层：使用 reset 第 0 帧
+        frames = HerculesAdultSprites::RESET_FRAMES;
+        data = HerculesAdultSprites::RESET_RLE;
+        frameCount = HerculesAdultSprites::RESET_FRAME_COUNT;
+        frameIndex = 0;
+        flipSprite = !faceRight;
+    } else if (adultState == AdultState::EAT) {
+        // 进食动画
+        frames = HerculesAdultSprites::EAT_FRAMES;
+        data = HerculesAdultSprites::EAT_RLE;
+        frameCount = HerculesAdultSprites::EAT_FRAME_COUNT;
+        frameIndex = (animFrame / 16) % frameCount;
+        flipSprite = !faceRight;
+    } else if (adultState == AdultState::TURN) {
+        // 转身过渡每次随机取一张中间姿态；同一次转身中保持不变。
+        frames = HerculesAdultSprites::TURN_FRAMES;
+        data = HerculesAdultSprites::TURN_RLE;
+        frameCount = HerculesAdultSprites::TURN_FRAME_COUNT;
+        frameIndex = turnFrameIndex;
+        if (frameIndex >= frameCount) frameIndex = frameCount - 1;
+        flipSprite = false;
+    } else if (adultState == AdultState::IDLE) {
+        // 静止时停在 walk 第 0 帧（站立姿态）
+        frameIndex = 0;
+        flipSprite = !faceRight;
+    }
+
+    uint16_t offset = pgm_read_word(&frames[frameIndex].offset);
+    uint16_t length = pgm_read_word(&frames[frameIndex].length);
+    // y 是脚/底部参考点，让精灵底部对齐 y
+    PixelRenderer::drawRgb565Rle(x - HerculesAdultSprites::FRAME_W / 2,
+                                 y - HerculesAdultSprites::FRAME_H,
+                                 HerculesAdultSprites::FRAME_W,
+                                 HerculesAdultSprites::FRAME_H,
+                                 data, offset, length, flipSprite);
+}
+
+// 判断成虫是否想去进食：饥饿或纯粹嘴馋
+bool TerrariumScene::wantsToEat() {
+    Bug& bug = GameEngine::ins().getBug();
+    if (!bug.hasFoodInTray() || bug.getFoodAmount() == 0) return false;
+    if (bug.getHunger() < 60) return true;
+    // 饱腹时也有小概率去闻闻食物
+    return random(100) < 10;
+}
+
+void TerrariumScene::startTurn(bool targetFaceRight, bool continueWalking) {
+    adultState = AdultState::TURN;
+    turnTargetFaceRight = targetFaceRight;
+    walkAfterTurn = continueWalking;
+    turnFrameIndex = random(HerculesAdultSprites::TURN_FRAME_COUNT);
+    stateTimer = 0;
+    stateDuration = TURN_DURATION_FRAMES;
+}
+
+// 开始向目标位置行走
+void TerrariumScene::startWalkTo(int x) {
+    targetX = x;
+    if (targetX < MIN_X) targetX = MIN_X;
+    if (targetX > MAX_X) targetX = MAX_X;
+
+    bool needFaceRight = (targetX > bugX);
+    if (needFaceRight != faceRight) {
+        startTurn(needFaceRight, true);
+    } else {
+        adultState = AdultState::WALK;
+        stateTimer = 0;
+        stateDuration = 0;   // 走到目的地为止
+    }
+}
+
+// 成虫状态机：贴地、走走停停、靠近食物进食
+void TerrariumScene::updateAdultMovement() {
+    Bug& bug = GameEngine::ins().getBug();
+    stateTimer++;
+
+    switch (adultState) {
+        case AdultState::IDLE:
+            // 静止时偶尔张望（朝向随机小概率翻转）
+            if (stateTimer > stateDuration / 2 && random(100) < 3) {
+                startTurn(!faceRight, false);
+                break;
+            }
+            // 静止结束后决定下一步
+            if (stateTimer >= stateDuration) {
+                if (wantsToEat()) {
+                    startWalkTo(FOOD_X);
+                } else {
+                    // 随机巡逻点，避免连续两次太近
+                    int newTarget = random(MIN_X, MAX_X + 1);
+                    if (abs(newTarget - bugX) < 30) {
+                        newTarget = (bugX < 120) ? random(140, MAX_X + 1)
+                                                   : random(MIN_X, 100);
+                    }
+                    startWalkTo(newTarget);
+                }
+            }
+            break;
+
+        case AdultState::TURN:
+            // 转身动画完成后朝向已改变，进入行走
+            if (stateTimer >= stateDuration) {
+                faceRight = turnTargetFaceRight;
+                stateTimer = 0;
+                if (walkAfterTurn) {
+                    adultState = AdultState::WALK;
+                    stateDuration = 0;
+                } else {
+                    adultState = AdultState::IDLE;
+                    stateDuration = random(30, 90);
+                }
+            }
+            break;
+
+        case AdultState::WALK:
+            {
+                int dx = (targetX > bugX) ? 1 : -1;
+                faceRight = (dx > 0);
+
+                // 每 3 帧移动 1 像素，模拟甲虫缓慢爬行；进食心切时走快点
+                uint8_t stepInterval = wantsToEat() ? 2 : 3;
+                if (stateTimer % stepInterval == 0) {
+                    bugX += dx;
+                    if (bugX < MIN_X) bugX = MIN_X;
+                    if (bugX > MAX_X) bugX = MAX_X;
+                }
+
+                // 到达目标
+                if (abs(targetX - bugX) <= 2) {
+                    if (wantsToEat() && targetX == FOOD_X) {
+                        adultState = AdultState::EAT;
+                        stateTimer = 0;
+                        stateDuration = random(180, 420);  // 吃 3-7 秒
+                    } else {
+                        adultState = AdultState::IDLE;
+                        stateTimer = 0;
+                        stateDuration = random(40, 150);   // 停 0.7-2.5 秒
+                    }
+                }
+            }
+            break;
+
+        case AdultState::EAT:
+            // 面向食物盘（食物在左侧，所以朝左）
+            faceRight = false;
+            // 吃到食物消失、吃饱或超时后离开
+            if (!bug.hasFoodInTray() || bug.getFoodAmount() == 0 ||
+                bug.getHunger() >= 95 || stateTimer >= stateDuration) {
+                adultState = AdultState::IDLE;
+                stateTimer = 0;
+                stateDuration = random(30, 90);
+            }
+            break;
+    }
 }
 
 void TerrariumScene::drawFoodTray() {
-    // 食物盘在左下
-    PixelRenderer::fillRect(20, 105, 30, 8, PixelRenderer::GRAY);
+    static constexpr int TRAY_X = 20;
+    static constexpr int TRAY_W = 30;
+    static constexpr int TRAY_H = 8;
+    static constexpr int TRAY_Y = GROUND_Y - TRAY_H;
+
+    PixelRenderer::fillRect(TRAY_X, TRAY_Y, TRAY_W, TRAY_H, PixelRenderer::GRAY);
     Bug& bug = GameEngine::ins().getBug();
     if (bug.hasFoodInTray() && bug.getFoodAmount() > 0) {
         // 食物宽度随剩余量变化，最小保留 2 像素
         uint8_t w = (bug.getFoodAmount() * 10) / Bug::FOOD_MAX_AMOUNT;
         if (w < 2) w = 2;
-        uint8_t x = 30 + (10 - w) / 2;
-        PixelRenderer::fillRect(x, 100, w, 5, PixelRenderer::YELLOW);
+        uint8_t x = TRAY_X + (TRAY_W - w) / 2;
+        PixelRenderer::fillRect(x, TRAY_Y - 5, w, 5, PixelRenderer::YELLOW);
     }
 }
 
 void TerrariumScene::drawWood() {
     Bug& bug = GameEngine::ins().getBug();
     if (!bug.isWoodPlaced()) return;
-    // 腐木在左上
-    PixelRenderer::fillRect(30, 30, 40, 14, PixelRenderer::DARK_BROWN);
-    PixelRenderer::fillRect(35, 32, 6, 2, PixelRenderer::BROWN);
-    PixelRenderer::fillRect(55, 36, 8, 2, PixelRenderer::BROWN);
+
+    uint8_t style = GameEngine::ins().getWoodStyle();
+    if (style >= WoodAssets::WOOD_COUNT) style = 0;
+    uint16_t offset = pgm_read_word(&WoodAssets::WOOD_FRAMES[style].offset);
+    uint16_t length = pgm_read_word(&WoodAssets::WOOD_FRAMES[style].length);
+    PixelRenderer::drawRgb565Rle(200 - WoodAssets::FRAME_W,
+                                 GROUND_Y - WoodAssets::FRAME_H,
+                                 WoodAssets::FRAME_W,
+                                 WoodAssets::FRAME_H,
+                                 WoodAssets::WOOD_RLE,
+                                 offset, length);
 }
 
 void TerrariumScene::drawStatusBar() {

@@ -42,6 +42,12 @@ public:
     // 绘制 RGB565 图块（可传入 PROGMEM 中的 uint16_t 数组）
     static void drawRgb565(int x, int y, int w, int h, const uint16_t* data);
 
+    // 绘制带透明跳过段的 RGB565 RLE 精灵。token 高位为 1 表示透明 run，
+    // 高位为 0 表示后续 run 个 RGB565 像素。
+    static void drawRgb565Rle(int x, int y, int w, int h,
+                              const uint16_t* data, uint16_t offset,
+                              uint16_t length, bool flipX = false);
+
     // ========== 颜色工具 ==========
     static uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b);
 

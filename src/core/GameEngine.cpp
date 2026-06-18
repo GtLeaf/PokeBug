@@ -32,16 +32,18 @@ void GameEngine::begin() {
     float loadedSpeed = 1.0f;
     uint8_t loadedIdle = 0;  // 默认 30s
     uint8_t loadedBg = BG_MOSS;
-    if (SaveManager::ins().loadSettings(loadedFont, loadedBri, loadedSpeed, loadedIdle, loadedBg)) {
+    uint8_t loadedWood = 0;
+    if (SaveManager::ins().loadSettings(loadedFont, loadedBri, loadedSpeed, loadedIdle, loadedBg, loadedWood)) {
         fontScale = loadedFont;
         brightness = loadedBri;
         gameSpeed = loadedSpeed;
         idleTimeoutIndex = loadedIdle;
         setMainSceneBg(loadedBg);
+        setWoodStyle(loadedWood);
         PixelRenderer::setContentFontScale(fontScale);
         Hal::ins().setBrightness(brightness);
-        Serial.printf("[Engine] Settings loaded: font=%.2f bri=%d speed=%.1f idle=%d bg=%d\n",
-                      fontScale, brightness, gameSpeed, idleTimeoutIndex, mainSceneBg);
+        Serial.printf("[Engine] Settings loaded: font=%.2f bri=%d speed=%.1f idle=%d bg=%d wood=%d\n",
+                      fontScale, brightness, gameSpeed, idleTimeoutIndex, mainSceneBg, woodStyle);
     } else {
         PixelRenderer::setContentFontScale(fontScale);
     }
@@ -153,7 +155,7 @@ void GameEngine::run() {
     if (systemState == SystemState::DEEP_SLEEP) {
         forceSave();
         SaveManager::ins().saveSettings(PixelRenderer::getContentFontScale(), brightness,
-                                        gameSpeed, idleTimeoutIndex, mainSceneBg);
+                                        gameSpeed, idleTimeoutIndex, mainSceneBg, woodStyle);
         Serial.println("[Engine] Enter deep sleep");
         Hal::ins().setBrightness(0);
         esp_sleep_enable_timer_wakeup(600 * 1000000ULL);
@@ -273,9 +275,32 @@ void GameEngine::cycleMainSceneBg() {
 const char* GameEngine::getMainSceneBgName() const {
     switch (mainSceneBg) {
         case BG_BEGINNER: return "Beginner";
+        case BG_CHILD_ROOM: return "Child";
         case BG_MOSS:
         default:
             return "Moss";
+    }
+}
+
+void GameEngine::setWoodStyle(uint8_t id) {
+    if (id >= 5) id = 0;
+    woodStyle = id;
+}
+
+void GameEngine::cycleWoodStyle() {
+    woodStyle++;
+    if (woodStyle >= 5) woodStyle = 0;
+}
+
+const char* GameEngine::getWoodStyleName() const {
+    switch (woodStyle) {
+        case 1: return "Stack";
+        case 2: return "Mossy";
+        case 3: return "Pale";
+        case 4: return "Hollow";
+        case 0:
+        default:
+            return "Twig";
     }
 }
 

@@ -21,6 +21,7 @@ bool SettingsScene::onButton(const ButtonEvent& ev) {
             GameEngine::ins().setGameSpeed(1.0f);
             GameEngine::ins().setIdleTimeoutIndex(0);
             GameEngine::ins().setMainSceneBg(GameEngine::BG_MOSS);
+            GameEngine::ins().setWoodStyle(0);
             GameEngine::ins().setFontScale(1.5f);
             Hal::ins().setBrightness(128);
             confirmReset = false;
@@ -217,6 +218,7 @@ void SettingsScene::saveSettingsNow() {
         Hal::ins().getBrightness(),
         GameEngine::ins().getGameSpeed(),
         GameEngine::ins().getIdleTimeoutIndex(),
-        GameEngine::ins().getMainSceneBg()
+        GameEngine::ins().getMainSceneBg(),
+        GameEngine::ins().getWoodStyle()
     );
 }

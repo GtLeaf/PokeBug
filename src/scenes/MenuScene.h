@@ -16,6 +16,7 @@ private:
     enum class Mode {
         MAIN,
         BOX,
+        WOOD,
     };
 
     Mode mode = Mode::MAIN;
@@ -23,8 +24,10 @@ private:
     float animSelected = 0.0f;  // 纵向滚动动画位置
     static int lastSelected;
     static int lastBoxSelected;
+    static int lastWoodSelected;
     static constexpr int MAIN_ITEM_COUNT = 6;
     static constexpr int BOX_ITEM_COUNT = 3;
+    static constexpr int WOOD_ITEM_COUNT = 3;
 
     void drawBattery();
     void drawList();
@@ -47,5 +50,11 @@ private:
         BOX_WOOD = 0,
         BOX_BG,
         BOX_BACK,
+    };
+
+    enum WoodItem {
+        WOOD_STYLE = 0,
+        WOOD_PLACE,
+        WOOD_BACK,
     };
 };

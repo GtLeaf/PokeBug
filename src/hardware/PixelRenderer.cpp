@@ -87,6 +87,35 @@ void PixelRenderer::drawRgb565(int x, int y, int w, int h, const uint16_t* data)
     if (canvas && data) canvas->pushImage(x, y, w, h, data);
 }
 
+void PixelRenderer::drawRgb565Rle(int x, int y, int w, int h,
+                                  const uint16_t* data, uint16_t offset,
+                                  uint16_t length, bool flipX) {
+    if (!canvas || !data || w <= 0 || h <= 0) return;
+
+    const uint16_t total = (uint16_t)(w * h);
+    uint16_t idx = 0;
+    uint16_t pixel = 0;
+    while (idx < length && pixel < total) {
+        uint16_t token = pgm_read_word(&data[offset + idx++]);
+        uint16_t run = token & 0x7FFF;
+        if (run == 0) continue;
+
+        if (token & 0x8000) {
+            pixel += run;
+            if (pixel > total) pixel = total;
+            continue;
+        }
+
+        for (uint16_t i = 0; i < run && idx < length && pixel < total; ++i, ++pixel) {
+            uint16_t color = pgm_read_word(&data[offset + idx++]);
+            int col = pixel % w;
+            int row = pixel / w;
+            if (flipX) col = w - 1 - col;
+            canvas->drawPixel(x + col, y + row, color);
+        }
+    }
+}
+
 uint16_t PixelRenderer::rgb565(uint8_t r, uint8_t g, uint8_t b) {
     return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
 }

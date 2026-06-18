@@ -87,7 +87,7 @@ bool SaveManager::hasSave() const {
 }
 
 bool SaveManager::saveSettings(float fontScale, uint8_t brightness, float gameSpeed,
-                               uint8_t idleTimeout, uint8_t mainSceneBg) {
+                               uint8_t idleTimeout, uint8_t mainSceneBg, uint8_t woodStyle) {
     if (isSaving) {
         Serial.println("[Save] Skip concurrent settings save");
         return false;
@@ -104,16 +104,17 @@ bool SaveManager::saveSettings(float fontScale, uint8_t brightness, float gameSp
     prefs.putFloat(KEY_SPEED, gameSpeed);
     prefs.putUChar(KEY_IDLE, idleTimeout);
     prefs.putUChar(KEY_BG, mainSceneBg);
+    prefs.putUChar(KEY_WOOD, woodStyle);
     prefs.end();
 
     isSaving = false;
-    Serial.printf("[Save] Settings saved: font=%.2f bri=%d speed=%.1f idle=%d bg=%d\n",
-                  fontScale, brightness, gameSpeed, idleTimeout, mainSceneBg);
+    Serial.printf("[Save] Settings saved: font=%.2f bri=%d speed=%.1f idle=%d bg=%d wood=%d\n",
+                  fontScale, brightness, gameSpeed, idleTimeout, mainSceneBg, woodStyle);
     return true;
 }
 
 bool SaveManager::loadSettings(float& fontScale, uint8_t& brightness, float& gameSpeed,
-                               uint8_t& idleTimeout, uint8_t& mainSceneBg) {
+                               uint8_t& idleTimeout, uint8_t& mainSceneBg, uint8_t& woodStyle) {
     Preferences prefs;
     if (!prefs.begin(NAMESPACE, true)) return false;
 
@@ -136,6 +137,10 @@ bool SaveManager::loadSettings(float& fontScale, uint8_t& brightness, float& gam
     }
     if (prefs.isKey(KEY_BG)) {
         mainSceneBg = prefs.getUChar(KEY_BG, 0);
+        ok = true;
+    }
+    if (prefs.isKey(KEY_WOOD)) {
+        woodStyle = prefs.getUChar(KEY_WOOD, 0);
         ok = true;
     }
     prefs.end();

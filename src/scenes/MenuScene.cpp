@@ -6,6 +6,7 @@
 
 int MenuScene::lastSelected = 0;
 int MenuScene::lastBoxSelected = 0;
+int MenuScene::lastWoodSelected = 0;
 
 void MenuScene::onEnter() {
     mode = Mode::MAIN;
@@ -19,7 +20,9 @@ void MenuScene::onEnter() {
 }
 
 void MenuScene::onExit() {
-    if (mode == Mode::BOX) {
+    if (mode == Mode::WOOD) {
+        lastWoodSelected = selected;
+    } else if (mode == Mode::BOX) {
         lastBoxSelected = selected;
     } else {
         lastSelected = selected;
@@ -128,7 +131,9 @@ bool MenuScene::onButton(const ButtonEvent& ev) {
         }
         if (ev.btn == 1) {
             // 长按 B：返回上一级
-            if (mode == Mode::BOX) {
+            if (mode == Mode::WOOD) {
+                enterMode(Mode::BOX);
+            } else if (mode == Mode::BOX) {
                 enterMode(Mode::MAIN);
             } else {
                 nextScene = SCENE_TERRARIUM;
@@ -159,13 +164,31 @@ bool MenuScene::onButton(const ButtonEvent& ev) {
 
 void MenuScene::executeSelection() {
     Bug& bug = GameEngine::ins().getBug();
+    if (mode == Mode::WOOD) {
+        switch (selected) {
+            case WOOD_STYLE:
+                GameEngine::ins().cycleWoodStyle();
+                saveSettingsNow();
+                Serial.printf("[Menu] Wood style: %s\n", GameEngine::ins().getWoodStyleName());
+                break;
+            case WOOD_PLACE:
+                if (bug.placeWood()) {
+                    Serial.printf("[Menu] Placed wood: %s\n", GameEngine::ins().getWoodStyleName());
+                }
+                nextScene = SCENE_TERRARIUM;
+                break;
+            case WOOD_BACK:
+            default:
+                enterMode(Mode::BOX);
+                break;
+        }
+        return;
+    }
+
     if (mode == Mode::BOX) {
         switch (selected) {
             case BOX_WOOD:
-                if (bug.placeWood()) {
-                    Serial.println("[Menu] Placed wood");
-                }
-                nextScene = SCENE_TERRARIUM;
+                enterMode(Mode::WOOD);
                 break;
             case BOX_BG:
                 GameEngine::ins().cycleMainSceneBg();
@@ -205,21 +228,39 @@ void MenuScene::executeSelection() {
 }
 
 void MenuScene::enterMode(Mode nextMode) {
-    if (mode == Mode::BOX) lastBoxSelected = selected;
+    if (mode == Mode::WOOD) lastWoodSelected = selected;
+    else if (mode == Mode::BOX) lastBoxSelected = selected;
     else lastSelected = selected;
 
     mode = nextMode;
-    selected = (mode == Mode::BOX) ? lastBoxSelected : lastSelected;
+    if (mode == Mode::WOOD) selected = lastWoodSelected;
+    else if (mode == Mode::BOX) selected = lastBoxSelected;
+    else selected = lastSelected;
     int count = itemCount();
     if (selected >= count) selected = 0;
     animSelected = (float)selected;
 }
 
 int MenuScene::itemCount() const {
-    return mode == Mode::BOX ? BOX_ITEM_COUNT : MAIN_ITEM_COUNT;
+    if (mode == Mode::WOOD) return WOOD_ITEM_COUNT;
+    if (mode == Mode::BOX) return BOX_ITEM_COUNT;
+    return MAIN_ITEM_COUNT;
 }
 
 const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
+    if (mode == Mode::WOOD) {
+        switch (index) {
+            case WOOD_STYLE:
+                snprintf(buf, bufSize, "Type:%s", GameEngine::ins().getWoodStyleName());
+                return buf;
+            case WOOD_PLACE:
+                return "Place";
+            case WOOD_BACK:
+            default:
+                return "Back";
+        }
+    }
+
     if (mode == Mode::BOX) {
         switch (index) {
             case BOX_WOOD:
@@ -251,6 +292,7 @@ void MenuScene::saveSettingsNow() {
         Hal::ins().getBrightness(),
         GameEngine::ins().getGameSpeed(),
         GameEngine::ins().getIdleTimeoutIndex(),
-        GameEngine::ins().getMainSceneBg()
+        GameEngine::ins().getMainSceneBg(),
+        GameEngine::ins().getWoodStyle()
     );
 }

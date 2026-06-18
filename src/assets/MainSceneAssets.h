@@ -20,4 +20,8 @@ extern const int BEGINNER_FULL_W;
 extern const int BEGINNER_FULL_H;
 extern const uint16_t BEGINNER_FULL[] PROGMEM;
 
+extern const int CHILD_ROOM_FULL_W;
+extern const int CHILD_ROOM_FULL_H;
+extern const uint16_t CHILD_ROOM_FULL[] PROGMEM;
+
 }

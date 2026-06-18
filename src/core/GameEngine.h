@@ -59,12 +59,18 @@ public:
     enum MainSceneBg : uint8_t {
         BG_MOSS = 0,
         BG_BEGINNER = 1,
-        BG_COUNT = 2,
+        BG_CHILD_ROOM = 2,
+        BG_COUNT = 3,
     };
     uint8_t getMainSceneBg() const { return mainSceneBg; }
     void setMainSceneBg(uint8_t id);
     void cycleMainSceneBg();
     const char* getMainSceneBgName() const;
+
+    uint8_t getWoodStyle() const { return woodStyle; }
+    void setWoodStyle(uint8_t id);
+    void cycleWoodStyle();
+    const char* getWoodStyleName() const;
 
 private:
     GameEngine() = default;
@@ -97,6 +103,7 @@ private:
 
     uint8_t brightness = 128;
     uint8_t mainSceneBg = BG_MOSS;
+    uint8_t woodStyle = 0;
 
     static constexpr uint32_t ACTIVE_FRAME_MS  = 50;    // ~20fps
     static constexpr uint32_t IDLE_FRAME_MS    = 100;   // 10fps
