@@ -116,6 +116,38 @@ void PixelRenderer::drawRgb565Rle(int x, int y, int w, int h,
     }
 }
 
+void PixelRenderer::drawRgb565RleScaled(int x, int y, int w, int h,
+                                        const uint16_t* data, uint16_t offset,
+                                        uint16_t length, int scale, bool flipX) {
+    if (!canvas || !data || w <= 0 || h <= 0 || scale <= 1) {
+        drawRgb565Rle(x, y, w, h, data, offset, length, flipX);
+        return;
+    }
+
+    const uint16_t total = (uint16_t)(w * h);
+    uint16_t idx = 0;
+    uint16_t pixel = 0;
+    while (idx < length && pixel < total) {
+        uint16_t token = pgm_read_word(&data[offset + idx++]);
+        uint16_t run = token & 0x7FFF;
+        if (run == 0) continue;
+
+        if (token & 0x8000) {
+            pixel += run;
+            if (pixel > total) pixel = total;
+            continue;
+        }
+
+        for (uint16_t i = 0; i < run && idx < length && pixel < total; ++i, ++pixel) {
+            uint16_t color = pgm_read_word(&data[offset + idx++]);
+            int col = pixel % w;
+            int row = pixel / w;
+            if (flipX) col = w - 1 - col;
+            canvas->fillRect(x + col * scale, y + row * scale, scale, scale, color);
+        }
+    }
+}
+
 void PixelRenderer::drawRgb565RleEaten(int x, int y, int w, int h,
                                        const uint16_t* data, uint16_t offset,
                                        uint16_t length, uint8_t remaining,

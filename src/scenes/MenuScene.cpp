@@ -4,6 +4,8 @@
 #include "../core/UiStrings.h"
 #include "../hardware/Hal.h"
 #include "../hardware/PixelRenderer.h"
+#include "../game/FoodType.h"
+#include "../assets/FoodAssets.h"
 
 int MenuScene::lastSelected = 0;
 int MenuScene::lastBoxSelected = 0;
@@ -44,8 +46,14 @@ SceneID MenuScene::update() {
 void MenuScene::render() {
     PixelRenderer::fillRect(0, 0, 240, 135, PixelRenderer::rgb565(0, 0, 0));
 
-    drawBattery();
-    drawList();
+    if (mode != Mode::FOOD) {
+        drawBattery();
+    }
+    if (mode == Mode::FOOD) {
+        drawFoodLayout();
+    } else {
+        drawList();
+    }
 }
 
 void MenuScene::drawBattery() {
@@ -165,7 +173,18 @@ bool MenuScene::onButton(const ButtonEvent& ev) {
         }
         if (ev.btn == 0) {
             // A：确认
-            executeSelection();
+            if (mode == Mode::FOOD) {
+                // 食物子菜单：A 将当前高亮项设为全局食物（左侧菱形标记跟随），Back 返回主菜单
+                if (selected < FOOD_ITEM_COUNT - 1) {
+                    GameEngine::ins().setFoodStyle((uint8_t)selected);
+                    foodConfirmTime = GameEngine::ins().getGameNow() + FOOD_CONFIRM_MS;
+                    Serial.printf("[Menu] Global food set to: %s\n", FoodTypeInfo::name((FoodType)selected));
+                } else {
+                    enterMode(Mode::MAIN);
+                }
+            } else {
+                executeSelection();
+            }
             return true;
         }
     }
@@ -176,24 +195,9 @@ bool MenuScene::onButton(const ButtonEvent& ev) {
 void MenuScene::executeSelection() {
     Bug& bug = GameEngine::ins().getBug();
     if (mode == Mode::FOOD) {
-        switch (selected) {
-            case FOOD_STYLE:
-                GameEngine::ins().cycleFoodStyle();
-                bug.setFoodTray(GameEngine::ins().getBowlStyle() + 1,
-                                (FoodType)GameEngine::ins().getFoodStyle());
-                saveSettingsNow();
-                Serial.printf("[Menu] Food style: %s\n", GameEngine::ins().getFoodStyleName());
-                break;
-            case FOOD_PLACE:
-                if (bug.placeFoodInTray((FoodType)GameEngine::ins().getFoodStyle())) {
-                    Serial.printf("[Menu] Fed bug: %s\n", GameEngine::ins().getFoodStyleName());
-                }
-                nextScene = SCENE_TERRARIUM;
-                break;
-            case FOOD_BACK:
-            default:
-                enterMode(Mode::MAIN);
-                break;
+        // 食物子菜单的放置/返回已在 onButton 中直接处理
+        if (selected == FOOD_BACK) {
+            enterMode(Mode::MAIN);
         }
         return;
     }
@@ -287,7 +291,13 @@ void MenuScene::enterMode(Mode nextMode) {
     else lastSelected = selected;
 
     mode = nextMode;
-    if (mode == Mode::FOOD) selected = lastFoodSelected;
+    if (mode == Mode::FOOD) {
+        // 默认定位到当前选中的食物（与培养缸短按 A 保持一致）
+        selected = GameEngine::ins().getFoodStyle();
+        if (selected >= FOOD_ITEM_COUNT - 1) selected = 0;
+        foodScroll = 0.0f;       // 让列表在首帧自然滚动到选中项
+        foodConfirmTime = 0;     // 清除上一次确认反馈
+    }
     else if (mode == Mode::BOWL) selected = lastBowlSelected;
     else if (mode == Mode::WOOD) selected = lastWoodSelected;
     else if (mode == Mode::BOX) selected = lastBoxSelected;
@@ -307,19 +317,10 @@ int MenuScene::itemCount() const {
 
 const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
     if (mode == Mode::FOOD) {
-        switch (index) {
-            case FOOD_STYLE: {
-                FoodType ft = (FoodType)GameEngine::ins().getFoodStyle();
-                snprintf(buf, bufSize, "%s:%d", FoodTypeInfo::name(ft),
-                         GameEngine::ins().getBug().getFoodCount(ft));
-                return buf;
-            }
-            case FOOD_PLACE:
-                return UiStrings::PLACE;
-            case FOOD_BACK:
-            default:
-                return UiStrings::BACK;
+        if (index >= 0 && index < FOOD_ITEM_COUNT - 1) {
+            return FoodTypeInfo::name((FoodType)index);
         }
+        return UiStrings::BACK;
     }
 
     if (mode == Mode::BOWL) {
@@ -387,4 +388,152 @@ void MenuScene::saveSettingsNow() {
         GameEngine::ins().getBowlStyle(),
         GameEngine::ins().getFoodStyle()
     );
+}
+
+
+
+void MenuScene::drawFoodLayout() {
+    Bug& bug = GameEngine::ins().getBug();
+    LGFX_Sprite& canvas = Hal::ins().canvas();
+    float fs = PixelRenderer::getContentFontScale();
+
+    static constexpr int LEFT_W = 78;
+    static constexpr int RIGHT_X = LEFT_W + 8;
+    static constexpr int LIST_Y_START = 22;
+    static constexpr int LIST_BOTTOM = Hal::DISPLAY_H - 8;
+    static constexpr int VISIBLE_H = LIST_BOTTOM - LIST_Y_START;
+    static constexpr int ROW_H = 22;          // 行高（含空隙），方便后续扩展更多食物
+    static constexpr int TEXT_X = 12;
+    static constexpr int MARK_X_OFS = 6;      // 文本与选择标记之间的距离
+
+    // ---- 左侧可滚动列表 ----
+    int totalH = FOOD_ITEM_COUNT * ROW_H;
+    int maxScroll = (totalH > VISIBLE_H) ? (totalH - VISIBLE_H) : 0;
+    int targetScroll = selected * ROW_H - VISIBLE_H / 2 + ROW_H / 2;
+    if (targetScroll < 0) targetScroll = 0;
+    if (targetScroll > maxScroll) targetScroll = maxScroll;
+
+    // 平滑滚动
+    float diff = (float)targetScroll - foodScroll;
+    if (fabsf(diff) < 0.5f) {
+        foodScroll = (float)targetScroll;
+    } else {
+        foodScroll += diff * 0.25f;
+    }
+
+    // 左右分隔线
+    canvas.drawFastVLine(LEFT_W, 20, Hal::DISPLAY_H - 24, PixelRenderer::GRAY);
+
+    // 绘制每个 item，仅绘制可见区域内的行
+    for (int i = 0; i < FOOD_ITEM_COUNT; i++) {
+        int y = LIST_Y_START + i * ROW_H - (int)foodScroll;
+        if (y + ROW_H < LIST_Y_START || y > LIST_BOTTOM) continue;
+
+        bool isSelected = (i == selected);
+        uint16_t color = isSelected ? PixelRenderer::YELLOW : PixelRenderer::WHITE;
+
+        const char* label;
+        if (i == FOOD_ITEM_COUNT - 1) {
+            label = UiStrings::BACK;
+        } else {
+            label = FoodTypeInfo::name((FoodType)i);
+        }
+
+        int textY = y + (ROW_H - (int)(8 * fs)) / 2;
+
+        // 全局食物标记：在当前设置的食物名字前面绘制一个青色小菱形
+        int globalFood = GameEngine::ins().getFoodStyle();
+        if (i < FOOD_ITEM_COUNT - 1 && i == globalFood) {
+            int cx = TEXT_X - 8;
+            int cy = textY + (int)(4 * fs);
+            uint16_t diamondColor = PixelRenderer::CYAN;
+            // 确认反馈期间菱形也短暂变绿
+            if (foodConfirmTime > 0 && GameEngine::ins().getGameNow() < foodConfirmTime && isSelected) {
+                diamondColor = PixelRenderer::GREEN;
+            }
+            canvas.fillTriangle(cx, cy - 3, cx + 3, cy, cx, cy + 3, diamondColor);
+            canvas.fillTriangle(cx, cy - 3, cx, cy + 3, cx - 3, cy, diamondColor);
+        }
+
+        PixelRenderer::drawPixelText(TEXT_X, textY, label, color, fs);
+    }
+
+    // ---- 右侧详情面板 ----
+    if (selected >= 0 && selected < FOOD_ITEM_COUNT - 1) {
+        FoodType ft = (FoodType)selected;
+        int idx = selected;
+
+        // 食物 icon：3x 放大，居中于右侧面板，位置上移给底部信息留空间
+        uint16_t foodOffset = pgm_read_word(&FoodAssets::SPRITE_FRAMES[idx].offset);
+        uint16_t foodLength = pgm_read_word(&FoodAssets::SPRITE_FRAMES[idx].length);
+        int iconW = FoodAssets::FRAME_W * 3;
+        int iconH = FoodAssets::FRAME_H * 3;
+        int iconX = RIGHT_X + (Hal::DISPLAY_W - RIGHT_X - iconW) / 2;
+        int iconY = 14;
+        PixelRenderer::drawRgb565RleScaled(iconX, iconY,
+                                           FoodAssets::FRAME_W,
+                                           FoodAssets::FRAME_H,
+                                           FoodAssets::SPRITE_RLE,
+                                           foodOffset, foodLength, 3, false);
+
+        // 名字 + 状态提示
+        const char* name = FoodTypeInfo::name(ft);
+        canvas.setTextSize(fs);
+        int nameW = canvas.textWidth(name);
+        int rightW = Hal::DISPLAY_W - RIGHT_X;
+        int nameX = RIGHT_X + (rightW - nameW) / 2;
+        int nameY = iconY + iconH + 8;
+        PixelRenderer::drawPixelText(nameX, nameY, name, PixelRenderer::WHITE, fs);
+
+        uint8_t count = bug.getFoodCount(ft);
+        uint8_t level = FoodTypeInfo::level(ft);
+        uint8_t trayLevel = GameEngine::ins().getBowlStyle() + 1;
+        uint16_t hintColor = PixelRenderer::GREEN;
+        const char* hint = ".";
+        if (count == 0) {
+            hintColor = PixelRenderer::RED;
+            hint = "!";
+        } else if (level > trayLevel) {
+            hintColor = PixelRenderer::YELLOW;
+            hint = "!";
+        }
+        PixelRenderer::drawPixelText(nameX + nameW + (int)(4 * fs),
+                                     nameY,
+                                     hint, hintColor, fs);
+
+        // 食物信息：左对齐排列在右侧面板底部，预留更宽松的垂直空间
+        static const char* attrNames[5] = {"SIZ", "STR", "END", "SPD", "SPI"};
+        int attr = FoodTypeInfo::envAttribute(ft);
+        const char* attrName = (attr >= 0 && attr < 5) ? attrNames[attr] : "-";
+
+        char buf[48];
+        int infoX = RIGHT_X + 10;
+        int infoY = nameY + (int)(16 * fs);
+        int infoStep = (int)(11 * fs);
+
+        snprintf(buf, sizeof(buf), "Lv.%d", FoodTypeInfo::level(ft));
+        PixelRenderer::drawPixelText(infoX, infoY, buf, PixelRenderer::CYAN, fs);
+        infoY += infoStep;
+
+        snprintf(buf, sizeof(buf), "%s: %s", UiStrings::TYPE, attrName);
+        PixelRenderer::drawPixelText(infoX, infoY, buf, PixelRenderer::CYAN, fs);
+        infoY += infoStep;
+
+        snprintf(buf, sizeof(buf), "Stock: %d", count);
+        PixelRenderer::drawPixelText(infoX, infoY, buf, PixelRenderer::CYAN, fs);
+        infoY += infoStep;
+
+        if (level > trayLevel) {
+            snprintf(buf, sizeof(buf), "Need Lv.%d tray", level);
+            PixelRenderer::drawPixelText(infoX, infoY, buf, PixelRenderer::RED, fs);
+        } else if (count == 0) {
+            PixelRenderer::drawPixelText(infoX, infoY, "Out of stock", PixelRenderer::RED, fs);
+        } else {
+            PixelRenderer::drawPixelText(infoX, infoY, "Ready", PixelRenderer::GREEN, fs);
+        }
+    } else if (selected == FOOD_ITEM_COUNT - 1) {
+        // Back 选中时的右侧提示
+        PixelRenderer::drawPixelText(RIGHT_X + 20, 80, "A:Back to menu",
+                                     PixelRenderer::GRAY, fs);
+    }
 }

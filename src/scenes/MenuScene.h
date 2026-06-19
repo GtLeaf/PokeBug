@@ -24,6 +24,8 @@ private:
     Mode mode = Mode::MAIN;
     int selected = 0;
     float animSelected = 0.0f;  // 纵向滚动动画位置
+    float foodScroll = 0.0f;    // 食物列表滚动偏移
+    uint64_t foodConfirmTime = 0; // A 键确认反馈结束时间（ms）
     static int lastSelected;
     static int lastBoxSelected;
     static int lastWoodSelected;
@@ -33,10 +35,12 @@ private:
     static constexpr int BOX_ITEM_COUNT = 4;
     static constexpr int WOOD_ITEM_COUNT = 3;
     static constexpr int BOWL_ITEM_COUNT = 2;
-    static constexpr int FOOD_ITEM_COUNT = 3;
+    static constexpr int FOOD_ITEM_COUNT = 7;
+    static constexpr uint32_t FOOD_CONFIRM_MS = 250;
 
     void drawBattery();
     void drawList();
+    void drawFoodLayout();
     void executeSelection();
     void enterMode(Mode nextMode);
     int itemCount() const;
@@ -71,8 +75,12 @@ private:
     };
 
     enum FoodItem {
-        FOOD_STYLE = 0,
-        FOOD_PLACE,
+        FOOD_DROP = 0,
+        FOOD_CUBE,
+        FOOD_SLICE,
+        FOOD_CITRUS,
+        FOOD_JELLY,
+        FOOD_BERRY,
         FOOD_BACK,
     };
 };
