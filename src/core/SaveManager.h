@@ -40,7 +40,7 @@ private:
     static constexpr const char* KEY_BOWL  = "bowlstyle";
     static constexpr const char* KEY_FOOD  = "foodstyle";
     static constexpr const char* KEY_VER   = "savever";
-    static constexpr uint8_t SAVE_VERSION = 5;
+    static constexpr uint8_t SAVE_VERSION = 7;
 
     bool isSaving = false;  // 防并发写入锁
 };

@@ -1,4 +1,5 @@
 #include "Bug.h"
+#include "../core/UiStrings.h"
 #include <Arduino.h>
 #include <cmath>
 
@@ -7,20 +8,23 @@ Bug::Bug() {}
 void Bug::initNew(uint64_t now) {
     randomizeGenes();
 
-    siz = 1.0f; str = 1.0f; end = 1.0f; spi = 1.0f;
+    siz = 1.0f; str = 1.0f; end = 1.0f; spd = 1.0f; spi = 1.0f;
     mot = 50;
     hunger = 100;
     stage = Stage::EGG;
     alive = true;
 
-    sap = 0;
+    for (int i = 0; i < (int)FoodType::COUNT; i++) foodCounts[i] = 0;
+    foodCounts[(uint8_t)FoodType::DROP] = 6; // 初始 6 份 Drop
     rottenWood = 0;
     woodPlaced = false;
     foodInTray = false;
+    trayFoodType = FoodType::DROP;
     foodAmount = 0;
     lastEatTime = 0;
 
     stageStartTime = now;
+    eggStartTime = now;
     lastFeedTime = 0;
     lastSapProduceTime = now;
     lastShakeTrainTime = 0;
@@ -31,6 +35,22 @@ void Bug::initNew(uint64_t now) {
     pokeAnger = 0;
     motBuffAmount = 0;
     motBuffEndTime = 0;
+
+    temperament = Temperament::SPIRIT;
+    eggShakeCount = 0;
+    eggViolentShakeCount = 0;
+    eggPokeCount = 0;
+    eggWaterCount = 0;
+    eggLeftTiltMs = 0;
+    eggRightTiltMs = 0;
+    eggLastAction = 0;
+
+    foodTrayLevel = 1;
+    foodTrayType = FoodType::DROP;
+    woodStyle = 0;
+
+    larvaCitrusCount = 0;
+    larvaBerryFed = false;
 
     larvaFeeds = 0;
     pupaShakes = 0;
@@ -44,7 +64,6 @@ void Bug::initNew(uint64_t now) {
 }
 
 void Bug::randomizeGenes() {
-    // MVP：均匀随机，后期可改为加权分布
     auto rollGene = []() -> uint8_t {
         uint8_t dom = random(16);
         uint8_t rec = random(16);
@@ -53,6 +72,7 @@ void Bug::randomizeGenes() {
     geneVIG = rollGene();
     geneATK = rollGene();
     geneMNT = rollGene();
+    geneEND = rollGene();
     geneAPP = rollGene();
 }
 
@@ -62,7 +82,9 @@ void Bug::clampAttributes() {
     if (str < 1.0f) str = 1.0f;
     if (str > strCap()) str = strCap();
     if (end < 1.0f) end = 1.0f;
-    if (end > 10.0f) end = 10.0f;
+    if (end > endCap()) end = endCap();
+    if (spd < 1.0f) spd = 1.0f;
+    if (spd > 10.0f) spd = 10.0f;
     if (spi < 1.0f) spi = 1.0f;
     if (spi > spiCap()) spi = spiCap();
     if (mot > 100) mot = 100;
@@ -75,9 +97,8 @@ void Bug::update(uint64_t now) {
     uint32_t delta = (uint32_t)(now - lastUpdateTime);
     lastUpdateTime = now;
 
-    // 饥饿度自然下降
     updateHunger(now, delta);
-    if (!alive) return;  // 饥饿致死则不再执行后续成长
+    if (!alive) return;
 
     // MOT buff 过期恢复
     if (motBuffAmount > 0 && now >= motBuffEndTime) {
@@ -88,10 +109,15 @@ void Bug::update(uint64_t now) {
         motBuffEndTime = 0;
     }
 
-    // 成虫产树汁
+    // 蛹期安静成长 SPI
+    if (stage == Stage::PUPA) {
+        updatePupaSpi(now, delta);
+    }
+
+    // 成虫产树汁（保留原有产出机制）
     if (stage == Stage::ADULT) {
-        if (now - lastSapProduceTime >= ADULT_SAP_PRODUCE_MS && sap < 6) {
-            sap++;
+        if (now - lastSapProduceTime >= ADULT_SAP_PRODUCE_MS && foodCounts[(uint8_t)FoodType::DROP] < MAX_FOOD_COUNT) {
+            foodCounts[(uint8_t)FoodType::DROP]++;
             lastSapProduceTime = now;
         }
     }
@@ -104,7 +130,7 @@ void Bug::update(uint64_t now) {
         if (restStartTime == 0) restStartTime = now;
         if (now - restStartTime >= 2ULL * 60 * 1000) {
             end += 0.3f;
-            restStartTime = now;  // 每次休息只加一次，需要离开再回来
+            restStartTime = now;
         }
     } else {
         restStartTime = 0;
@@ -124,7 +150,6 @@ void Bug::updateHunger(uint64_t now, uint32_t deltaMs) {
         }
     }
 
-    // 饥饿致死
     if (hunger == 0) {
         if (deathTimerStart == 0) deathTimerStart = now;
         else if (now - deathTimerStart >= STARVE_DEATH_MS) {
@@ -134,8 +159,21 @@ void Bug::updateHunger(uint64_t now, uint32_t deltaMs) {
         deathTimerStart = 0;
     }
 
-    // 饥饿影响 MOT 上限
     if (hunger < 30 && mot > 50) mot = 50;
+}
+
+void Bug::updatePupaSpi(uint64_t now, uint32_t deltaMs) {
+    (void)now;
+    static uint32_t pupaSpiAcc = 0;
+    uint32_t interval = PUPA_SPI_GROWTH_MS;
+    if (larvaBerryFed) {
+        interval = (interval * 9) / 10; // 每 9 分钟 +1
+    }
+    pupaSpiAcc += deltaMs;
+    while (pupaSpiAcc >= interval) {
+        pupaSpiAcc -= interval;
+        spi += 1.0f;
+    }
 }
 
 bool Bug::canAdvanceStage(uint64_t now) const {
@@ -148,13 +186,14 @@ bool Bug::canAdvanceStage(uint64_t now) const {
             return elapsed >= LARVA_DURATION_MS;
         case Stage::PUPA:
             return elapsed >= PUPA_DURATION_MS;
+        case Stage::JUVENILE:
+            return elapsed >= JUVENILE_DURATION_MS;
         default:
             return false;
     }
 }
 
 void Bug::checkStageTransition(uint64_t now) {
-    // 允许一次 update 内连续推进多个阶段（catch-up）
     uint8_t maxAdvances = 3;
     while (maxAdvances-- > 0 && canAdvanceStage(now)) {
         advanceStage(now);
@@ -167,19 +206,25 @@ void Bug::advanceStage(uint64_t now) {
         case Stage::EGG:
             stageStartTime += EGG_DURATION_MS;
             stage = Stage::LARVA;
-            sap = 6;  // 幼虫期初始 6 份树汁
+            temperament = determineTemperament(stageStartTime);
+            // 孵化时给初始食物
+            foodCounts[(uint8_t)FoodType::DROP] = 6;
             break;
         case Stage::LARVA:
             stageStartTime += LARVA_DURATION_MS;
             stage = Stage::PUPA;
             str += 1.0f;
             siz += 0.5f;
-            rottenWood = 1;  // 化蛹获得 1 块腐木
+            rottenWood = 1;
             break;
         case Stage::PUPA:
             stageStartTime += PUPA_DURATION_MS;
-            stage = Stage::ADULT;
+            stage = Stage::JUVENILE;
             spi += 3.0f - (float)pupaShakes;
+            break;
+        case Stage::JUVENILE:
+            stageStartTime += JUVENILE_DURATION_MS;
+            stage = Stage::ADULT;
             break;
         default:
             return;
@@ -187,51 +232,212 @@ void Bug::advanceStage(uint64_t now) {
     clampAttributes();
 }
 
-bool Bug::placeSapInTray() {
-    // 盘中食物剩余超过一半时拒绝放置；消耗超过一半允许替换为新食物
-    if (foodAmount > FOOD_MAX_AMOUNT / 2) return false;
-    if (sap == 0) return false;
-    if (stage != Stage::LARVA && stage != Stage::ADULT) return false;
+Temperament Bug::determineTemperament(uint64_t now) {
+    uint64_t totalDuration = now - eggStartTime;
+    if (totalDuration == 0) totalDuration = 1;
+    uint32_t tiltPct = (uint32_t)((eggLeftTiltMs + eggRightTiltMs) * 100 / totalDuration);
 
-    sap--;
+    // L1: 迅捷
+    if (tiltPct >= 30) return Temperament::SWIFT;
+
+    // L2: 操作类候选
+    struct Candidate { Temperament t; int count; };
+    Candidate candidates[3];
+    int n = 0;
+    if (eggPokeCount >= 4)    candidates[n++] = {Temperament::RESILIENT, eggPokeCount};
+    if (eggWaterCount >= 4)   candidates[n++] = {Temperament::GIANT, eggWaterCount};
+    if (eggShakeCount >= 4 && eggViolentShakeCount >= 1)
+        candidates[n++] = {Temperament::BRUTE, eggShakeCount};
+
+    if (n > 0) {
+        int maxCount = candidates[0].count;
+        for (int i = 1; i < n; i++) {
+            if (candidates[i].count > maxCount) maxCount = candidates[i].count;
+        }
+        // 平局：最近触发者胜出
+        if (eggLastAction == (uint8_t)EggAction::POKE && eggPokeCount == maxCount)
+            return Temperament::RESILIENT;
+        if (eggLastAction == (uint8_t)EggAction::WATER && eggWaterCount == maxCount)
+            return Temperament::GIANT;
+        if (eggLastAction == (uint8_t)EggAction::SHAKE && eggShakeCount == maxCount && eggViolentShakeCount >= 1)
+            return Temperament::BRUTE;
+        // 回退固定优先级：戳 > 喷水 > 摇晃
+        for (int i = 0; i < n; i++) {
+            if (candidates[i].count == maxCount) return candidates[i].t;
+        }
+    }
+
+    // L3: 均衡
+    bool allInRange = (eggPokeCount >= 1 && eggPokeCount <= 3) &&
+                      (eggWaterCount >= 1 && eggWaterCount <= 3) &&
+                      (eggShakeCount >= 1 && eggShakeCount <= 3);
+    if (allInRange) return Temperament::BALANCED;
+
+    // L4: 灵心兜底
+    return Temperament::SPIRIT;
+}
+
+const char* Bug::getTemperamentName() const {
+    switch (temperament) {
+        case Temperament::SWIFT:     return UiStrings::TEMP_SWIFT;
+        case Temperament::RESILIENT: return UiStrings::TEMP_RESILIENT;
+        case Temperament::GIANT:     return UiStrings::TEMP_GIANT;
+        case Temperament::BRUTE:     return UiStrings::TEMP_BRUTE;
+        case Temperament::BALANCED:  return UiStrings::TEMP_BALANCED;
+        case Temperament::SPIRIT:    return UiStrings::TEMP_SPIRIT;
+        default: return "?";
+    }
+}
+
+float Bug::getEnvMultiplier(int attrIndex) const {
+    float mult = 1.0f;
+
+    // 食物盘加成
+    if (foodTrayLevel == 2) mult *= 1.03f;
+    else if (foodTrayLevel == 3) mult *= 1.06f;
+
+    // 食物倾向加成
+    int foodAttr = FoodTypeInfo::envAttribute(foodTrayType);
+    if (foodAttr == attrIndex) mult *= 1.03f;
+
+    // 腐木加成（仅成虫）
+    if (stage == Stage::ADULT && woodPlaced) {
+        int woodAttr = -1;
+        switch (woodStyle) {
+            case 0: woodAttr = 1; break; // Twig -> STR
+            case 1: woodAttr = 0; break; // Stack -> SIZ
+            case 2: woodAttr = 4; break; // Mossy -> SPI
+            case 3: woodAttr = 3; break; // Pale -> SPD
+            case 4: woodAttr = 2; break; // Hollow -> END
+            default: break;
+        }
+        if (woodAttr == attrIndex) mult *= 1.03f;
+    }
+
+    return mult;
+}
+
+void Bug::setFoodTray(uint8_t level, FoodType type) {
+    foodTrayLevel = level;
+    foodTrayType = type;
+}
+
+void Bug::setWood(uint8_t style) {
+    woodStyle = style;
+}
+
+bool Bug::placeFoodInTray(FoodType type) {
+    if (foodAmount > FOOD_MAX_AMOUNT / 2) return false;
+    if (foodCounts[(uint8_t)type] == 0) return false;
+    if (stage != Stage::LARVA && stage != Stage::JUVENILE && stage != Stage::ADULT) return false;
+    if (FoodTypeInfo::level(type) > foodTrayLevel) return false;
+
+    foodCounts[(uint8_t)type]--;
+    trayFoodType = type;
     foodAmount = FOOD_MAX_AMOUNT;
     foodInTray = true;
     lastFeedTime = lastUpdateTime;
     return true;
 }
 
+void Bug::feed(FoodType type, uint64_t now) {
+    const FoodTypeInfo::FoodStats& st = FoodTypeInfo::stats(type);
+
+    // 阶段吸收系数
+    float absSiz = 0.0f, absStr = 0.0f, absEnd = 0.0f, absSpd = 0.0f, absSpi = 0.0f;
+    switch (stage) {
+        case Stage::LARVA:
+            absSiz = 1.0f; absStr = 1.0f; absSpd = 0.2f; absSpi = 0.1f;
+            break;
+        case Stage::JUVENILE:
+            absSiz = 0.5f; absStr = 0.5f; absEnd = 0.5f; absSpd = 1.0f; absSpi = 0.5f;
+            break;
+        case Stage::ADULT:
+            absSiz = 0.1f; absStr = 0.1f; absEnd = 0.1f; absSpd = 0.1f; absSpi = 0.1f;
+            break;
+        default:
+            return;
+    }
+
+    // Jelly 间隔惩罚
+    float penalty = 1.0f;
+    if (type == FoodType::JELLY && (now - lastFeedTime) < FoodTypeInfo::JELLY_INTERVAL_MS) {
+        penalty = 0.5f;
+    }
+
+    // 气质系数
+    float tempSiz = 1.0f, tempStr = 1.0f, tempEnd = 1.0f, tempSpd = 1.0f, tempSpi = 1.0f;
+    switch (temperament) {
+        case Temperament::SWIFT:     tempSpd = 1.10f; tempSiz = 0.90f; break;
+        case Temperament::RESILIENT: tempEnd = 1.10f; tempSpi = 0.90f; break;
+        case Temperament::GIANT:     tempSiz = 1.10f; tempSpd = 0.90f; break;
+        case Temperament::BRUTE:     tempStr = 1.10f; tempEnd = 0.90f; break;
+        case Temperament::BALANCED:  break;
+        case Temperament::SPIRIT:    tempSpi = 1.10f; tempStr = 0.90f; break;
+    }
+
+    // 环境系数
+    float envSiz = getEnvMultiplier(0);
+    float envStr = getEnvMultiplier(1);
+    float envEnd = getEnvMultiplier(2);
+    float envSpd = getEnvMultiplier(3);
+    float envSpi = getEnvMultiplier(4);
+
+    siz += st.siz * absSiz * tempSiz * envSiz * sizGrowthMult() * penalty;
+    str += st.str * absStr * tempStr * envStr * strGrowthMult() * penalty;
+    end += st.end * absEnd * tempEnd * envEnd * endGrowthMult() * penalty;
+    spd += st.spd * absSpd * tempSpd * envSpd * penalty;
+    spi += st.spi * absSpi * tempSpi * envSpi * spiGrowthMult() * penalty;
+
+    // 成虫期额外 MOT 恢复
+    if (stage == Stage::ADULT) {
+        uint8_t motRec = FoodTypeInfo::adultMotRecovery(type);
+        mot += motRec;
+    }
+
+    // 特殊记录
+    if (stage == Stage::LARVA && type == FoodType::CITRUS) {
+        larvaCitrusCount++;
+    }
+    if (stage == Stage::LARVA && type == FoodType::BERRY) {
+        larvaBerryFed = true;
+    }
+
+    // Citrus 累计 3 次增加 SPI 上限 +0.3
+    if (stage == Stage::LARVA && larvaCitrusCount == 3 && spiCapBonusTenths < 3) {
+        spiCapBonusTenths = 3;
+    }
+
+    lastFeedTime = now;
+    clampAttributes();
+}
+
 void Bug::eatFromTray(uint64_t now) {
-    if (foodAmount == 0) return;
+    if (foodAmount == 0 || !foodInTray) return;
 
     static constexpr uint32_t EAT_INTERVAL_MS = 2000;
     if (now - lastEatTime < EAT_INTERVAL_MS) return;
 
-    // 甲虫"选择"是否进食：饱腹或随机挑食时不吃
     bool hungry = false;
     uint8_t eatChance = 0;
     if (stage == Stage::LARVA) {
         hungry = hunger < 95;
         eatChance = 90;
-    } else if (stage == Stage::ADULT) {
+    } else if (stage == Stage::JUVENILE || stage == Stage::ADULT) {
         hungry = hunger < 80;
         eatChance = 70;
     } else {
-        return;  // 卵/蛹不会进食
+        return;
     }
 
     if (!hungry || random(100) >= eatChance) return;
 
-    // 吃一口
     foodAmount--;
     hunger += 6;
     lastEatTime = now;
 
-    if (stage == Stage::LARVA) {
-        str += 0.06f * strGrowthMult();
-        siz += 0.03f * sizGrowthMult();
-    } else if (stage == Stage::ADULT) {
-        end += 0.03f;
-    }
+    // 实际属性增益
+    feed(trayFoodType, now);
 
     if (foodAmount == 0) {
         foodInTray = false;
@@ -241,15 +447,7 @@ void Bug::eatFromTray(uint64_t now) {
     clampAttributes();
 }
 
-bool Bug::placeWood() {
-    if (rottenWood == 0 || woodPlaced) return false;
-    rottenWood--;
-    woodPlaced = true;
-    return true;
-}
-
 bool Bug::poke(uint64_t now) {
-    // 愤怒值随时间自然衰减（根据距离上次被戳的时间）
     if (pokeAnger > 0 && now > lastPokeTime) {
         uint64_t elapsed = now - lastPokeTime;
         uint32_t decayTicks = (uint32_t)(elapsed / POKE_ANGER_DECAY_MS);
@@ -258,14 +456,12 @@ bool Bug::poke(uint64_t now) {
         else pokeAnger = 0;
     }
 
-    // 冷却中：只播放戳动画，不增加愤怒值、不触发 MOT
     if (now - lastPokeTime < POKE_COOLDOWN_MS) {
         Serial.printf("[Bug] poke in cooldown, remain %.1fs, anger=%d (anim only)\n",
                       (POKE_COOLDOWN_MS - (now - lastPokeTime)) / 1000.0f, pokeAnger);
         return true;
     }
 
-    // 每次戳增加愤怒值
     uint16_t newAnger = (uint16_t)pokeAnger + POKE_ANGER_PER_POKE;
     if (newAnger > 100) newAnger = 100;
     pokeAnger = (uint8_t)newAnger;
@@ -274,7 +470,6 @@ bool Bug::poke(uint64_t now) {
     Serial.printf("[Bug] poke anger=%d roll=%d\n", pokeAnger, roll);
 
     if (roll < pokeAnger) {
-        // 触发成功：增加 MOT buff，愤怒清零，进入冷却
         lastPokeTime = now;
         pokeAnger = 0;
 
@@ -289,7 +484,6 @@ bool Bug::poke(uint64_t now) {
         return true;
     }
 
-    // 未触发：仍播放戳动画，愤怒保留并继续衰减
     Serial.printf("[Bug] poke missed, anger=%d\n", pokeAnger);
     return true;
 }
@@ -297,7 +491,6 @@ bool Bug::poke(uint64_t now) {
 bool Bug::onShake(uint64_t now) {
     switch (stage) {
         case Stage::EGG:
-            // 摇晃延长孵化时间，累计最多 2 分钟。
             if (eggShakeDelayAcc >= EGG_SHAKE_DELAY_MAX_MS) return false;
             {
                 uint32_t delay = EGG_SHAKE_DELAY_MS;
@@ -306,6 +499,7 @@ bool Bug::onShake(uint64_t now) {
                 stageStartTime += delay;
                 eggShakeDelayAcc += delay;
             }
+            onEggShake(now, false);
             return true;
 
         case Stage::LARVA:
@@ -332,19 +526,62 @@ bool Bug::onShake(uint64_t now) {
     }
 }
 
+void Bug::onWater(uint64_t now) {
+    (void)now;
+    // 喷水目前只在卵期有计数意义
+}
+
+void Bug::onEggPoke(uint64_t now) {
+    (void)now;
+    eggPokeCount++;
+    eggLastAction = (uint8_t)EggAction::POKE;
+}
+
+void Bug::onEggWater(uint64_t now) {
+    (void)now;
+    eggWaterCount++;
+    eggLastAction = (uint8_t)EggAction::WATER;
+}
+
+void Bug::onEggShake(uint64_t now, bool violent) {
+    (void)now;
+    eggShakeCount++;
+    if (violent) eggViolentShakeCount++;
+    eggLastAction = (uint8_t)EggAction::SHAKE;
+}
+
+void Bug::onEggTilt(uint64_t now, uint32_t deltaMs, bool left) {
+    (void)now;
+    if (left) eggLeftTiltMs += deltaMs;
+    else eggRightTiltMs += deltaMs;
+}
+
 void Bug::onBattleEnd(bool win, uint64_t now) {
     (void)now;
     if (win) {
         wins++;
         spi += 0.5f;
-        if (sap + 2 <= 6) sap += 2;
-        else sap = 6;
+        if ((int)foodCounts[(uint8_t)FoodType::DROP] + 2 <= MAX_FOOD_COUNT) foodCounts[(uint8_t)FoodType::DROP] += 2;
+        else foodCounts[(uint8_t)FoodType::DROP] = MAX_FOOD_COUNT;
     } else {
         losses++;
         spi += 0.2f;
     }
     mot = 50;
     clampAttributes();
+}
+
+uint8_t Bug::getTotalFoodCount() const {
+    uint8_t total = 0;
+    for (int i = 0; i < (int)FoodType::COUNT; i++) total += foodCounts[i];
+    return total;
+}
+
+bool Bug::placeWood() {
+    if (rottenWood == 0 || woodPlaced) return false;
+    rottenWood--;
+    woodPlaced = true;
+    return true;
 }
 
 uint8_t Bug::getPaletteId() const {
@@ -357,10 +594,10 @@ uint8_t Bug::getPaletteId() const {
 
 const char* Bug::getHatchHint() const {
     uint16_t total = dominant(geneVIG) + dominant(geneATK) + dominant(geneMNT);
-    if (total >= 30) return "活力十足！";
-    if (total >= 20) return "看起来很健康";
-    if (total >= 10) return "有点安静…";
-    return "似乎不太好养";
+    if (total >= 30) return UiStrings::HATCH_HINT_VIGOROUS;
+    if (total >= 20) return UiStrings::HATCH_HINT_HEALTHY;
+    if (total >= 10) return UiStrings::HATCH_HINT_QUIET;
+    return UiStrings::HATCH_HINT_WEAK;
 }
 
 void Bug::resetAfterDeath(uint64_t now) {
@@ -370,17 +607,19 @@ void Bug::resetAfterDeath(uint64_t now) {
 }
 
 // ---------- 存档格式 ----------
-// 按设计文档 save_data_t 打包，当前 v5 增加戳甲虫概率累计与 MOT buff。
-static constexpr uint8_t SAVE_VERSION = 5;
+// v7：增加 geneEND 基因，影响 END 成长与上限
+static constexpr uint8_t SAVE_VERSION = 7;
 
 void Bug::save(uint8_t* buf, uint16_t& len) const {
     struct SaveData {
         uint8_t version;
-        uint8_t geneVIG, geneATK, geneMNT, geneAPP;
-        uint8_t siz, str, end, spi;
+        uint8_t geneVIG, geneATK, geneMNT, geneEND, geneAPP;
+        uint8_t siz, str, end, spd, spi;
         uint8_t mot, hunger;
         uint8_t stage, alive;
-        uint8_t sap, rottenWood, woodPlaced;
+        uint8_t foodCounts[6];
+        uint8_t rottenWood, woodPlaced;
+        uint8_t foodInTray, trayFoodType, foodAmount;
         uint32_t stageStart;
         uint32_t lastFeed;
         uint32_t lastSap;
@@ -392,33 +631,50 @@ void Bug::save(uint8_t* buf, uint16_t& len) const {
         uint8_t larvaFeeds, pupaShakes;
         uint8_t wins, losses;
         uint8_t generation;
-        uint8_t foodInTray;
-        uint8_t foodAmount;
-        uint32_t motBuffEnd;       // MOT buff 结束时间（秒）
-        uint8_t motBuffAmount;     // MOT buff 增加值
-        uint8_t pokeAnger;         // 当前愤怒值 0-100
-        uint8_t reserved[2];
+        uint32_t motBuffEnd;
+        uint8_t motBuffAmount;
+        uint8_t pokeAnger;
+        uint8_t temperament;
+        uint32_t eggStart;
+        uint8_t eggShakeCount;
+        uint8_t eggViolentShakeCount;
+        uint8_t eggPokeCount;
+        uint8_t eggWaterCount;
+        uint32_t eggLeftTiltMs;
+        uint32_t eggRightTiltMs;
+        uint8_t eggLastAction;
+        uint8_t foodTrayLevel;
+        uint8_t foodTrayType;
+        uint8_t woodStyle;
+        uint8_t larvaCitrusCount;
+        uint8_t larvaBerryFed;
+        uint8_t spiCapBonusTenths;
+        uint8_t reserved[1];
     } __attribute__((packed));
 
     SaveData sd = {};
     sd.version = SAVE_VERSION;
-    sd.geneVIG = geneVIG; sd.geneATK = geneATK; sd.geneMNT = geneMNT; sd.geneAPP = geneAPP;
+    sd.geneVIG = geneVIG; sd.geneATK = geneATK; sd.geneMNT = geneMNT; sd.geneEND = geneEND; sd.geneAPP = geneAPP;
     sd.siz = (uint8_t)roundf(siz);
     sd.str = (uint8_t)roundf(str);
     sd.end = (uint8_t)roundf(end);
+    sd.spd = (uint8_t)roundf(spd);
     sd.spi = (uint8_t)roundf(spi);
     sd.mot = mot;
     sd.hunger = hunger;
     sd.stage = (uint8_t)stage;
     sd.alive = alive ? 1 : 0;
-    sd.sap = sap;
+    for (int i = 0; i < 6; i++) sd.foodCounts[i] = foodCounts[i];
     sd.rottenWood = rottenWood;
     sd.woodPlaced = woodPlaced ? 1 : 0;
+    sd.foodInTray = foodInTray ? 1 : 0;
+    sd.trayFoodType = (uint8_t)trayFoodType;
+    sd.foodAmount = foodAmount;
     sd.stageStart = (uint32_t)(stageStartTime / 1000ULL);
     sd.lastFeed = (uint32_t)(lastFeedTime / 1000ULL);
     sd.lastSap = (uint32_t)(lastSapProduceTime / 1000ULL);
     sd.lastShake = (uint32_t)(lastShakeTrainTime / 1000ULL);
-    sd.eggShakeDelay = eggShakeDelayAcc / 1000UL;
+    sd.eggShakeDelay = eggShakeDelayAcc / 1000;
     sd.restStart = (uint32_t)(restStartTime / 1000ULL);
     sd.lastUpdate = (uint32_t)(lastUpdateTime / 1000ULL);
     sd.lastEat = (uint32_t)(lastEatTime / 1000ULL);
@@ -427,68 +683,39 @@ void Bug::save(uint8_t* buf, uint16_t& len) const {
     sd.wins = wins;
     sd.losses = losses;
     sd.generation = generation;
-    sd.foodInTray = foodInTray ? 1 : 0;
-    sd.foodAmount = foodAmount;
     sd.motBuffEnd = (uint32_t)(motBuffEndTime / 1000ULL);
     sd.motBuffAmount = motBuffAmount;
     sd.pokeAnger = pokeAnger;
+    sd.temperament = (uint8_t)temperament;
+    sd.eggStart = (uint32_t)(eggStartTime / 1000ULL);
+    sd.eggShakeCount = eggShakeCount;
+    sd.eggViolentShakeCount = eggViolentShakeCount;
+    sd.eggPokeCount = eggPokeCount;
+    sd.eggWaterCount = eggWaterCount;
+    sd.eggLeftTiltMs = eggLeftTiltMs;
+    sd.eggRightTiltMs = eggRightTiltMs;
+    sd.eggLastAction = eggLastAction;
+    sd.foodTrayLevel = foodTrayLevel;
+    sd.foodTrayType = (uint8_t)foodTrayType;
+    sd.woodStyle = woodStyle;
+    sd.larvaCitrusCount = larvaCitrusCount;
+    sd.larvaBerryFed = larvaBerryFed ? 1 : 0;
+    sd.spiCapBonusTenths = spiCapBonusTenths;
 
     memcpy(buf, &sd, sizeof(sd));
     len = sizeof(sd);
 }
 
 bool Bug::load(const uint8_t* buf, uint16_t len) {
-    if (len == 0) return false;
-
-    struct SaveDataV2 {
+    struct SaveDataV7 {
         uint8_t version;
-        uint8_t geneVIG, geneATK, geneMNT, geneAPP;
-        uint8_t siz, str, end, spi;
+        uint8_t geneVIG, geneATK, geneMNT, geneEND, geneAPP;
+        uint8_t siz, str, end, spd, spi;
         uint8_t mot, hunger;
         uint8_t stage, alive;
-        uint8_t sap, rottenWood, woodPlaced;
-        uint32_t stageStart;
-        uint32_t lastFeed;
-        uint32_t lastSap;
-        uint32_t lastShake;
-        uint32_t restStart;
-        uint32_t lastUpdate;
-        uint8_t larvaFeeds, pupaShakes;
-        uint8_t wins, losses;
-        uint8_t generation;
-        uint8_t foodInTray;
-        uint8_t reserved[2];
-    } __attribute__((packed));
-
-    struct SaveDataV3 {
-        uint8_t version;
-        uint8_t geneVIG, geneATK, geneMNT, geneAPP;
-        uint8_t siz, str, end, spi;
-        uint8_t mot, hunger;
-        uint8_t stage, alive;
-        uint8_t sap, rottenWood, woodPlaced;
-        uint32_t stageStart;
-        uint32_t lastFeed;
-        uint32_t lastSap;
-        uint32_t lastShake;
-        uint32_t restStart;
-        uint32_t lastUpdate;
-        uint32_t lastEat;
-        uint8_t larvaFeeds, pupaShakes;
-        uint8_t wins, losses;
-        uint8_t generation;
-        uint8_t foodInTray;
-        uint8_t foodAmount;
-        uint8_t reserved[1];
-    } __attribute__((packed));
-
-    struct SaveDataV4 {
-        uint8_t version;
-        uint8_t geneVIG, geneATK, geneMNT, geneAPP;
-        uint8_t siz, str, end, spi;
-        uint8_t mot, hunger;
-        uint8_t stage, alive;
-        uint8_t sap, rottenWood, woodPlaced;
+        uint8_t foodCounts[6];
+        uint8_t rottenWood, woodPlaced;
+        uint8_t foodInTray, trayFoodType, foodAmount;
         uint32_t stageStart;
         uint32_t lastFeed;
         uint32_t lastSap;
@@ -500,8 +727,65 @@ bool Bug::load(const uint8_t* buf, uint16_t len) {
         uint8_t larvaFeeds, pupaShakes;
         uint8_t wins, losses;
         uint8_t generation;
-        uint8_t foodInTray;
-        uint8_t foodAmount;
+        uint32_t motBuffEnd;
+        uint8_t motBuffAmount;
+        uint8_t pokeAnger;
+        uint8_t temperament;
+        uint32_t eggStart;
+        uint8_t eggShakeCount;
+        uint8_t eggViolentShakeCount;
+        uint8_t eggPokeCount;
+        uint8_t eggWaterCount;
+        uint32_t eggLeftTiltMs;
+        uint32_t eggRightTiltMs;
+        uint8_t eggLastAction;
+        uint8_t foodTrayLevel;
+        uint8_t foodTrayType;
+        uint8_t woodStyle;
+        uint8_t larvaCitrusCount;
+        uint8_t larvaBerryFed;
+        uint8_t spiCapBonusTenths;
+        uint8_t reserved[1];
+    } __attribute__((packed));
+
+    struct SaveDataV6 {
+        uint8_t version;
+        uint8_t geneVIG, geneATK, geneMNT, geneAPP;
+        uint8_t siz, str, end, spd, spi;
+        uint8_t mot, hunger;
+        uint8_t stage, alive;
+        uint8_t foodCounts[6];
+        uint8_t rottenWood, woodPlaced;
+        uint8_t foodInTray, trayFoodType, foodAmount;
+        uint32_t stageStart;
+        uint32_t lastFeed;
+        uint32_t lastSap;
+        uint32_t lastShake;
+        uint32_t eggShakeDelay;
+        uint32_t restStart;
+        uint32_t lastUpdate;
+        uint32_t lastEat;
+        uint8_t larvaFeeds, pupaShakes;
+        uint8_t wins, losses;
+        uint8_t generation;
+        uint32_t motBuffEnd;
+        uint8_t motBuffAmount;
+        uint8_t pokeAnger;
+        uint8_t temperament;
+        uint32_t eggStart;
+        uint8_t eggShakeCount;
+        uint8_t eggViolentShakeCount;
+        uint8_t eggPokeCount;
+        uint8_t eggWaterCount;
+        uint32_t eggLeftTiltMs;
+        uint32_t eggRightTiltMs;
+        uint8_t eggLastAction;
+        uint8_t foodTrayLevel;
+        uint8_t foodTrayType;
+        uint8_t woodStyle;
+        uint8_t larvaCitrusCount;
+        uint8_t larvaBerryFed;
+        uint8_t spiCapBonusTenths;
         uint8_t reserved[1];
     } __attribute__((packed));
 
@@ -512,6 +796,7 @@ bool Bug::load(const uint8_t* buf, uint16_t len) {
         uint8_t mot, hunger;
         uint8_t stage, alive;
         uint8_t sap, rottenWood, woodPlaced;
+        uint8_t foodInTray, foodAmount;
         uint32_t stageStart;
         uint32_t lastFeed;
         uint32_t lastSap;
@@ -523,64 +808,33 @@ bool Bug::load(const uint8_t* buf, uint16_t len) {
         uint8_t larvaFeeds, pupaShakes;
         uint8_t wins, losses;
         uint8_t generation;
-        uint8_t foodInTray;
-        uint8_t foodAmount;
         uint32_t motBuffEnd;
         uint8_t motBuffAmount;
         uint8_t pokeAnger;
         uint8_t reserved[2];
     } __attribute__((packed));
 
-    uint8_t version = buf[0];
-    if (version == 2 && len == sizeof(SaveDataV2)) {
-        const SaveDataV2& sd = *reinterpret_cast<const SaveDataV2*>(buf);
+    if (len < 1) return false;
+    uint8_t ver = buf[0];
 
-        geneVIG = sd.geneVIG; geneATK = sd.geneATK; geneMNT = sd.geneMNT; geneAPP = sd.geneAPP;
-        this->siz = sd.siz; this->str = sd.str; this->end = sd.end; this->spi = sd.spi;
-        mot = sd.mot;
-        hunger = sd.hunger;
+    if (ver == SAVE_VERSION && len >= sizeof(SaveDataV7)) {
+        const SaveDataV7& sd = *reinterpret_cast<const SaveDataV7*>(buf);
+        geneVIG = sd.geneVIG; geneATK = sd.geneATK; geneMNT = sd.geneMNT; geneEND = sd.geneEND; geneAPP = sd.geneAPP;
+        siz = sd.siz; str = sd.str; end = sd.end; spd = sd.spd; spi = sd.spi;
+        mot = sd.mot; hunger = sd.hunger;
         stage = (Stage)sd.stage;
         alive = sd.alive != 0;
-        sap = sd.sap;
+        for (int i = 0; i < 6; i++) foodCounts[i] = sd.foodCounts[i];
         rottenWood = sd.rottenWood;
         woodPlaced = sd.woodPlaced != 0;
-        stageStartTime = (uint64_t)sd.stageStart * 1000ULL;
-        lastFeedTime = (uint64_t)sd.lastFeed * 1000ULL;
-        lastSapProduceTime = (uint64_t)sd.lastSap * 1000ULL;
-        lastShakeTrainTime = (uint64_t)sd.lastShake * 1000ULL;
-        eggShakeDelayAcc = 0;
-        restStartTime = (uint64_t)sd.restStart * 1000ULL;
-        lastUpdateTime = (uint64_t)sd.lastUpdate * 1000ULL;
-        lastEatTime = 0;
-        larvaFeeds = sd.larvaFeeds;
-        pupaShakes = sd.pupaShakes;
-        wins = sd.wins;
-        losses = sd.losses;
-        generation = sd.generation;
         foodInTray = sd.foodInTray != 0;
-        foodAmount = foodInTray ? FOOD_MAX_AMOUNT : 0;
-
-        clampAttributes();
-        return true;
-    }
-
-    if (version == 3 && len == sizeof(SaveDataV3)) {
-        const SaveDataV3& sd = *reinterpret_cast<const SaveDataV3*>(buf);
-
-        geneVIG = sd.geneVIG; geneATK = sd.geneATK; geneMNT = sd.geneMNT; geneAPP = sd.geneAPP;
-        this->siz = sd.siz; this->str = sd.str; this->end = sd.end; this->spi = sd.spi;
-        mot = sd.mot;
-        hunger = sd.hunger;
-        stage = (Stage)sd.stage;
-        alive = sd.alive != 0;
-        sap = sd.sap;
-        rottenWood = sd.rottenWood;
-        woodPlaced = sd.woodPlaced != 0;
+        trayFoodType = (FoodType)sd.trayFoodType;
+        foodAmount = sd.foodAmount;
         stageStartTime = (uint64_t)sd.stageStart * 1000ULL;
         lastFeedTime = (uint64_t)sd.lastFeed * 1000ULL;
         lastSapProduceTime = (uint64_t)sd.lastSap * 1000ULL;
         lastShakeTrainTime = (uint64_t)sd.lastShake * 1000ULL;
-        eggShakeDelayAcc = 0;
+        eggShakeDelayAcc = sd.eggShakeDelay * 1000U;
         restStartTime = (uint64_t)sd.restStart * 1000ULL;
         lastUpdateTime = (uint64_t)sd.lastUpdate * 1000ULL;
         lastEatTime = (uint64_t)sd.lastEat * 1000ULL;
@@ -589,30 +843,46 @@ bool Bug::load(const uint8_t* buf, uint16_t len) {
         wins = sd.wins;
         losses = sd.losses;
         generation = sd.generation;
-        foodInTray = sd.foodInTray != 0;
-        foodAmount = sd.foodAmount;
-
+        motBuffEndTime = (uint64_t)sd.motBuffEnd * 1000ULL;
+        motBuffAmount = sd.motBuffAmount;
+        pokeAnger = sd.pokeAnger;
+        temperament = (Temperament)sd.temperament;
+        eggStartTime = (uint64_t)sd.eggStart * 1000ULL;
+        eggShakeCount = sd.eggShakeCount;
+        eggViolentShakeCount = sd.eggViolentShakeCount;
+        eggPokeCount = sd.eggPokeCount;
+        eggWaterCount = sd.eggWaterCount;
+        eggLeftTiltMs = sd.eggLeftTiltMs;
+        eggRightTiltMs = sd.eggRightTiltMs;
+        eggLastAction = sd.eggLastAction;
+        foodTrayLevel = sd.foodTrayLevel;
+        foodTrayType = (FoodType)sd.foodTrayType;
+        woodStyle = sd.woodStyle;
+        larvaCitrusCount = sd.larvaCitrusCount;
+        larvaBerryFed = sd.larvaBerryFed != 0;
+        spiCapBonusTenths = sd.spiCapBonusTenths;
         clampAttributes();
         return true;
     }
 
-    if (version == 4 && len == sizeof(SaveDataV4)) {
-        const SaveDataV4& sd = *reinterpret_cast<const SaveDataV4*>(buf);
+    if (ver == 6 && len >= sizeof(SaveDataV6)) {
+        const SaveDataV6& sd = *reinterpret_cast<const SaveDataV6*>(buf);
         geneVIG = sd.geneVIG; geneATK = sd.geneATK; geneMNT = sd.geneMNT; geneAPP = sd.geneAPP;
-        this->siz = sd.siz; this->str = sd.str; this->end = sd.end; this->spi = sd.spi;
-        mot = sd.mot;
-        hunger = sd.hunger;
+        siz = sd.siz; str = sd.str; end = sd.end; spd = sd.spd; spi = sd.spi;
+        mot = sd.mot; hunger = sd.hunger;
         stage = (Stage)sd.stage;
         alive = sd.alive != 0;
-        sap = sd.sap;
+        for (int i = 0; i < 6; i++) foodCounts[i] = sd.foodCounts[i];
         rottenWood = sd.rottenWood;
         woodPlaced = sd.woodPlaced != 0;
+        foodInTray = sd.foodInTray != 0;
+        trayFoodType = (FoodType)sd.trayFoodType;
+        foodAmount = sd.foodAmount;
         stageStartTime = (uint64_t)sd.stageStart * 1000ULL;
         lastFeedTime = (uint64_t)sd.lastFeed * 1000ULL;
         lastSapProduceTime = (uint64_t)sd.lastSap * 1000ULL;
         lastShakeTrainTime = (uint64_t)sd.lastShake * 1000ULL;
-        eggShakeDelayAcc = sd.eggShakeDelay * 1000UL;
-        if (eggShakeDelayAcc > EGG_SHAKE_DELAY_MAX_MS) eggShakeDelayAcc = EGG_SHAKE_DELAY_MAX_MS;
+        eggShakeDelayAcc = sd.eggShakeDelay * 1000U;
         restStartTime = (uint64_t)sd.restStart * 1000ULL;
         lastUpdateTime = (uint64_t)sd.lastUpdate * 1000ULL;
         lastEatTime = (uint64_t)sd.lastEat * 1000ULL;
@@ -621,51 +891,80 @@ bool Bug::load(const uint8_t* buf, uint16_t len) {
         wins = sd.wins;
         losses = sd.losses;
         generation = sd.generation;
-        foodInTray = sd.foodInTray != 0;
-        foodAmount = sd.foodAmount;
-
-        // v4 没有愤怒值与 MOT buff，初始化为 0
-        pokeAnger = 0;
-        motBuffAmount = 0;
-        motBuffEndTime = 0;
-
+        motBuffEndTime = (uint64_t)sd.motBuffEnd * 1000ULL;
+        motBuffAmount = sd.motBuffAmount;
+        pokeAnger = sd.pokeAnger;
+        temperament = (Temperament)sd.temperament;
+        eggStartTime = (uint64_t)sd.eggStart * 1000ULL;
+        eggShakeCount = sd.eggShakeCount;
+        eggViolentShakeCount = sd.eggViolentShakeCount;
+        eggPokeCount = sd.eggPokeCount;
+        eggWaterCount = sd.eggWaterCount;
+        eggLeftTiltMs = sd.eggLeftTiltMs;
+        eggRightTiltMs = sd.eggRightTiltMs;
+        eggLastAction = sd.eggLastAction;
+        foodTrayLevel = sd.foodTrayLevel;
+        foodTrayType = (FoodType)sd.foodTrayType;
+        woodStyle = sd.woodStyle;
+        larvaCitrusCount = sd.larvaCitrusCount;
+        larvaBerryFed = sd.larvaBerryFed != 0;
+        spiCapBonusTenths = sd.spiCapBonusTenths;
+        // v6 没有 geneEND，给一个中等默认值（显性 5 隐性 5）
+        geneEND = 0x55;
         clampAttributes();
         return true;
     }
 
-    if (version != SAVE_VERSION || len != sizeof(SaveDataV5)) return false;
-    const SaveDataV5& sd = *reinterpret_cast<const SaveDataV5*>(buf);
-    if (sd.version != SAVE_VERSION) return false;
+    if (ver == 5 && len >= sizeof(SaveDataV5)) {
+        const SaveDataV5& sd = *reinterpret_cast<const SaveDataV5*>(buf);
+        geneVIG = sd.geneVIG; geneATK = sd.geneATK; geneMNT = sd.geneMNT; geneAPP = sd.geneAPP;
+        siz = sd.siz; str = sd.str; end = sd.end; spi = sd.spi;
+        mot = sd.mot; hunger = sd.hunger;
+        stage = (Stage)sd.stage;
+        // v5 只有 4 阶段，ADULT=3；v6 ADULT=4，需要映射
+        if ((uint8_t)stage == 3) stage = Stage::ADULT;
+        alive = sd.alive != 0;
+        for (int i = 0; i < 6; i++) foodCounts[i] = 0;
+        foodCounts[(uint8_t)FoodType::DROP] = sd.sap;
+        rottenWood = sd.rottenWood;
+        woodPlaced = sd.woodPlaced != 0;
+        foodInTray = sd.foodInTray != 0;
+        trayFoodType = FoodType::DROP;
+        foodAmount = sd.foodAmount;
+        stageStartTime = (uint64_t)sd.stageStart * 1000ULL;
+        lastFeedTime = (uint64_t)sd.lastFeed * 1000ULL;
+        lastSapProduceTime = (uint64_t)sd.lastSap * 1000ULL;
+        lastShakeTrainTime = (uint64_t)sd.lastShake * 1000ULL;
+        eggShakeDelayAcc = sd.eggShakeDelay * 1000U;
+        restStartTime = (uint64_t)sd.restStart * 1000ULL;
+        lastUpdateTime = (uint64_t)sd.lastUpdate * 1000ULL;
+        lastEatTime = (uint64_t)sd.lastEat * 1000ULL;
+        larvaFeeds = sd.larvaFeeds;
+        pupaShakes = sd.pupaShakes;
+        wins = sd.wins;
+        losses = sd.losses;
+        generation = sd.generation;
+        motBuffEndTime = (uint64_t)sd.motBuffEnd * 1000ULL;
+        motBuffAmount = sd.motBuffAmount;
+        pokeAnger = sd.pokeAnger;
+        temperament = Temperament::SPIRIT;
+        eggStartTime = stageStartTime;
+        eggShakeCount = 0;
+        eggViolentShakeCount = 0;
+        eggPokeCount = 0;
+        eggWaterCount = 0;
+        eggLeftTiltMs = 0;
+        eggRightTiltMs = 0;
+        eggLastAction = 0;
+        foodTrayLevel = 1;
+        foodTrayType = FoodType::DROP;
+        woodStyle = 0;
+        larvaCitrusCount = 0;
+        larvaBerryFed = false;
+        spiCapBonusTenths = 0;
+        clampAttributes();
+        return true;
+    }
 
-    geneVIG = sd.geneVIG; geneATK = sd.geneATK; geneMNT = sd.geneMNT; geneAPP = sd.geneAPP;
-    this->siz = sd.siz; this->str = sd.str; this->end = sd.end; this->spi = sd.spi;
-    mot = sd.mot;
-    hunger = sd.hunger;
-    stage = (Stage)sd.stage;
-    alive = sd.alive != 0;
-    sap = sd.sap;
-    rottenWood = sd.rottenWood;
-    woodPlaced = sd.woodPlaced != 0;
-    stageStartTime = (uint64_t)sd.stageStart * 1000ULL;
-    lastFeedTime = (uint64_t)sd.lastFeed * 1000ULL;
-    lastSapProduceTime = (uint64_t)sd.lastSap * 1000ULL;
-    lastShakeTrainTime = (uint64_t)sd.lastShake * 1000ULL;
-    eggShakeDelayAcc = sd.eggShakeDelay * 1000UL;
-    if (eggShakeDelayAcc > EGG_SHAKE_DELAY_MAX_MS) eggShakeDelayAcc = EGG_SHAKE_DELAY_MAX_MS;
-    restStartTime = (uint64_t)sd.restStart * 1000ULL;
-    lastUpdateTime = (uint64_t)sd.lastUpdate * 1000ULL;
-    lastEatTime = (uint64_t)sd.lastEat * 1000ULL;
-    larvaFeeds = sd.larvaFeeds;
-    pupaShakes = sd.pupaShakes;
-    wins = sd.wins;
-    losses = sd.losses;
-    generation = sd.generation;
-    foodInTray = sd.foodInTray != 0;
-    foodAmount = sd.foodAmount;
-    motBuffEndTime = (uint64_t)sd.motBuffEnd * 1000ULL;
-    motBuffAmount = sd.motBuffAmount;
-    pokeAnger = sd.pokeAnger;
-
-    clampAttributes();
-    return true;
+    return false;
 }

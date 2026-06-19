@@ -51,13 +51,14 @@ struct __attribute__((packed)) battle_ready_t {
     uint8_t my_mot;         // 从机本回合 MOT
 };
 
-// 属性同步包 8 bytes
+// 属性同步包 9 bytes
 struct __attribute__((packed)) battle_sync_t {
     uint8_t type;
     uint8_t siz;
     uint8_t str;
     uint8_t end;
     uint8_t spi;
+    uint8_t spd;
     uint8_t motivation;
     uint8_t hunger;
     uint8_t palette_id;

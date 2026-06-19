@@ -13,7 +13,7 @@ public:
     bool onButton(const ButtonEvent& ev) override;
 
 private:
-    static const char* STAGE_NAMES[4];
+    static const char* STAGE_NAMES[5];
     static constexpr int PAGE_COUNT = 2;
 
     int page = 0;

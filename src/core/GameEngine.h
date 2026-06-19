@@ -34,6 +34,7 @@ public:
 
     // 当前独角仙
     Bug& getBug() { return bug; }
+    const Bug& getBug() const { return bug; }
 
     // 强制保存
     void forceSave();
@@ -83,6 +84,7 @@ public:
     uint8_t getBowlStyle() const { return bowlStyle; }
     void setBowlStyle(uint8_t id);
     void cycleBowlStyle();
+    bool isBowlStyleUnlocked(uint8_t id) const;
     const char* getBowlStyleName() const;
 
     uint8_t getFoodStyle() const { return foodStyle; }

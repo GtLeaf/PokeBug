@@ -1,6 +1,7 @@
 #include "SettingsScene.h"
 #include "../core/GameEngine.h"
 #include "../core/SaveManager.h"
+#include "../core/UiStrings.h"
 
 void SettingsScene::onEnter() {
     cursor = 0;
@@ -100,18 +101,18 @@ void SettingsScene::render() {
 
 void SettingsScene::renderConfirmReset() {
     PixelRenderer::fillRect(20, 40, 200, 60, PixelRenderer::rgb565(40, 40, 50));
-    PixelRenderer::drawPixelText(35, 55, "Reset save?", PixelRenderer::YELLOW, 1);
-    PixelRenderer::drawPixelText(35, 80, "A:Yes  B/Long:No", PixelRenderer::WHITE, 1);
+    PixelRenderer::drawPixelText(35, 55, UiStrings::RESET_CONFIRM, PixelRenderer::YELLOW, 1);
+    PixelRenderer::drawPixelText(35, 80, UiStrings::RESET_NAV, PixelRenderer::WHITE, 1);
 }
 
 void SettingsScene::renderMenu() {
     const char* items[ITEM_COUNT] = {
-        "Brightness",
-        "Font Size",
-        "Game Speed",
-        "Idle Time",
-        "Reset Save",
-        "Back",
+        UiStrings::SET_BRIGHTNESS,
+        UiStrings::SET_FONT_SIZE,
+        UiStrings::SET_GAME_SPEED,
+        UiStrings::SET_IDLE_TIME,
+        UiStrings::SET_RESET_SAVE,
+        UiStrings::BACK,
     };
 
     float fs = PixelRenderer::getContentFontScale();
@@ -162,7 +163,13 @@ void SettingsScene::renderMenu() {
             hasValue = true;
         } else if (i == ITEM_IDLE_TIME) {
             uint8_t idx = GameEngine::ins().getIdleTimeoutIndex();
-            const char* labels[5] = { "30s", "1m", "2m", "5m", "Never" };
+            const char* labels[5] = {
+                UiStrings::IDLE_30S,
+                UiStrings::IDLE_1M,
+                UiStrings::IDLE_2M,
+                UiStrings::IDLE_5M,
+                UiStrings::IDLE_NEVER
+            };
             snprintf(buf, sizeof(buf), "%s", labels[idx]);
             hasValue = true;
         }

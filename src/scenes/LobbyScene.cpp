@@ -1,5 +1,6 @@
 #include "LobbyScene.h"
 #include "../core/GameEngine.h"
+#include "../core/UiStrings.h"
 #include "../hardware/Hal.h"
 #include "../hardware/PixelRenderer.h"
 
@@ -39,7 +40,7 @@ SceneID LobbyScene::update() {
             }
             if (now - stateStartMs >= HOST_TIMEOUT_MS) {
                 Serial.println("[Lobby] host timeout");
-                enterMessage("NO ONE JOINED");
+                enterMessage(UiStrings::MSG_NO_ONE_JOINED);
             }
             break;
         }
@@ -53,7 +54,7 @@ SceneID LobbyScene::update() {
             if (now - stateStartMs >= SEARCH_SCAN_MS) {
                 roomCount = BattleLink::ins().getRoomListCount();
                 if (roomCount == 0) {
-                    enterMessage("NO ROOMS");
+                    enterMessage(UiStrings::LOBBY_NO_ROOMS);
                 } else {
                     selectedRoomIdx = 0;
                     enterSearchList();
@@ -86,13 +87,13 @@ SceneID LobbyScene::update() {
                     return nextScene;
                 } else {
                     Serial.println("[Lobby] join rejected");
-                    enterMessage("REJECTED");
+                    enterMessage(UiStrings::MSG_REJECTED);
                 }
                 break;
             }
             if (now - stateStartMs >= JOIN_TIMEOUT_MS) {
                 Serial.println("[Lobby] join timeout");
-                enterMessage("JOIN TIMEOUT");
+                enterMessage(UiStrings::MSG_JOIN_TIMEOUT);
             }
             break;
         }
@@ -272,12 +273,12 @@ void LobbyScene::drawModeSelect() {
     uint8_t cursor = 0;
     if (selectedMode == Mode::SEARCH) cursor = 1;
     else if (selectedMode == Mode::BACK) cursor = 2;
-    drawSettingsStyleList("FIGHT", items, 3, cursor);
+    drawSettingsStyleList(UiStrings::MENU_FIGHT, items, 3, cursor);
 }
 
 void LobbyScene::drawHostWaiting() {
     PixelRenderer::fillRect(0, 0, Hal::DISPLAY_W, Hal::DISPLAY_H, PixelRenderer::BLACK);
-    PixelRenderer::drawPixelText(80, 25, "ROOM", PixelRenderer::WHITE, 2);
+    PixelRenderer::drawPixelText(80, 25, UiStrings::LOBBY_ROOM, PixelRenderer::WHITE, 2);
 
     char buf[16];
     snprintf(buf, sizeof(buf), "%03d", roomId);
@@ -285,13 +286,13 @@ void LobbyScene::drawHostWaiting() {
 
     uint32_t elapsed = Hal::ins().millis() - stateStartMs;
     int dots = (elapsed / 500) % 4;
-    snprintf(buf, sizeof(buf), "WAITING%.*s", dots, "...");
+    snprintf(buf, sizeof(buf), "%s%.*s", UiStrings::LOBBY_WAITING, dots, "...");
     PixelRenderer::drawPixelText(75, 100, buf, PixelRenderer::WHITE, 1);
 }
 
 void LobbyScene::drawSearchScanning() {
     PixelRenderer::fillRect(0, 0, Hal::DISPLAY_W, Hal::DISPLAY_H, PixelRenderer::BLACK);
-    PixelRenderer::drawPixelText(70, 50, "SCANNING", PixelRenderer::WHITE, 2);
+    PixelRenderer::drawPixelText(70, 50, UiStrings::LOBBY_SCANNING, PixelRenderer::WHITE, 2);
     uint32_t elapsed = Hal::ins().millis() - stateStartMs;
     int dots = (elapsed / 500) % 4;
     char buf[12];
@@ -304,7 +305,7 @@ void LobbyScene::drawSearchList() {
     if (roomCount == 0) {
         // 列表为空时回到扫描或提示
         PixelRenderer::fillRect(0, 0, Hal::DISPLAY_W, Hal::DISPLAY_H, PixelRenderer::BLACK);
-        PixelRenderer::drawPixelText(60, 60, "NO ROOMS", PixelRenderer::YELLOW, 1);
+        PixelRenderer::drawPixelText(60, 60, UiStrings::LOBBY_NO_ROOMS, PixelRenderer::YELLOW, 1);
         return;
     }
 
@@ -312,15 +313,15 @@ void LobbyScene::drawSearchList() {
     char buf[BattleLink::MAX_ROOM_LIST][16];
     for (uint8_t i = 0; i < roomCount; i++) {
         const BattleLink::RoomEntry* entry = BattleLink::ins().getRoomListEntry(i);
-        snprintf(buf[i], sizeof(buf[i]), "ROOM %03d", entry ? entry->room_id : 0);
+        snprintf(buf[i], sizeof(buf[i]), "%s %03d", UiStrings::LOBBY_ROOM, entry ? entry->room_id : 0);
         items[i] = buf[i];
     }
-    drawSettingsStyleList("SELECT ROOM", items, roomCount, selectedRoomIdx);
+    drawSettingsStyleList(UiStrings::LOBBY_SELECT_ROOM, items, roomCount, selectedRoomIdx);
 }
 
 void LobbyScene::drawJoining() {
     PixelRenderer::fillRect(0, 0, Hal::DISPLAY_W, Hal::DISPLAY_H, PixelRenderer::BLACK);
-    PixelRenderer::drawPixelText(70, 50, "JOINING", PixelRenderer::WHITE, 2);
+    PixelRenderer::drawPixelText(70, 50, UiStrings::LOBBY_JOINING, PixelRenderer::WHITE, 2);
     uint32_t elapsed = Hal::ins().millis() - stateStartMs;
     int dots = (elapsed / 500) % 4;
     char buf[12];

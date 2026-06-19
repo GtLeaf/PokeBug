@@ -1,6 +1,7 @@
 #include "MenuScene.h"
 #include "../core/GameEngine.h"
 #include "../core/SaveManager.h"
+#include "../core/UiStrings.h"
 #include "../hardware/Hal.h"
 #include "../hardware/PixelRenderer.h"
 
@@ -178,11 +179,13 @@ void MenuScene::executeSelection() {
         switch (selected) {
             case FOOD_STYLE:
                 GameEngine::ins().cycleFoodStyle();
+                bug.setFoodTray(GameEngine::ins().getBowlStyle() + 1,
+                                (FoodType)GameEngine::ins().getFoodStyle());
                 saveSettingsNow();
                 Serial.printf("[Menu] Food style: %s\n", GameEngine::ins().getFoodStyleName());
                 break;
             case FOOD_PLACE:
-                if (bug.placeSapInTray()) {
+                if (bug.placeFoodInTray((FoodType)GameEngine::ins().getFoodStyle())) {
                     Serial.printf("[Menu] Fed bug: %s\n", GameEngine::ins().getFoodStyleName());
                 }
                 nextScene = SCENE_TERRARIUM;
@@ -199,6 +202,8 @@ void MenuScene::executeSelection() {
         switch (selected) {
             case BOWL_STYLE:
                 GameEngine::ins().cycleBowlStyle();
+                bug.setFoodTray(GameEngine::ins().getBowlStyle() + 1,
+                                (FoodType)GameEngine::ins().getFoodStyle());
                 saveSettingsNow();
                 Serial.printf("[Menu] Bowl style: %s\n", GameEngine::ins().getBowlStyleName());
                 break;
@@ -214,6 +219,7 @@ void MenuScene::executeSelection() {
         switch (selected) {
             case WOOD_STYLE:
                 GameEngine::ins().cycleWoodStyle();
+                bug.setWood(GameEngine::ins().getWoodStyle());
                 saveSettingsNow();
                 Serial.printf("[Menu] Wood style: %s\n", GameEngine::ins().getWoodStyleName());
                 break;
@@ -302,65 +308,71 @@ int MenuScene::itemCount() const {
 const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
     if (mode == Mode::FOOD) {
         switch (index) {
-            case FOOD_STYLE:
-                snprintf(buf, bufSize, "Type:%s", GameEngine::ins().getFoodStyleName());
+            case FOOD_STYLE: {
+                FoodType ft = (FoodType)GameEngine::ins().getFoodStyle();
+                snprintf(buf, bufSize, "%s:%d", FoodTypeInfo::name(ft),
+                         GameEngine::ins().getBug().getFoodCount(ft));
                 return buf;
+            }
             case FOOD_PLACE:
-                return "Place";
+                return UiStrings::PLACE;
             case FOOD_BACK:
             default:
-                return "Back";
+                return UiStrings::BACK;
         }
     }
 
     if (mode == Mode::BOWL) {
         switch (index) {
             case BOWL_STYLE:
-                snprintf(buf, bufSize, "Type:%s", GameEngine::ins().getBowlStyleName());
+                snprintf(buf, bufSize, "%s:%s", UiStrings::TYPE,
+                         GameEngine::ins().getBowlStyleName());
                 return buf;
             case BOWL_BACK:
             default:
-                return "Back";
+                return UiStrings::BACK;
         }
     }
 
     if (mode == Mode::WOOD) {
         switch (index) {
             case WOOD_STYLE:
-                snprintf(buf, bufSize, "Type:%s", GameEngine::ins().getWoodStyleName());
+                snprintf(buf, bufSize, "%s:%s", UiStrings::TYPE,
+                         GameEngine::ins().getWoodStyleName());
                 return buf;
             case WOOD_PLACE:
-                return "Place";
+                return UiStrings::PLACE;
             case WOOD_BACK:
             default:
-                return "Back";
+                return UiStrings::BACK;
         }
     }
 
     if (mode == Mode::BOX) {
         switch (index) {
             case BOX_WOOD:
-                return "Wood";
+                return UiStrings::MENU_WOOD;
             case BOX_BOWL:
-                return "Bowl";
+                return UiStrings::MENU_BOWL;
             case BOX_BG:
-                snprintf(buf, bufSize, "BG:%s", GameEngine::ins().getMainSceneBgName());
+                snprintf(buf, bufSize, "%s:%s", UiStrings::BG,
+                         GameEngine::ins().getMainSceneBgName());
                 return buf;
             case BOX_BACK:
             default:
-                return "Back";
+                return UiStrings::BACK;
         }
     }
 
     switch (index) {
-        case INFO: return "Info";
-        case FEED: return "Food";
-        case BOX: return "Box";
-        case FIGHT: return "Fight";
-        case SETTINGS: return "Settings";
+        case INFO: return UiStrings::MENU_INFO;
+        case FEED: return UiStrings::MENU_FEED;
+        case BOX: return UiStrings::MENU_BOX;
+        case FIGHT: return UiStrings::MENU_FIGHT;
+        case SETTINGS: return UiStrings::MENU_SETTINGS;
         case BACK:
         default:
-            return "Back";
+            return UiStrings::BACK;
     }
 }
 

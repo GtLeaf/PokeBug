@@ -45,6 +45,8 @@ void GameEngine::begin() {
         setWoodStyle(loadedWood);
         setBowlStyle(loadedBowl);
         setFoodStyle(loadedFood);
+        bug.setFoodTray(bowlStyle + 1, (FoodType)foodStyle);
+        bug.setWood(woodStyle);
         PixelRenderer::setContentFontScale(fontScale);
         Hal::ins().setBrightness(brightness);
         Serial.printf("[Engine] Settings loaded: font=%.2f bri=%d speed=%.1f idle=%d bg=%d wood=%d bowl=%d food=%d\n",
@@ -238,8 +240,25 @@ void GameEngine::processInput() {
 }
 
 void GameEngine::processIMU() {
-    Hal::ins().updateIMU();
-    if (Hal::ins().isShaken()) {
+    Hal& hal = Hal::ins();
+    hal.updateIMU();
+
+    uint32_t realNow = hal.millis();
+    uint32_t delta = realNow - lastImuTime;
+
+    // 卵期倾斜记录：用于气质判定
+    if (bug.getStage() == Stage::EGG && delta > 0) {
+        float ax, ay, az;
+        hal.getAccel(ax, ay, az);
+        const float TILT_THRESHOLD = 0.3f; // g
+        if (ax > TILT_THRESHOLD) {
+            bug.onEggTilt(gameNow, delta, false);
+        } else if (ax < -TILT_THRESHOLD) {
+            bug.onEggTilt(gameNow, delta, true);
+        }
+    }
+
+    if (hal.isShaken()) {
         if (bug.onShake(gameNow)) {
             Serial.println("[Engine] Shake detected and processed");
             resetIdleTimer();
@@ -313,12 +332,27 @@ const char* GameEngine::getWoodStyleName() const {
 
 void GameEngine::setBowlStyle(uint8_t id) {
     if (id >= 3) id = 0;
+    uint8_t wins = getBug().getWins();
+    // Lv.2 需 2 胜，Lv.3 需 5 胜
+    if (id >= 2 && wins < 5) id = 1;
+    if (id >= 1 && wins < 2) id = 0;
     bowlStyle = id;
 }
 
 void GameEngine::cycleBowlStyle() {
-    bowlStyle++;
-    if (bowlStyle >= 3) bowlStyle = 0;
+    uint8_t start = bowlStyle;
+    do {
+        bowlStyle++;
+        if (bowlStyle >= 3) bowlStyle = 0;
+    } while (bowlStyle != start && !isBowlStyleUnlocked(bowlStyle));
+}
+
+bool GameEngine::isBowlStyleUnlocked(uint8_t id) const {
+    uint8_t wins = getBug().getWins();
+    if (id == 0) return true;
+    if (id == 1) return wins >= 2;
+    if (id == 2) return wins >= 5;
+    return false;
 }
 
 const char* GameEngine::getBowlStyleName() const {

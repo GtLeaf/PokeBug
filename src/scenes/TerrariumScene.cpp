@@ -1,5 +1,6 @@
 #include "TerrariumScene.h"
 #include "../core/GameEngine.h"
+#include "../core/UiStrings.h"
 #include "../hardware/Hal.h"
 #include "../assets/MainSceneAssets.h"
 #include "../assets/HerculesAdultSprites.h"
@@ -103,17 +104,30 @@ bool TerrariumScene::onButton(const ButtonEvent& ev) {
     if (bug.isDead()) return false;  // 死亡画面只接受 A+B 长按，由 update 处理
 
     if (ev.btn == 0 && ev.action == BtnAction::PRESSED) {
-        // 短按 A：喂食
-        if (bug.placeSapInTray()) {
-            Serial.println("[Terrarium] Fed bug");
+        uint64_t gameNow = GameEngine::ins().getGameNow();
+        if (bug.getStage() == Stage::EGG) {
+            // 卵期短按 A：喷水
+            bug.onEggWater(gameNow);
+            Serial.println("[Terrarium] Watered egg");
         } else {
-            Serial.println("[Terrarium] Feed failed");
+            // 短按 A：喂食
+            if (bug.placeFoodInTray((FoodType)GameEngine::ins().getFoodStyle())) {
+                Serial.println("[Terrarium] Fed bug");
+            } else {
+                Serial.println("[Terrarium] Feed failed");
+            }
         }
         return true;
     }
     if (ev.btn == 1 && ev.action == BtnAction::PRESSED) {
-        // 短按 B：戳
         uint64_t gameNow = GameEngine::ins().getGameNow();
+        if (bug.getStage() == Stage::EGG) {
+            // 卵期短按 B：戳蛋
+            bug.onEggPoke(gameNow);
+            Serial.println("[Terrarium] Poked egg");
+            return true;
+        }
+        // 其他阶段短按 B：戳甲虫
         bool ok = bug.poke(gameNow);
         if (ok) {
             uint32_t now = Hal::ins().millis();
@@ -124,6 +138,7 @@ bool TerrariumScene::onButton(const ButtonEvent& ev) {
             if (!inThreatenHold) {
                 pokeReactionStartMs = now;
             }
+            pokeFingerStartMs = now;  // 每次戳都重新播放手指动画
             pokeReactionEndMs = now + 600;  // 手指动画保持 600ms
             pokeThreatenEndMs = now + POKE_REACTION_MS;  // 威吓保持约 3s
             pokeReactionWasPoked = true;
@@ -151,6 +166,7 @@ bool TerrariumScene::onButton(const ButtonEvent& ev) {
         } else {
             // 冷却中：短提示
             pokeReactionStartMs = Hal::ins().millis();
+            pokeFingerStartMs = Hal::ins().millis();
             pokeReactionEndMs = Hal::ins().millis() + 300;
             pokeReactionWasPoked = false;
             Serial.println("[Terrarium] Poke on cooldown");
@@ -200,11 +216,11 @@ void TerrariumScene::drawBug() {
         if (pokeReactionWasPoked) {
             if (bug.getStage() == Stage::EGG) {
                 int shake = ((Hal::ins().millis() / 50) % 2) ? 2 : -2;
-                drawEgg(bugX + shake, 95, pal);
+                drawEgg(bugX + shake, GROUND_Y - 7, pal);
                 return;
             }
             if (bug.getStage() == Stage::LARVA) {
-                drawLarvaPoked(bugX, 100, pal);
+                drawLarvaPoked(bugX, GROUND_Y - 5, pal);
                 return;
             }
             if (bug.getStage() == Stage::PUPA) {
@@ -215,7 +231,8 @@ void TerrariumScene::drawBug() {
         } else {
             // 冷却中：在甲虫上方画闪烁提示
             int baseY = 95;
-            if (bug.getStage() == Stage::LARVA) baseY = 100;
+            if (bug.getStage() == Stage::EGG) baseY = GROUND_Y - 7;
+            else if (bug.getStage() == Stage::LARVA) baseY = GROUND_Y - 5;
             else if (bug.getStage() == Stage::ADULT) baseY = GROUND_Y;
             drawPokeCooldownHint(bugX, baseY);
         }
@@ -223,10 +240,10 @@ void TerrariumScene::drawBug() {
 
     switch (bug.getStage()) {
         case Stage::EGG:
-            drawEgg(bugX, 95, pal);
+            drawEgg(bugX, GROUND_Y - 7, pal);
             break;
         case Stage::LARVA:
-            drawLarva(bugX, 100, pal);
+            drawLarva(bugX, GROUND_Y - 5, pal);
             break;
         case Stage::PUPA:
             drawPupa(bugX, 95, pal);
@@ -672,10 +689,11 @@ void TerrariumScene::drawStatusBar() {
     // ---- 1. 阶段图标 ----
     const char* stageName = "?";
     switch (bug.getStage()) {
-        case Stage::EGG:   stageName = "E"; break;
-        case Stage::LARVA: stageName = "L"; break;
-        case Stage::PUPA:  stageName = "P"; break;
-        case Stage::ADULT: stageName = "A"; break;
+        case Stage::EGG:      stageName = "E"; break;
+        case Stage::LARVA:    stageName = "L"; break;
+        case Stage::PUPA:     stageName = "P"; break;
+        case Stage::JUVENILE: stageName = "J"; break;
+        case Stage::ADULT:    stageName = "A"; break;
     }
     centerText(stageName, 8, PixelRenderer::WHITE);
 
@@ -734,8 +752,8 @@ void TerrariumScene::drawStatusBar() {
 void TerrariumScene::drawDeathScreen() {
     PixelRenderer::fillRect(40, 40, 160, 55, PixelRenderer::BLACK);
     PixelRenderer::fillRect(45, 45, 150, 45, PixelRenderer::RED);
-    PixelRenderer::drawPixelText(55, 55, "DIED", PixelRenderer::WHITE, 3);
-    PixelRenderer::drawPixelText(55, 80, "Hold A+B 3s", PixelRenderer::WHITE, 1);
+    PixelRenderer::drawPixelText(55, 55, UiStrings::DIED, PixelRenderer::WHITE, 3);
+    PixelRenderer::drawPixelText(55, 80, UiStrings::HOLD_AB_RESET, PixelRenderer::WHITE, 1);
 }
 
 // 倾斜检测：每帧读取 IMU，防抖 200ms 后触发
@@ -905,10 +923,11 @@ int TerrariumScene::getPokeTargetY() const {
     Bug& bug = GameEngine::ins().getBug();
     switch (bug.getStage()) {
         case Stage::EGG:
+            return GROUND_Y - 7;
         case Stage::PUPA:
             return 95;
         case Stage::LARVA:
-            return 100;
+            return GROUND_Y - 5;
         case Stage::ADULT:
         default:
             return GROUND_Y - 20;
@@ -921,10 +940,10 @@ void TerrariumScene::drawPokeAction() {
     uint32_t now = Hal::ins().millis();
     if (now >= pokeReactionEndMs) return;
 
-    uint32_t duration = pokeReactionEndMs - pokeReactionStartMs;
+    uint32_t duration = pokeReactionEndMs - pokeFingerStartMs;
     if (duration == 0) return;
 
-    uint32_t elapsed = now - pokeReactionStartMs;
+    uint32_t elapsed = now - pokeFingerStartMs;
     if (elapsed > duration) elapsed = duration;
 
     // 先伸入，再回收，形成一次明确的“戳”位移动画。

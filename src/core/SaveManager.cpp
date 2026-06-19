@@ -15,7 +15,7 @@ bool SaveManager::load(Bug& bug) {
     }
 
     uint8_t ver = prefs.getUChar(KEY_VER, 0);
-    if (ver != SAVE_VERSION && ver != 4 && ver != 3 && ver != 2) {
+    if (ver != SAVE_VERSION && ver != 6 && ver != 5) {
         Serial.printf("[Save] Version mismatch: stored=%d expected=%d\n", ver, SAVE_VERSION);
         prefs.end();
         return false;
@@ -23,8 +23,8 @@ bool SaveManager::load(Bug& bug) {
 
     size_t len = prefs.getBytesLength(KEY_BUG);
     bool ok = false;
-    if (len > 0 && len <= 64) {
-        uint8_t buf[64];
+    if (len > 0 && len <= 128) {
+        uint8_t buf[128];
         prefs.getBytes(KEY_BUG, buf, len);
         if (bug.load(buf, (uint16_t)len)) {
             Serial.printf("[Save] Bug loaded: %u bytes\n", len);
@@ -56,7 +56,7 @@ bool SaveManager::save(const Bug& bug) {
 
     prefs.putUChar(KEY_VER, SAVE_VERSION);
 
-    uint8_t buf[64];
+    uint8_t buf[128];
     uint16_t len = 0;
     bug.save(buf, len);
     if (len > 0) {

@@ -1,5 +1,6 @@
 #include "BattleScene.h"
 #include "../core/GameEngine.h"
+#include "../core/UiStrings.h"
 #include "../hardware/Hal.h"
 #include "../hardware/PixelRenderer.h"
 #include "../game/BattleCalc.h"
@@ -42,6 +43,7 @@ void BattleScene::initFromBug() {
     me.str = battleStatWithHunger(bug.getStr(), hunger);
     me.end = battleStatWithHunger(bug.getEnd(), hunger);
     me.spi = (uint8_t)roundf(bug.getSpi());
+    me.spd = (uint8_t)roundf(bug.getSpd());
     me.mot = bug.getMot();
     me.palette = bug.getPaletteId();
     me.maxHp = BattleCalc::computeHp(me.siz, me.end);
@@ -59,6 +61,7 @@ bool BattleScene::buildSync() {
     sync.str = battleStatWithHunger(bug.getStr(), hunger);
     sync.end = battleStatWithHunger(bug.getEnd(), hunger);
     sync.spi = (uint8_t)roundf(bug.getSpi());
+    sync.spd = (uint8_t)roundf(bug.getSpd());
     sync.motivation = bug.getMot();
     sync.hunger = hunger;
     sync.palette_id = bug.getPaletteId();
@@ -109,6 +112,7 @@ SceneID BattleScene::update() {
                     enemy.str = sync.str;
                     enemy.end = sync.end;
                     enemy.spi = sync.spi;
+                    enemy.spd = sync.spd;
                     enemy.mot = sync.motivation;
                     enemy.palette = sync.palette_id;
                     enemy.maxHp = BattleCalc::computeHp(enemy.siz, enemy.end);
@@ -324,11 +328,34 @@ battle_round_t BattleScene::computeAuthoritativeRound() {
     round.round_num = (uint8_t)roundNum;
 
     bool hostCrit = false, clientCrit = false;
-    round.host_dmg = (uint8_t)BattleCalc::computeDamage(me.str, me.siz, enemy.end, me.spi, me.mot, hostCrit);
-    round.client_dmg = (uint8_t)BattleCalc::computeDamage(enemy.str, enemy.siz, me.end, enemy.spi, enemy.mot, clientCrit);
+    round.host_dmg = (uint8_t)BattleCalc::computeDamage(me.str, me.siz, enemy.end, me.spi, me.spd, me.mot, hostCrit);
 
-    int hostHp = me.hp - (int)round.client_dmg;
-    int clientHp = enemy.hp - (int)round.host_dmg;
+    // 先手判定：SPD*10+MOT 高者先攻；平局随机
+    int hostIni = BattleCalc::computeInitiative(me.spd, me.mot);
+    int clientIni = BattleCalc::computeInitiative(enemy.spd, enemy.mot);
+    bool hostFirst = hostIni > clientIni || (hostIni == clientIni && random(2) == 0);
+
+    int hostHp = me.hp;
+    int clientHp = enemy.hp;
+
+    if (hostFirst) {
+        clientHp -= (int)round.host_dmg;
+        if (clientHp > 0) {
+            round.client_dmg = (uint8_t)BattleCalc::computeDamage(enemy.str, enemy.siz, me.end, enemy.spi, enemy.spd, enemy.mot, clientCrit);
+            hostHp -= (int)round.client_dmg;
+        } else {
+            round.client_dmg = 0;
+        }
+    } else {
+        round.client_dmg = (uint8_t)BattleCalc::computeDamage(enemy.str, enemy.siz, me.end, enemy.spi, enemy.spd, enemy.mot, clientCrit);
+        hostHp -= (int)round.client_dmg;
+        if (hostHp > 0) {
+            clientHp -= (int)round.host_dmg;
+        } else {
+            round.host_dmg = 0;
+        }
+    }
+
     if (hostHp < 0) hostHp = 0;
     if (clientHp < 0) clientHp = 0;
     round.host_hp = (uint8_t)hostHp;
@@ -447,7 +474,7 @@ void BattleScene::render() {
 
 void BattleScene::drawConnecting() {
     PixelRenderer::fillRect(0, 0, 240, 135, PixelRenderer::BLACK);
-    PixelRenderer::drawPixelText(50, 50, "Searching...", PixelRenderer::WHITE, 2);
+    PixelRenderer::drawPixelText(50, 50, UiStrings::BATTLE_SEARCHING, PixelRenderer::WHITE, 2);
 
     uint32_t elapsed = Hal::ins().millis() - stateStartMs;
     int dots = (elapsed / 500) % 4;
@@ -473,22 +500,22 @@ void BattleScene::drawBattleField() {
 
     // 标题
     char buf[32];
-    snprintf(buf, sizeof(buf), "ROUND %d", roundNum);
+    snprintf(buf, sizeof(buf), "%s %d", UiStrings::BATTLE_ROUND, roundNum);
     PixelRenderer::drawPixelText(90, 5, buf, PixelRenderer::WHITE, 1);
 
     // 我方（左侧）
     PixelRenderer::fillRect(30 + meOffX, 35 + meOffY, 30, 20, me.palette == 0 ? PixelRenderer::BROWN : PixelRenderer::CREAM);
-    snprintf(buf, sizeof(buf), "HP:%d/%d", me.hp, me.maxHp);
+    snprintf(buf, sizeof(buf), "%s:%d/%d", UiStrings::BATTLE_HP, me.hp, me.maxHp);
     PixelRenderer::drawPixelText(10, 60, buf, PixelRenderer::WHITE, 1);
     PixelRenderer::drawProgressBar(10, 72, 80, 6, (float)me.hp / me.maxHp,
                                    me.hp > me.maxHp / 2 ? PixelRenderer::GREEN : PixelRenderer::RED,
                                    PixelRenderer::GRAY);
-    snprintf(buf, sizeof(buf), "MOT:%d", me.mot);
+    snprintf(buf, sizeof(buf), "%s:%d", UiStrings::BATTLE_MOT, me.mot);
     PixelRenderer::drawPixelText(10, 82, buf, PixelRenderer::WHITE, 1);
 
     // 敌方（右侧）
     PixelRenderer::fillRect(180 + enemyOffX, 35 + enemyOffY, 30, 20, enemy.palette == 0 ? PixelRenderer::BROWN : PixelRenderer::CREAM);
-    snprintf(buf, sizeof(buf), "HP:%d/%d", enemy.hp, enemy.maxHp);
+    snprintf(buf, sizeof(buf), "%s:%d/%d", UiStrings::BATTLE_HP, enemy.hp, enemy.maxHp);
     PixelRenderer::drawPixelText(150, 60, buf, PixelRenderer::WHITE, 1);
     PixelRenderer::drawProgressBar(150, 72, 80, 6, (float)enemy.hp / enemy.maxHp,
                                    enemy.hp > enemy.maxHp / 2 ? PixelRenderer::GREEN : PixelRenderer::RED,
@@ -527,5 +554,5 @@ void BattleScene::drawResult() {
         color = PixelRenderer::RED;
     }
     PixelRenderer::drawPixelText(noOpponent ? 70 : 90, 45, resultText, color, 3);
-    PixelRenderer::drawPixelText(70, 90, "Press A return", PixelRenderer::WHITE, 1);
+    PixelRenderer::drawPixelText(70, 90, UiStrings::BATTLE_PRESS_A, PixelRenderer::WHITE, 1);
 }

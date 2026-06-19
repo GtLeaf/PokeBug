@@ -1,12 +1,33 @@
 #pragma once
+#include <Arduino.h>
 #include <cstdint>
+#include "FoodType.h"
 
 // 生命周期阶段
 enum class Stage {
     EGG = 0,
     LARVA = 1,
     PUPA = 2,
-    ADULT = 3,
+    JUVENILE = 3,
+    ADULT = 4,
+};
+
+// 卵期气质
+enum class Temperament : uint8_t {
+    SWIFT = 0,      // 迅捷
+    RESILIENT,      // 韧甲
+    GIANT,          // 巨体
+    BRUTE,          // 蛮力
+    BALANCED,       // 均衡
+    SPIRIT,         // 灵心
+};
+
+// 卵期操作类型
+enum class EggAction : uint8_t {
+    NONE = 0,
+    POKE,
+    WATER,
+    SHAKE,
 };
 
 // 独角仙实体：属性、生命周期、饥饿、基因、行为
@@ -21,12 +42,23 @@ public:
     void update(uint64_t now);
 
     // ---------- 玩家交互 ----------
-    // 在食物盘放 1 份树汁；仅当盘中为空且背包有树汁时才成功
-    bool placeSapInTray();
+    // 在食物盘放 1 份指定食物；仅当盘中为空且背包有该食物时才成功
+    bool placeFoodInTray(FoodType type);
+    // 喂食（甲虫自主进食时调用）
+    void feed(FoodType type, uint64_t now);
     // 戳甲虫（短按 B）
     bool poke(uint64_t now);
     // 剧烈摇晃设备
     bool onShake(uint64_t now);
+    // 喷水（卵期）
+    void onWater(uint64_t now);
+    // 记录卵期戳
+    void onEggPoke(uint64_t now);
+    // 记录卵期喷水
+    void onEggWater(uint64_t now);
+    // 记录卵期摇晃/倾斜
+    void onEggShake(uint64_t now, bool violent);
+    void onEggTilt(uint64_t now, uint32_t deltaMs, bool left);
     // 对战结算
     void onBattleEnd(bool win, uint64_t now);
 
@@ -41,6 +73,7 @@ public:
     float getSiz() const { return siz; }
     float getStr() const { return str; }
     float getEnd() const { return end; }
+    float getSpd() const { return spd; }
     float getSpi() const { return spi; }
     uint8_t getMot() const { return mot; }
     uint8_t getHunger() const { return hunger; }
@@ -49,18 +82,27 @@ public:
     uint8_t getGeneVIG() const { return geneVIG; }
     uint8_t getGeneATK() const { return geneATK; }
     uint8_t getGeneMNT() const { return geneMNT; }
+    uint8_t getGeneEND() const { return geneEND; }
     uint8_t getGeneAPP() const { return geneAPP; }
     uint8_t getPaletteId() const;  // 0-3 由 APP 显性值决定
     const char* getHatchHint() const;
+    Temperament getTemperament() const { return temperament; }
+    const char* getTemperamentName() const;
 
     // ---------- 背包/场景状态 ----------
-    uint8_t getSap() const { return sap; }
-    uint8_t getRottenWood() const { return rottenWood; }
+    uint8_t getFoodCount(FoodType type) const { return foodCounts[(uint8_t)type]; }
+    uint8_t getTotalFoodCount() const;
     bool isWoodPlaced() const { return woodPlaced; }
     bool hasFoodInTray() const { return foodInTray; }
+    FoodType getFoodInTrayType() const { return trayFoodType; }
     uint8_t getFoodAmount() const { return foodAmount; }
     bool placeWood();              // 放置腐木到缸内
     void removeWood() { woodPlaced = false; }
+
+    // 环境加成
+    void setFoodTray(uint8_t level, FoodType type);
+    void setWood(uint8_t style);
+    float getEnvMultiplier(int attrIndex) const; // 0=SIZ,1=STR,2=END,3=SPD,4=SPI
 
     // ---------- 战绩/世代 ----------
     uint8_t getWins() const { return wins; }
@@ -77,16 +119,17 @@ public:
     // 上次更新时间（虚拟时间 ms），供引擎同步
     uint64_t getLastUpdateTime() const { return lastUpdateTime; }
 
-    // 阶段时长（第一阶段使用较短测试值，便于验证；正式上线可改回注释中的值）
-    static constexpr uint32_t EGG_DURATION_MS     = 10ULL * 1000;   // 测试 10s；设计值 5 min
-    static constexpr uint32_t LARVA_DURATION_MS   = 60ULL * 1000;   // 测试 60s；设计值 30 min
-    static constexpr uint32_t PUPA_DURATION_MS    = 20ULL * 1000;   // 测试 20s；设计值 10 min
+    // 阶段时长（按设计文档 v1.0）
+    static constexpr uint32_t EGG_DURATION_MS      = 5ULL * 60 * 1000;   // 5 min
+    static constexpr uint32_t LARVA_DURATION_MS    = 30ULL * 60 * 1000;  // 30 min
+    static constexpr uint32_t PUPA_DURATION_MS     = 10ULL * 60 * 1000;  // 10 min
+    static constexpr uint32_t JUVENILE_DURATION_MS = 60ULL * 60 * 1000;  // 60 min
     static constexpr uint32_t EGG_SHAKE_DELAY_MS  = 30ULL * 1000;   // 每次摇晃卵延长 30s
     static constexpr uint32_t EGG_SHAKE_DELAY_MAX_MS = 2ULL * 60 * 1000; // 累计最多延长 2min
     static constexpr uint32_t HUNGER_DROP_MS      = 90ULL * 1000;   // 饥饿度每 90s -1（节奏更慢，便于观赏）
     static constexpr uint32_t STARVE_DEATH_MS     = 5ULL * 60 * 1000; // 饥饿 0 后持续 5min 死亡
     static constexpr uint32_t ADULT_SAP_PRODUCE_MS = 10ULL * 60 * 1000; // 成虫每 10min 产 1 份树汁
-    static constexpr uint8_t  FOOD_MAX_AMOUNT     = 5;              // 一份树汁分成 5 口吃完
+    static constexpr uint8_t  FOOD_MAX_AMOUNT     = 5;              // 一份食物分成 5 口吃完
 
     // 戳甲虫机制：愤怒值概率触发 MOT buff，触发后进入冷却；愤怒值会随时间衰减
     static constexpr uint32_t POKE_COOLDOWN_MS       = 30ULL * 1000;       // 触发后冷却 30s
@@ -96,20 +139,25 @@ public:
     static constexpr uint8_t  POKE_ANGER_DECAY_VALUE = 10;                 // 每次衰减 -10
     static constexpr uint8_t  POKE_MOT_BUFF          = 5;                  // 触发后 MOT +5
 
-private:
-    uint8_t geneVIG = 0, geneATK = 0, geneMNT = 0, geneAPP = 0;
+    // 蛹期安静成长：每 10 min SPI +1
+    static constexpr uint32_t PUPA_SPI_GROWTH_MS     = 10ULL * 60 * 1000;
 
-    float siz = 1.0f, str = 1.0f, end = 1.0f, spi = 1.0f;
+private:
+    uint8_t geneVIG = 0, geneATK = 0, geneMNT = 0, geneEND = 0, geneAPP = 0;
+
+    float siz = 1.0f, str = 1.0f, end = 1.0f, spd = 1.0f, spi = 1.0f;
     uint8_t mot = 50;
     uint8_t hunger = 100;
 
     Stage stage = Stage::EGG;
     bool alive = true;
 
-    uint8_t sap = 0;
+    static constexpr uint8_t MAX_FOOD_COUNT = 255;
+    uint8_t foodCounts[(uint8_t)FoodType::COUNT] = {0}; // 背包中各食物数量
     uint8_t rottenWood = 0;
     bool woodPlaced = false;
     bool foodInTray = false;
+    FoodType trayFoodType = FoodType::DROP;
     uint8_t foodAmount = 0;        // 盘中食物剩余口数
     uint64_t lastEatTime = 0;      // 上次进食时间（虚拟时间 ms）
 
@@ -125,6 +173,29 @@ private:
     uint8_t pokeAnger = 0;              // 当前愤怒值 0-100，决定触发概率
     uint8_t motBuffAmount = 0;          // 当前 MOT buff 增加值
     uint64_t motBuffEndTime = 0;        // MOT buff 结束时间
+
+    // 卵期记录
+    Temperament temperament = Temperament::SPIRIT;
+    uint64_t eggStartTime = 0;
+    uint8_t eggShakeCount = 0;
+    uint8_t eggViolentShakeCount = 0;
+    uint8_t eggPokeCount = 0;
+    uint8_t eggWaterCount = 0;
+    uint32_t eggLeftTiltMs = 0;
+    uint32_t eggRightTiltMs = 0;
+    uint8_t eggLastAction = 0; // 0=无, 1=戳, 2=喷水, 3=摇晃
+
+    // 环境加成
+    uint8_t foodTrayLevel = 1;
+    FoodType foodTrayType = FoodType::DROP;
+    uint8_t woodStyle = 0;
+
+    // 幼虫期 Citrus 累计次数（影响蛹期 SPI 上限）
+    uint8_t larvaCitrusCount = 0;
+    // 幼虫期是否有 Berry（影响蛹期安静效率）
+    bool larvaBerryFed = false;
+    // Citrus 累计 3 次奖励：每 1 = +0.1 SPI 上限
+    uint8_t spiCapBonusTenths = 0;
 
     uint8_t larvaFeeds = 0;
     uint8_t pupaShakes = 0;
@@ -142,13 +213,19 @@ private:
     void updateHunger(uint64_t now, uint32_t deltaMs);
     void checkStageTransition(uint64_t now);
     void eatFromTray(uint64_t now);
+    Temperament determineTemperament(uint64_t now);
+    void updatePupaSpi(uint64_t now, uint32_t deltaMs);
 
     static uint8_t dominant(uint8_t gene) { return gene >> 4; }
     static uint8_t recessive(uint8_t gene) { return gene & 0x0F; }
     float sizGrowthMult() const { return 0.8f + dominant(geneVIG) * 0.1f; }
     float strGrowthMult() const { return 0.8f + dominant(geneATK) * 0.1f; }
+    float endGrowthMult() const { return 0.8f + dominant(geneEND) * 0.1f; }
     float spiGrowthMult() const { return 0.8f + dominant(geneMNT) * 0.1f; }
     uint8_t sizCap() const { return (uint8_t)(6 + (dominant(geneVIG) + recessive(geneVIG)) / 2); }
     uint8_t strCap() const { return (uint8_t)(6 + (dominant(geneATK) + recessive(geneATK)) / 2); }
-    uint8_t spiCap() const { return (uint8_t)(6 + (dominant(geneMNT) + recessive(geneMNT)) / 2); }
+    uint8_t endCap() const { return (uint8_t)(6 + (dominant(geneEND) + recessive(geneEND)) / 2); }
+    uint8_t spiCap() const {
+        return (uint8_t)(6 + (dominant(geneMNT) + recessive(geneMNT)) / 2 + spiCapBonusTenths / 10.0f);
+    }
 };

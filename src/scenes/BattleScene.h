@@ -34,6 +34,7 @@ private:
         uint8_t siz = 0;
         uint8_t end = 0;
         uint8_t spi = 0;
+        uint8_t spd = 0;
         uint8_t mot = 0;
         uint8_t palette = 0;
     };

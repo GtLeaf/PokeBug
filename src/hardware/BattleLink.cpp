@@ -457,8 +457,8 @@ void BattleLink::handleSync(const uint8_t* mac, const battle_sync_t& sync) {
     pendingSync = true;
     pendingSyncData = sync;
     queueAck(mac, MSG_BATTLE_SYNC);
-    Serial.printf("[BattleLink] sync received: siz=%d str=%d end=%d spi=%d mot=%d\n",
-                  sync.siz, sync.str, sync.end, sync.spi, sync.motivation);
+    Serial.printf("[BattleLink] sync received: siz=%d str=%d end=%d spi=%d spd=%d mot=%d\n",
+                  sync.siz, sync.str, sync.end, sync.spi, sync.spd, sync.motivation);
 }
 
 void BattleLink::handleRound(const uint8_t* mac, const battle_round_t& round) {

@@ -100,7 +100,8 @@ private:
     static constexpr float TILT_THRESHOLD_G = 0.5f;
 
     // 戳反应
-    uint32_t pokeReactionStartMs = 0;
+    uint32_t pokeReactionStartMs = 0;    // 成虫威吓动画起始时间
+    uint32_t pokeFingerStartMs = 0;      // 手指戳动画起始时间
     uint32_t pokeReactionEndMs = 0;      // 手指动画/冷却提示结束时间
     uint32_t pokeThreatenEndMs = 0;      // 成虫威吓姿态结束时间
     bool pokeReactionWasPoked = false;
