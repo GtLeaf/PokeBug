@@ -5,6 +5,34 @@
 #include "../hardware/Hal.h"
 #include "../hardware/PixelRenderer.h"
 
+#include <cstdint>
+#include "../game/NpcGenerator.h"
+
+// 本地 NPC 对战上下文：由 MenuScene/ExploreScene/CupScene 写入，BattleScene 读取
+struct PendingNpcBattle {
+    bool active = false;
+    SceneID returnScene = SCENE_TERRARIUM; // 对战结束后返回的场景
+    uint8_t siz = 1, str = 1, end = 1, spd = 1, spi = 1;
+    uint8_t mot = 50;
+    uint8_t hunger = 100;
+    uint8_t palette = 0;
+    bool legend = false; // 是否传说级（用于特效）
+    bool resultSet = false; // 对战结果是否已写入
+    bool won = false;       // 对战结果
+    bool fromExplore = false;
+    bool fromCup = false;
+};
+
+// 上一场本地 NPC 对战结果（供返回场景读取）
+struct NpcBattleResult {
+    bool valid = false;
+    bool won = false;
+    NpcData::Tier tier = NpcData::Tier::ROOKIE;
+    bool legend = false;
+    bool fromExplore = false;
+    bool fromCup = false;
+};
+
 // 游戏引擎 — 主循环 + 场景调度
 class GameEngine {
 public:
@@ -92,6 +120,28 @@ public:
     void cycleFoodStyle();
     const char* getFoodStyleName() const;
 
+    // 本地 NPC 对战上下文
+    PendingNpcBattle& pendingNpcBattle() { return npcBattle; }
+    void clearPendingNpcBattle() { npcBattle.active = false; }
+    void setPendingNpcBattle(const NpcCombatant& npc, SceneID returnScene, bool legend = false, bool fromExplore = false, bool fromCup = false);
+
+    // 上一场本地 NPC 对战结果
+    NpcBattleResult& lastNpcBattleResult() { return npcResult; }
+    void clearLastNpcBattleResult() { npcResult.valid = false; }
+
+    // 杯赛全局数据
+    uint16_t getCupSeason() const { return cupSeason; }
+    void setCupSeason(uint16_t s) { cupSeason = s; }
+    uint32_t getLastCupTime() const { return lastCupTime; }
+    void setLastCupTime(uint32_t t) { lastCupTime = t; }
+
+    // 杯赛通知
+    bool hasCupPendingNotify() const { return cupPendingNotify; }
+    void setCupPendingNotify(bool v) { cupPendingNotify = v; }
+
+    // 当前是否在探索/对战/杯赛等不可进入 Deep Sleep 的场景
+    bool isBlockDeepSleepScene() const;
+
 private:
     GameEngine() = default;
 
@@ -127,10 +177,22 @@ private:
     uint8_t bowlStyle = 0;
     uint8_t foodStyle = 0;
 
+    PendingNpcBattle npcBattle;
+    NpcBattleResult npcResult;
+
+    // 杯赛全局数据（跨虫持久）
+    uint16_t cupSeason = 0;
+    uint32_t lastCupTime = 0;
+    bool cupPendingNotify = false;
+    uint32_t lastCupCheckMs = 0;
+
+    static constexpr uint32_t CUP_INTERVAL_MS = 2ULL * 60 * 60 * 1000; // 2 小时
+    static constexpr uint32_t CUP_CHECK_MS    = 60000;                 // 每 60s 检查一次
+
     static constexpr uint32_t ACTIVE_FRAME_MS  = 50;    // ~20fps
     static constexpr uint32_t IDLE_FRAME_MS    = 100;   // 10fps
     static constexpr uint32_t INPUT_SAMPLE_MS  = 16;    // 输入采样 60Hz
-    static constexpr uint32_t AUTO_SAVE_MS     = 30000; // 30s 自动保存
+    static constexpr uint32_t AUTO_SAVE_MS     = 60000; // 60s 自动保存
     static constexpr uint32_t LIGHT_SLEEP_MS   = 60000; // 1min 后进入 Deep Sleep
     static constexpr uint32_t IMU_SAMPLE_MS    = 50;    // IMU 采样 20Hz
 
@@ -138,6 +200,7 @@ private:
 
     void processInput();
     void processIMU();
+    void checkCupTrigger(uint32_t realNow);
     uint32_t targetFrameTime() const;
     void resetIdleTimer();
 };

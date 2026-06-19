@@ -2,7 +2,6 @@
 
 namespace BowlAssets {
 
-const uint8_t SPRITE_COUNT = 3;
 const RleFrame SPRITE_FRAMES[] PROGMEM = {
     { 0, 314 },
     { 314, 469 },

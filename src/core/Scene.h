@@ -10,6 +10,8 @@ enum SceneID {
     SCENE_SETTINGS,     // 设置
     SCENE_LOBBY,        // 对战房间大厅（创建/搜索）
     SCENE_BATTLE,       // 对战
+    SCENE_EXPLORE,      // 探索模式
+    SCENE_CUP,          // 甲虫杯
 };
 
 // 场景基类 — 所有界面继承此接口

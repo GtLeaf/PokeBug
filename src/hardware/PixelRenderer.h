@@ -49,7 +49,7 @@ public:
                               uint16_t length, bool flipX = false);
     static void drawRgb565RleScaled(int x, int y, int w, int h,
                                     const uint16_t* data, uint16_t offset,
-                                    uint16_t length, int scale, bool flipX = false);
+                                    uint16_t length, float scale, bool flipX = false);
 
     // 绘制被吃掉一部分的 RLE 精灵。remaining/maxAmount 决定剩余比例，
     // 边界带固定噪声，避免像简单矩形裁切。

@@ -32,6 +32,7 @@ static constexpr const char* MENU_INFO        = "Info";        // 信息
 static constexpr const char* MENU_FEED        = "Food";        // 食物
 static constexpr const char* MENU_BOX         = "Box";         // 箱子/背包
 static constexpr const char* MENU_FIGHT       = "Fight";       // 对战
+static constexpr const char* MENU_EXPLORE     = "Explore";     // 探索
 static constexpr const char* MENU_SETTINGS    = "Settings";    // 设置
 static constexpr const char* MENU_WOOD        = "Wood";        // 腐木
 static constexpr const char* MENU_BOWL        = "Bowl";        // 食物盘

@@ -15,7 +15,7 @@ bool SaveManager::load(Bug& bug) {
     }
 
     uint8_t ver = prefs.getUChar(KEY_VER, 0);
-    if (ver != SAVE_VERSION && ver != 6 && ver != 5) {
+    if (ver != SAVE_VERSION && ver != 7 && ver != 6 && ver != 5) {
         Serial.printf("[Save] Version mismatch: stored=%d expected=%d\n", ver, SAVE_VERSION);
         prefs.end();
         return false;
@@ -75,6 +75,33 @@ void SaveManager::clear() {
         prefs.clear();
         prefs.end();
         Serial.println("[Save] All saves cleared");
+    }
+}
+
+bool SaveManager::saveCupGlobal(uint16_t season, uint32_t lastCupTime) {
+    Preferences prefs;
+    if (!prefs.begin(NAMESPACE, false)) return false;
+    prefs.putUShort(KEY_CUP_SEASON, season);
+    prefs.putUInt(KEY_CUP_TIME, lastCupTime);
+    prefs.end();
+    return true;
+}
+
+bool SaveManager::loadCupGlobal(uint16_t& season, uint32_t& lastCupTime) {
+    Preferences prefs;
+    if (!prefs.begin(NAMESPACE, true)) return false;
+    season = prefs.getUShort(KEY_CUP_SEASON, 0);
+    lastCupTime = prefs.getUInt(KEY_CUP_TIME, 0);
+    prefs.end();
+    return true;
+}
+
+void SaveManager::clearCupGlobal() {
+    Preferences prefs;
+    if (prefs.begin(NAMESPACE, false)) {
+        prefs.remove(KEY_CUP_SEASON);
+        prefs.remove(KEY_CUP_TIME);
+        prefs.end();
     }
 }
 

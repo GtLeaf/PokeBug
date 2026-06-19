@@ -57,6 +57,7 @@ void PixelRenderer::drawPixelText(int x, int y, const char* text,
     }
     canvas->setTextColor(color);
     canvas->setTextSize(actualScale);
+    canvas->setTextWrap(false);
     canvas->setCursor(x, y);
     canvas->print(text);
 }
@@ -118,8 +119,52 @@ void PixelRenderer::drawRgb565Rle(int x, int y, int w, int h,
 
 void PixelRenderer::drawRgb565RleScaled(int x, int y, int w, int h,
                                         const uint16_t* data, uint16_t offset,
-                                        uint16_t length, int scale, bool flipX) {
-    if (!canvas || !data || w <= 0 || h <= 0 || scale <= 1) {
+                                        uint16_t length, float scale, bool flipX) {
+    if (!canvas || !data || w <= 0 || h <= 0 || scale <= 0.0f) return;
+    if (scale == 1.0f) {
+        drawRgb565Rle(x, y, w, h, data, offset, length, flipX);
+        return;
+    }
+
+    // scale > 1：每个源像素扩展为 scale x scale 的色块
+    if (scale > 1.0f) {
+        const uint16_t total = (uint16_t)(w * h);
+        uint16_t idx = 0;
+        uint16_t pixel = 0;
+        while (idx < length && pixel < total) {
+            uint16_t token = pgm_read_word(&data[offset + idx++]);
+            uint16_t run = token & 0x7FFF;
+            if (run == 0) continue;
+
+            if (token & 0x8000) {
+                pixel += run;
+                if (pixel > total) pixel = total;
+                continue;
+            }
+
+            for (uint16_t i = 0; i < run && idx < length && pixel < total; ++i, ++pixel) {
+                uint16_t color = pgm_read_word(&data[offset + idx++]);
+                int col = pixel % w;
+                int row = pixel / w;
+                if (flipX) col = w - 1 - col;
+                int drawX = (int)(x + col * scale);
+                int drawY = (int)(y + row * scale);
+                int drawW = (int)ceilf(scale);
+                int drawH = (int)ceilf(scale);
+                canvas->fillRect(drawX, drawY, drawW, drawH, color);
+            }
+        }
+        return;
+    }
+
+    // scale < 1：先解压 RLE，再最近邻下采样绘制
+    int outW = (int)(w * scale);
+    int outH = (int)(h * scale);
+    if (outW <= 0) outW = 1;
+    if (outH <= 0) outH = 1;
+
+    uint16_t* buf = (uint16_t*)malloc((size_t)w * h * sizeof(uint16_t));
+    if (!buf) {
         drawRgb565Rle(x, y, w, h, data, offset, length, flipX);
         return;
     }
@@ -139,13 +184,22 @@ void PixelRenderer::drawRgb565RleScaled(int x, int y, int w, int h,
         }
 
         for (uint16_t i = 0; i < run && idx < length && pixel < total; ++i, ++pixel) {
-            uint16_t color = pgm_read_word(&data[offset + idx++]);
-            int col = pixel % w;
-            int row = pixel / w;
-            if (flipX) col = w - 1 - col;
-            canvas->fillRect(x + col * scale, y + row * scale, scale, scale, color);
+            buf[pixel] = pgm_read_word(&data[offset + idx++]);
         }
     }
+
+    for (int row = 0; row < outH; row++) {
+        int srcRow = (int)(row / scale);
+        if (srcRow >= h) srcRow = h - 1;
+        for (int col = 0; col < outW; col++) {
+            int srcCol = (int)(col / scale);
+            if (srcCol >= w) srcCol = w - 1;
+            int finalCol = flipX ? (w - 1 - srcCol) : srcCol;
+            canvas->drawPixel(x + col, y + row, buf[srcRow * w + finalCol]);
+        }
+    }
+
+    free(buf);
 }
 
 void PixelRenderer::drawRgb565RleEaten(int x, int y, int w, int h,

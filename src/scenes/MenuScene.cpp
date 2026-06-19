@@ -6,6 +6,8 @@
 #include "../hardware/PixelRenderer.h"
 #include "../game/FoodType.h"
 #include "../assets/FoodAssets.h"
+#include "../assets/WoodAssets.h"
+#include "../assets/BowlAssets.h"
 
 int MenuScene::lastSelected = 0;
 int MenuScene::lastBoxSelected = 0;
@@ -46,11 +48,15 @@ SceneID MenuScene::update() {
 void MenuScene::render() {
     PixelRenderer::fillRect(0, 0, 240, 135, PixelRenderer::rgb565(0, 0, 0));
 
-    if (mode != Mode::FOOD) {
+    if (mode != Mode::FOOD && mode != Mode::WOOD && mode != Mode::BOWL) {
         drawBattery();
     }
     if (mode == Mode::FOOD) {
         drawFoodLayout();
+    } else if (mode == Mode::WOOD) {
+        drawWoodLayout();
+    } else if (mode == Mode::BOWL) {
+        drawBowlLayout();
     } else {
         drawList();
     }
@@ -176,9 +182,12 @@ bool MenuScene::onButton(const ButtonEvent& ev) {
             if (mode == Mode::FOOD) {
                 // 食物子菜单：A 将当前高亮项设为全局食物（左侧菱形标记跟随），Back 返回主菜单
                 if (selected < FOOD_ITEM_COUNT - 1) {
-                    GameEngine::ins().setFoodStyle((uint8_t)selected);
-                    foodConfirmTime = GameEngine::ins().getGameNow() + FOOD_CONFIRM_MS;
-                    Serial.printf("[Menu] Global food set to: %s\n", FoodTypeInfo::name((FoodType)selected));
+                    Bug& bug = GameEngine::ins().getBug();
+                    if (bug.getFoodCount((FoodType)selected) > 0) {
+                        GameEngine::ins().setFoodStyle((uint8_t)selected);
+                        foodConfirmTime = GameEngine::ins().getGameNow() + FOOD_CONFIRM_MS;
+                        Serial.printf("[Menu] Global food set to: %s\n", FoodTypeInfo::name((FoodType)selected));
+                    }
                 } else {
                     enterMode(Mode::MAIN);
                 }
@@ -203,40 +212,31 @@ void MenuScene::executeSelection() {
     }
 
     if (mode == Mode::BOWL) {
-        switch (selected) {
-            case BOWL_STYLE:
-                GameEngine::ins().cycleBowlStyle();
-                bug.setFoodTray(GameEngine::ins().getBowlStyle() + 1,
-                                (FoodType)GameEngine::ins().getFoodStyle());
-                saveSettingsNow();
-                Serial.printf("[Menu] Bowl style: %s\n", GameEngine::ins().getBowlStyleName());
-                break;
-            case BOWL_BACK:
-            default:
-                enterMode(Mode::BOX);
-                break;
+        if (selected >= 0 && selected < BOWL_ITEM_COUNT - 1) {
+            GameEngine::ins().setBowlStyle((uint8_t)selected);
+            bug.setFoodTray(GameEngine::ins().getBowlStyle() + 1,
+                            (FoodType)GameEngine::ins().getFoodStyle());
+            saveSettingsNow();
+            Serial.printf("[Menu] Bowl style: %s\n", GameEngine::ins().getBowlStyleName());
+        } else {
+            enterMode(Mode::BOX);
         }
         return;
     }
 
     if (mode == Mode::WOOD) {
-        switch (selected) {
-            case WOOD_STYLE:
-                GameEngine::ins().cycleWoodStyle();
-                bug.setWood(GameEngine::ins().getWoodStyle());
-                saveSettingsNow();
-                Serial.printf("[Menu] Wood style: %s\n", GameEngine::ins().getWoodStyleName());
-                break;
-            case WOOD_PLACE:
-                if (bug.placeWood()) {
-                    Serial.printf("[Menu] Placed wood: %s\n", GameEngine::ins().getWoodStyleName());
-                }
-                nextScene = SCENE_TERRARIUM;
-                break;
-            case WOOD_BACK:
-            default:
-                enterMode(Mode::BOX);
-                break;
+        if (selected >= 0 && selected < WOOD_ITEM_COUNT - 2) {
+            GameEngine::ins().setWoodStyle((uint8_t)selected);
+            bug.setWood(GameEngine::ins().getWoodStyle());
+            saveSettingsNow();
+            Serial.printf("[Menu] Wood style: %s\n", GameEngine::ins().getWoodStyleName());
+        } else if (selected == WOOD_PLACE) {
+            if (bug.placeWood()) {
+                Serial.printf("[Menu] Placed wood: %s\n", GameEngine::ins().getWoodStyleName());
+            }
+            nextScene = SCENE_TERRARIUM;
+        } else {
+            enterMode(Mode::BOX);
         }
         return;
     }
@@ -271,6 +271,19 @@ void MenuScene::executeSelection() {
         case FIGHT:
             nextScene = SCENE_LOBBY;
             break;
+        case EXPLORE: {
+            Bug& bug = GameEngine::ins().getBug();
+            if (bug.getStage() != Stage::ADULT || bug.isDead()) {
+                // 仅成虫可探索
+                nextScene = SCENE_MENU;
+            } else if (bug.getHunger() < 30) {
+                // 饥饿度不足
+                nextScene = SCENE_MENU;
+            } else {
+                nextScene = SCENE_EXPLORE;
+            }
+            break;
+        }
         case SETTINGS:
             nextScene = SCENE_SETTINGS;
             break;
@@ -298,8 +311,16 @@ void MenuScene::enterMode(Mode nextMode) {
         foodScroll = 0.0f;       // 让列表在首帧自然滚动到选中项
         foodConfirmTime = 0;     // 清除上一次确认反馈
     }
-    else if (mode == Mode::BOWL) selected = lastBowlSelected;
-    else if (mode == Mode::WOOD) selected = lastWoodSelected;
+    else if (mode == Mode::BOWL) {
+        selected = GameEngine::ins().getBowlStyle();
+        if (selected >= BOWL_ITEM_COUNT - 1) selected = 0;
+        bowlScroll = 0.0f;
+    }
+    else if (mode == Mode::WOOD) {
+        selected = GameEngine::ins().getWoodStyle();
+        if (selected >= WOOD_ITEM_COUNT - 2) selected = 0; // 排除 Place 和 Back
+        woodScroll = 0.0f;
+    }
     else if (mode == Mode::BOX) selected = lastBoxSelected;
     else selected = lastSelected;
     int count = itemCount();
@@ -324,29 +345,18 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
     }
 
     if (mode == Mode::BOWL) {
-        switch (index) {
-            case BOWL_STYLE:
-                snprintf(buf, bufSize, "%s:%s", UiStrings::TYPE,
-                         GameEngine::ins().getBowlStyleName());
-                return buf;
-            case BOWL_BACK:
-            default:
-                return UiStrings::BACK;
+        if (index >= 0 && index < BOWL_ITEM_COUNT - 1) {
+            return BowlAssets::NAME[index];
         }
+        return UiStrings::BACK;
     }
 
     if (mode == Mode::WOOD) {
-        switch (index) {
-            case WOOD_STYLE:
-                snprintf(buf, bufSize, "%s:%s", UiStrings::TYPE,
-                         GameEngine::ins().getWoodStyleName());
-                return buf;
-            case WOOD_PLACE:
-                return UiStrings::PLACE;
-            case WOOD_BACK:
-            default:
-                return UiStrings::BACK;
+        if (index >= 0 && index < WOOD_ITEM_COUNT - 2) {
+            return WoodAssets::NAME[index];
         }
+        if (index == WOOD_PLACE) return UiStrings::PLACE;
+        return UiStrings::BACK;
     }
 
     if (mode == Mode::BOX) {
@@ -370,6 +380,7 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
         case FEED: return UiStrings::MENU_FEED;
         case BOX: return UiStrings::MENU_BOX;
         case FIGHT: return UiStrings::MENU_FIGHT;
+        case EXPLORE: return UiStrings::MENU_EXPLORE;
         case SETTINGS: return UiStrings::MENU_SETTINGS;
         case BACK:
         default:
@@ -430,7 +441,17 @@ void MenuScene::drawFoodLayout() {
         if (y + ROW_H < LIST_Y_START || y > LIST_BOTTOM) continue;
 
         bool isSelected = (i == selected);
-        uint16_t color = isSelected ? PixelRenderer::YELLOW : PixelRenderer::WHITE;
+        bool isFood = (i < FOOD_ITEM_COUNT - 1);
+        uint8_t count = isFood ? bug.getFoodCount((FoodType)i) : 1;
+        bool hasStock = (count > 0);
+
+        // 无库存的食物显示为灰色；选中时统一高亮为黄色，但无库存的黄色更灰一些
+        uint16_t color;
+        if (isSelected) {
+            color = hasStock ? PixelRenderer::YELLOW : PixelRenderer::rgb565(180, 180, 0);
+        } else {
+            color = hasStock ? PixelRenderer::WHITE : PixelRenderer::GRAY;
+        }
 
         const char* label;
         if (i == FOOD_ITEM_COUNT - 1) {
@@ -442,8 +463,9 @@ void MenuScene::drawFoodLayout() {
         int textY = y + (ROW_H - (int)(8 * fs)) / 2;
 
         // 全局食物标记：在当前设置的食物名字前面绘制一个青色小菱形
+        // 无库存的食物不能挂上菱形标记，也不能被选作全局食物
         int globalFood = GameEngine::ins().getFoodStyle();
-        if (i < FOOD_ITEM_COUNT - 1 && i == globalFood) {
+        if (i < FOOD_ITEM_COUNT - 1 && i == globalFood && hasStock) {
             int cx = TEXT_X - 8;
             int cy = textY + (int)(4 * fs);
             uint16_t diamondColor = PixelRenderer::CYAN;
@@ -463,77 +485,362 @@ void MenuScene::drawFoodLayout() {
         FoodType ft = (FoodType)selected;
         int idx = selected;
 
-        // 食物 icon：3x 放大，居中于右侧面板，位置上移给底部信息留空间
+        // 食物 icon：2x 放大，放在容器左侧
         uint16_t foodOffset = pgm_read_word(&FoodAssets::SPRITE_FRAMES[idx].offset);
         uint16_t foodLength = pgm_read_word(&FoodAssets::SPRITE_FRAMES[idx].length);
-        int iconW = FoodAssets::FRAME_W * 3;
-        int iconH = FoodAssets::FRAME_H * 3;
-        int iconX = RIGHT_X + (Hal::DISPLAY_W - RIGHT_X - iconW) / 2;
-        int iconY = 14;
+        int iconScale = 2;
+        int iconW = (int)(FoodAssets::FRAME_W * iconScale);
+        int iconH = (int)(FoodAssets::FRAME_H * iconScale);
+
+        const char* name = FoodTypeInfo::name(ft);
+        uint8_t count = bug.getFoodCount(ft);
+        char storageBuf[16];
+        snprintf(storageBuf, sizeof(storageBuf), "x %d", count);
+
+        canvas.setTextSize(fs);
+        int nameW = canvas.textWidth(name);
+        int storageW = canvas.textWidth(storageBuf);
+        int textW = (nameW > storageW) ? nameW : storageW;
+
+        // 容器整体居中但保持右侧边距：icon + 间距 + 右侧文字（名字在上，库存在下）
+        int rightW = Hal::DISPLAY_W - RIGHT_X;
+        int contentW = iconW + 5 + textW;
+        int contentX = RIGHT_X + (rightW - contentW) / 2;
+        if (contentX < RIGHT_X + 2) contentX = RIGHT_X + 2;
+        int iconX = contentX;
+        int iconY = 18;
+        int textX = iconX + iconW + 5;
+        int nameY = iconY + 2;
+        int storageY = nameY + (int)(12 * fs);
+
         PixelRenderer::drawRgb565RleScaled(iconX, iconY,
                                            FoodAssets::FRAME_W,
                                            FoodAssets::FRAME_H,
                                            FoodAssets::SPRITE_RLE,
-                                           foodOffset, foodLength, 3, false);
+                                           foodOffset, foodLength, iconScale, false);
 
-        // 名字 + 状态提示
-        const char* name = FoodTypeInfo::name(ft);
-        canvas.setTextSize(fs);
-        int nameW = canvas.textWidth(name);
-        int rightW = Hal::DISPLAY_W - RIGHT_X;
-        int nameX = RIGHT_X + (rightW - nameW) / 2;
-        int nameY = iconY + iconH + 8;
-        PixelRenderer::drawPixelText(nameX, nameY, name, PixelRenderer::WHITE, fs);
+        // 名字在右上，库存在右下
+        PixelRenderer::drawPixelText(textX, nameY, name, PixelRenderer::WHITE, fs);
+        PixelRenderer::drawPixelText(textX, storageY, storageBuf,
+                                     count > 0 ? PixelRenderer::CREAM : PixelRenderer::GRAY, fs);
 
-        uint8_t count = bug.getFoodCount(ft);
-        uint8_t level = FoodTypeInfo::level(ft);
-        uint8_t trayLevel = GameEngine::ins().getBowlStyle() + 1;
-        uint16_t hintColor = PixelRenderer::GREEN;
-        const char* hint = ".";
-        if (count == 0) {
-            hintColor = PixelRenderer::RED;
-            hint = "!";
-        } else if (level > trayLevel) {
-            hintColor = PixelRenderer::YELLOW;
-            hint = "!";
-        }
-        PixelRenderer::drawPixelText(nameX + nameW + (int)(4 * fs),
-                                     nameY,
-                                     hint, hintColor, fs);
-
-        // 食物信息：左对齐排列在右侧面板底部，预留更宽松的垂直空间
-        static const char* attrNames[5] = {"SIZ", "STR", "END", "SPD", "SPI"};
-        int attr = FoodTypeInfo::envAttribute(ft);
-        const char* attrName = (attr >= 0 && attr < 5) ? attrNames[attr] : "-";
-
-        char buf[48];
-        int infoX = RIGHT_X + 10;
-        int infoY = nameY + (int)(16 * fs);
-        int infoStep = (int)(11 * fs);
-
-        snprintf(buf, sizeof(buf), "Lv.%d", FoodTypeInfo::level(ft));
-        PixelRenderer::drawPixelText(infoX, infoY, buf, PixelRenderer::CYAN, fs);
-        infoY += infoStep;
-
-        snprintf(buf, sizeof(buf), "%s: %s", UiStrings::TYPE, attrName);
-        PixelRenderer::drawPixelText(infoX, infoY, buf, PixelRenderer::CYAN, fs);
-        infoY += infoStep;
-
-        snprintf(buf, sizeof(buf), "Stock: %d", count);
-        PixelRenderer::drawPixelText(infoX, infoY, buf, PixelRenderer::CYAN, fs);
-        infoY += infoStep;
-
-        if (level > trayLevel) {
-            snprintf(buf, sizeof(buf), "Need Lv.%d tray", level);
-            PixelRenderer::drawPixelText(infoX, infoY, buf, PixelRenderer::RED, fs);
-        } else if (count == 0) {
-            PixelRenderer::drawPixelText(infoX, infoY, "Out of stock", PixelRenderer::RED, fs);
-        } else {
-            PixelRenderer::drawPixelText(infoX, infoY, "Ready", PixelRenderer::GREEN, fs);
-        }
+        // 描述：放在容器下方，严格限制在右侧面板内
+        int descX = RIGHT_X + 2;
+        int descY = iconY + iconH + 12;
+        PixelRenderer::drawPixelText(descX, descY,
+                                     FoodTypeInfo::descLine1(ft),
+                                     PixelRenderer::CREAM, fs);
+        descY += (int)(12 * fs);
+        PixelRenderer::drawPixelText(descX, descY,
+                                     FoodTypeInfo::descLine2(ft),
+                                     PixelRenderer::CREAM, fs);
     } else if (selected == FOOD_ITEM_COUNT - 1) {
         // Back 选中时的右侧提示
-        PixelRenderer::drawPixelText(RIGHT_X + 20, 80, "A:Back to menu",
+        PixelRenderer::drawPixelText(RIGHT_X + 20, 80, "back to menu",
+                                     PixelRenderer::GRAY, fs);
+    }
+}
+
+
+void MenuScene::drawBowlLayout() {
+    Bug& bug = GameEngine::ins().getBug();
+    LGFX_Sprite& canvas = Hal::ins().canvas();
+    float fs = PixelRenderer::getContentFontScale();
+
+    static constexpr int LEFT_W = 78;
+    static constexpr int RIGHT_X = LEFT_W + 8;
+    static constexpr int LIST_Y_START = 10;
+    static constexpr int LIST_BOTTOM = Hal::DISPLAY_H - 8;
+    static constexpr int VISIBLE_H = LIST_BOTTOM - LIST_Y_START;
+    static constexpr int ROW_H = 22;
+    static constexpr int TEXT_X = 12;
+
+    // ---- 左侧可滚动列表 ----
+    int totalH = BOWL_ITEM_COUNT * ROW_H;
+    int maxScroll = (totalH > VISIBLE_H) ? (totalH - VISIBLE_H) : 0;
+    int targetScroll = selected * ROW_H - VISIBLE_H / 2 + ROW_H / 2;
+    if (targetScroll < 0) targetScroll = 0;
+    if (targetScroll > maxScroll) targetScroll = maxScroll;
+
+    float diff = (float)targetScroll - bowlScroll;
+    if (fabsf(diff) < 0.5f) {
+        bowlScroll = (float)targetScroll;
+    } else {
+        bowlScroll += diff * 0.25f;
+    }
+
+    canvas.drawFastVLine(LEFT_W, 8, Hal::DISPLAY_H - 16, PixelRenderer::GRAY);
+
+    for (int i = 0; i < BOWL_ITEM_COUNT; i++) {
+        int y = LIST_Y_START + i * ROW_H - (int)bowlScroll;
+        if (y + ROW_H < LIST_Y_START || y > LIST_BOTTOM) continue;
+
+        bool isSelected = (i == selected);
+        bool isStyle = (i < BOWL_ITEM_COUNT - 1);
+        bool unlocked = isStyle && GameEngine::ins().isBowlStyleUnlocked((uint8_t)i);
+
+        // 未解锁的风格显示为灰色；选中时统一高亮为黄色，未解锁的黄色更灰
+        uint16_t color;
+        if (isSelected) {
+            color = unlocked ? PixelRenderer::YELLOW : PixelRenderer::rgb565(180, 180, 0);
+        } else {
+            color = unlocked ? PixelRenderer::WHITE : PixelRenderer::GRAY;
+        }
+
+        const char* label;
+        if (isStyle) {
+            label = BowlAssets::NAME[i];
+        } else {
+            label = UiStrings::BACK;
+        }
+
+        int textY = y + (ROW_H - (int)(8 * fs)) / 2;
+
+        // 当前食物盘风格菱形标记（只显示在已解锁的当前风格上）
+        int currentStyle = GameEngine::ins().getBowlStyle();
+        if (isStyle && i == currentStyle && unlocked) {
+            int cx = TEXT_X - 8;
+            int cy = textY + (int)(4 * fs);
+            canvas.fillTriangle(cx, cy - 3, cx + 3, cy, cx, cy + 3, PixelRenderer::CYAN);
+            canvas.fillTriangle(cx, cy - 3, cx, cy + 3, cx - 3, cy, PixelRenderer::CYAN);
+        }
+
+        PixelRenderer::drawPixelText(TEXT_X, textY, label, color, fs);
+    }
+
+    // ---- 右侧详情面板 ----
+    if (selected >= 0 && selected < BOWL_ITEM_COUNT - 1) {
+        int idx = selected;
+        bool unlocked = GameEngine::ins().isBowlStyleUnlocked((uint8_t)idx);
+
+        uint16_t bowlOffset = pgm_read_word(&BowlAssets::SPRITE_FRAMES[idx].offset);
+        uint16_t bowlLength = pgm_read_word(&BowlAssets::SPRITE_FRAMES[idx].length);
+        int iconScale = 2;
+        int iconW = (int)(BowlAssets::FRAME_W * iconScale);
+        int iconH = (int)(BowlAssets::FRAME_H * iconScale);
+
+        const char* name = BowlAssets::NAME[idx];
+        char storageBuf[16];
+        snprintf(storageBuf, sizeof(storageBuf), "%s", unlocked ? "Ready" : "Locked");
+
+        canvas.setTextSize(fs);
+        int nameW = canvas.textWidth(name);
+        int storageW = canvas.textWidth(storageBuf);
+        int textW = (nameW > storageW) ? nameW : storageW;
+
+        // 容器整体靠左对齐：icon 贴右侧面板左边缘，名字/状态紧贴 icon
+        int iconX = RIGHT_X;
+        int iconY = 7;
+        int textX = iconX + iconW;
+        int nameY = iconY + 2;
+        int storageY = nameY + (int)(12 * fs);
+
+        PixelRenderer::drawRgb565RleScaled(iconX, iconY,
+                                           BowlAssets::FRAME_W,
+                                           BowlAssets::FRAME_H,
+                                           BowlAssets::SPRITE_RLE,
+                                           bowlOffset, bowlLength, iconScale, false);
+
+        // 名字在右上，状态在下
+        PixelRenderer::drawPixelText(textX, nameY, name, PixelRenderer::WHITE, fs);
+        PixelRenderer::drawPixelText(textX, storageY, storageBuf,
+                                     unlocked ? PixelRenderer::CREAM : PixelRenderer::GRAY, fs);
+
+        // 描述：三行，底部留出第三行空间
+        int descX = RIGHT_X + 2;
+        int descY = iconY + iconH + 12;
+        PixelRenderer::drawPixelText(descX, descY,
+                                     BowlAssets::DESC_LINE1[idx],
+                                     PixelRenderer::CREAM, fs);
+        descY += (int)(12 * fs);
+        PixelRenderer::drawPixelText(descX, descY,
+                                     BowlAssets::DESC_LINE2[idx],
+                                     PixelRenderer::CREAM, fs);
+        descY += (int)(12 * fs);
+        PixelRenderer::drawPixelText(descX, descY,
+                                     BowlAssets::DESC_LINE3[idx],
+                                     PixelRenderer::CREAM, fs);
+    } else if (selected == BOWL_ITEM_COUNT - 1) {
+        PixelRenderer::drawPixelText(RIGHT_X + 20, 62, "back to box",
+                                     PixelRenderer::GRAY, fs);
+    }
+}
+
+void MenuScene::drawWoodLayout() {
+    Bug& bug = GameEngine::ins().getBug();
+    LGFX_Sprite& canvas = Hal::ins().canvas();
+    float fs = PixelRenderer::getContentFontScale();
+
+    static constexpr int LEFT_W = 78;
+    static constexpr int RIGHT_X = LEFT_W + 8;
+    static constexpr int LIST_Y_START = 10;
+    static constexpr int LIST_BOTTOM = Hal::DISPLAY_H - 8;
+    static constexpr int VISIBLE_H = LIST_BOTTOM - LIST_Y_START;
+    static constexpr int ROW_H = 22;
+    static constexpr int TEXT_X = 12;
+
+    // ---- 左侧可滚动列表 ----
+    int totalH = WOOD_ITEM_COUNT * ROW_H;
+    int maxScroll = (totalH > VISIBLE_H) ? (totalH - VISIBLE_H) : 0;
+    int targetScroll = selected * ROW_H - VISIBLE_H / 2 + ROW_H / 2;
+    if (targetScroll < 0) targetScroll = 0;
+    if (targetScroll > maxScroll) targetScroll = maxScroll;
+
+    float diff = (float)targetScroll - woodScroll;
+    if (fabsf(diff) < 0.5f) {
+        woodScroll = (float)targetScroll;
+    } else {
+        woodScroll += diff * 0.25f;
+    }
+
+    canvas.drawFastVLine(LEFT_W, 8, Hal::DISPLAY_H - 16, PixelRenderer::GRAY);
+
+    for (int i = 0; i < WOOD_ITEM_COUNT; i++) {
+        int y = LIST_Y_START + i * ROW_H - (int)woodScroll;
+        if (y + ROW_H < LIST_Y_START || y > LIST_BOTTOM) continue;
+
+        bool isSelected = (i == selected);
+        uint16_t color = isSelected ? PixelRenderer::YELLOW : PixelRenderer::WHITE;
+
+        const char* label;
+        if (i < WOOD_ITEM_COUNT - 2) {
+            label = WoodAssets::NAME[i];
+        } else if (i == WOOD_PLACE) {
+            label = UiStrings::PLACE;
+        } else {
+            label = UiStrings::BACK;
+        }
+
+        int textY = y + (ROW_H - (int)(8 * fs)) / 2;
+
+        // 当前腐木风格菱形标记
+        int currentStyle = GameEngine::ins().getWoodStyle();
+        if (i < WOOD_ITEM_COUNT - 2 && i == currentStyle) {
+            int cx = TEXT_X - 8;
+            int cy = textY + (int)(4 * fs);
+            canvas.fillTriangle(cx, cy - 3, cx + 3, cy, cx, cy + 3, PixelRenderer::CYAN);
+            canvas.fillTriangle(cx, cy - 3, cx, cy + 3, cx - 3, cy, PixelRenderer::CYAN);
+        }
+
+        PixelRenderer::drawPixelText(TEXT_X, textY, label, color, fs);
+    }
+
+    // ---- 右侧详情面板 ----
+    if (selected >= 0 && selected < WOOD_ITEM_COUNT - 2) {
+        int idx = selected;
+
+        uint16_t woodOffset = pgm_read_word(&WoodAssets::SPRITE_FRAMES[idx].offset);
+        uint16_t woodLength = pgm_read_word(&WoodAssets::SPRITE_FRAMES[idx].length);
+        float iconScale = 1.0f;
+        int iconW = (int)(WoodAssets::FRAME_W * iconScale);
+        int iconH = (int)(WoodAssets::FRAME_H * iconScale);
+
+        const char* name = WoodAssets::NAME[idx];
+        uint8_t woodCount = bug.getRottenWood();
+        char storageBuf[16];
+        snprintf(storageBuf, sizeof(storageBuf), "x %d", woodCount);
+
+        canvas.setTextSize(fs);
+        int nameW = canvas.textWidth(name);
+        int storageW = canvas.textWidth(storageBuf);
+        int textW = (nameW > storageW) ? nameW : storageW;
+
+        // 容器整体居中但保持右侧边距：icon + 间距 + 右侧文字（名字在上，库存在下）
+        int rightW = Hal::DISPLAY_W - RIGHT_X;
+        int contentW = iconW + 5 + textW;
+        int contentX = RIGHT_X + (rightW - contentW) / 2;
+        if (contentX < RIGHT_X + 2) contentX = RIGHT_X + 2;
+        int iconX = contentX;
+        int iconY = 3;
+        int textX = iconX + iconW + 5;
+        // 文字块在 icon 右侧垂直居中
+        int textBlockH = (int)(8 * fs) + (int)(12 * fs);
+        int nameY = iconY + (iconH - textBlockH) / 2;
+        int storageY = nameY + (int)(12 * fs);
+
+        PixelRenderer::drawRgb565RleScaled(iconX, iconY,
+                                           WoodAssets::FRAME_W,
+                                           WoodAssets::FRAME_H,
+                                           WoodAssets::SPRITE_RLE,
+                                           woodOffset, woodLength, iconScale, false);
+
+        // 名字在右上，库存在右下
+        PixelRenderer::drawPixelText(textX, nameY, name, PixelRenderer::WHITE, fs);
+        PixelRenderer::drawPixelText(textX, storageY, storageBuf,
+                                     woodCount > 0 ? PixelRenderer::CREAM : PixelRenderer::GRAY, fs);
+
+        // 描述：三行，底部留出第三行空间
+        int descX = RIGHT_X + 2;
+        int descY = iconY + iconH + 12;
+        PixelRenderer::drawPixelText(descX, descY,
+                                     WoodAssets::DESC_LINE1[idx],
+                                     PixelRenderer::CREAM, fs);
+        descY += (int)(12 * fs);
+        PixelRenderer::drawPixelText(descX, descY,
+                                     WoodAssets::DESC_LINE2[idx],
+                                     PixelRenderer::CREAM, fs);
+        descY += (int)(12 * fs);
+        PixelRenderer::drawPixelText(descX, descY,
+                                     WoodAssets::DESC_LINE3[idx],
+                                     PixelRenderer::CREAM, fs);
+    } else if (selected == WOOD_PLACE) {
+        // Place 项：显示当前腐木风格 + 放置提示
+        int idx = GameEngine::ins().getWoodStyle();
+        if (idx >= 0 && idx < WoodAssets::SPRITE_COUNT) {
+            uint16_t woodOffset = pgm_read_word(&WoodAssets::SPRITE_FRAMES[idx].offset);
+            uint16_t woodLength = pgm_read_word(&WoodAssets::SPRITE_FRAMES[idx].length);
+            float iconScale = 1.0f;
+            int iconW = (int)(WoodAssets::FRAME_W * iconScale);
+            int iconH = (int)(WoodAssets::FRAME_H * iconScale);
+
+            uint8_t woodCount = bug.getRottenWood();
+            char storageBuf[16];
+            snprintf(storageBuf, sizeof(storageBuf), "x %d", woodCount);
+
+            canvas.setTextSize(fs);
+            int nameW = canvas.textWidth(UiStrings::PLACE);
+            int storageW = canvas.textWidth(storageBuf);
+            int textW = (nameW > storageW) ? nameW : storageW;
+
+            int rightW = Hal::DISPLAY_W - RIGHT_X;
+            int contentW = iconW + 5 + textW;
+            int contentX = RIGHT_X + (rightW - contentW) / 2;
+            if (contentX < RIGHT_X + 2) contentX = RIGHT_X + 2;
+            int iconX = contentX;
+            int iconY = 3;
+            int textX = iconX + iconW + 5;
+            int textBlockH = (int)(8 * fs) + (int)(12 * fs);
+            int nameY = iconY + (iconH - textBlockH) / 2;
+            int storageY = nameY + (int)(12 * fs);
+
+            PixelRenderer::drawRgb565RleScaled(iconX, iconY,
+                                               WoodAssets::FRAME_W,
+                                               WoodAssets::FRAME_H,
+                                               WoodAssets::SPRITE_RLE,
+                                               woodOffset, woodLength, iconScale, false);
+
+            // 名字在右上，库存在右下
+            PixelRenderer::drawPixelText(textX, nameY, UiStrings::PLACE, PixelRenderer::WHITE, fs);
+            PixelRenderer::drawPixelText(textX, storageY, storageBuf,
+                                         woodCount > 0 ? PixelRenderer::CREAM : PixelRenderer::GRAY, fs);
+
+            // 描述：三行，底部留出第三行空间
+            int descX = RIGHT_X + 2;
+            int descY = iconY + iconH + 12;
+            PixelRenderer::drawPixelText(descX, descY,
+                                         WoodAssets::DESC_LINE1[idx],
+                                         PixelRenderer::CREAM, fs);
+            descY += (int)(12 * fs);
+            PixelRenderer::drawPixelText(descX, descY,
+                                         WoodAssets::DESC_LINE2[idx],
+                                         PixelRenderer::CREAM, fs);
+            descY += (int)(12 * fs);
+            PixelRenderer::drawPixelText(descX, descY,
+                                         WoodAssets::DESC_LINE3[idx],
+                                         PixelRenderer::CREAM, fs);
+        }
+    } else if (selected == WOOD_BACK) {
+        PixelRenderer::drawPixelText(RIGHT_X + 20, 62, "back to box",
                                      PixelRenderer::GRAY, fs);
     }
 }

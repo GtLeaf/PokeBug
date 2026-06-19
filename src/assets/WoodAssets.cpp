@@ -2,7 +2,6 @@
 
 namespace WoodAssets {
 
-const uint8_t SPRITE_COUNT = 5;
 const RleFrame SPRITE_FRAMES[] PROGMEM = {
     { 0, 2100 },
     { 2100, 2580 },

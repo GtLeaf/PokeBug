@@ -6,6 +6,8 @@
 #include "../scenes/SettingsScene.h"
 #include "../scenes/LobbyScene.h"
 #include "../scenes/BattleScene.h"
+#include "../scenes/ExploreScene.h"
+#include "../scenes/CupScene.h"
 
 GameEngine& GameEngine::ins() {
     static GameEngine instance;
@@ -55,6 +57,10 @@ void GameEngine::begin() {
     } else {
         PixelRenderer::setContentFontScale(fontScale);
     }
+
+    // 加载全局杯赛数据
+    SaveManager::ins().loadCupGlobal(cupSeason, lastCupTime);
+    Serial.printf("[Engine] Cup global loaded: season=%u last=%u\n", cupSeason, lastCupTime);
 
     // 注册全局按钮监听：仅在培养缸主场景时长按 B 进入 Deep Sleep
     engineDispatcherHandle = ButtonDispatcher::ins().subscribe([this](const ButtonEvent& ev) -> bool {
@@ -129,6 +135,12 @@ void GameEngine::run() {
         }
     }
 
+    // 杯赛触发检查（每 60s 一次，避免每帧计算）
+    if (realNow - lastCupCheckMs >= CUP_CHECK_MS) {
+        checkCupTrigger(realNow);
+        lastCupCheckMs = realNow;
+    }
+
     // 自动保存
     if (realNow - lastSaveTime > AUTO_SAVE_MS) {
         forceSave();
@@ -165,6 +177,7 @@ void GameEngine::run() {
         SaveManager::ins().saveSettings(PixelRenderer::getContentFontScale(), brightness,
                                         gameSpeed, idleTimeoutIndex, mainSceneBg,
                                         woodStyle, bowlStyle, foodStyle);
+        SaveManager::ins().saveCupGlobal(cupSeason, lastCupTime);
         Serial.println("[Engine] Enter deep sleep");
         Hal::ins().setBrightness(0);
         esp_sleep_enable_timer_wakeup(600 * 1000000ULL);
@@ -208,6 +221,12 @@ void GameEngine::switchScene(SceneID id) {
             break;
         case SCENE_BATTLE:
             curScene = new BattleScene();
+            break;
+        case SCENE_EXPLORE:
+            curScene = new ExploreScene();
+            break;
+        case SCENE_CUP:
+            curScene = new CupScene();
             break;
         default:
             curScene = new TerrariumScene();
@@ -258,12 +277,43 @@ void GameEngine::processIMU() {
         }
     }
 
+    // 探索场景倾斜控制：由 ExploreScene 自己读取 IMU，这里仅做摇动检测
     if (hal.isShaken()) {
         if (bug.onShake(gameNow)) {
             Serial.println("[Engine] Shake detected and processed");
             resetIdleTimer();
         }
     }
+}
+
+void GameEngine::checkCupTrigger(uint32_t realNow) {
+    if (cupPendingNotify) return;
+    if (bug.isDead() || bug.getStage() != Stage::ADULT) return;
+    if (bug.getHunger() < 30) return;
+
+    uint32_t nowUnix = (uint32_t)(realNow / 1000ULL);
+    // 首次启动或上次时间为 0：2 小时后触发
+    bool shouldTrigger = false;
+    if (lastCupTime == 0) {
+        if (nowUnix >= 2ULL * 60 * 60) shouldTrigger = true;
+    } else if (nowUnix >= lastCupTime + (2ULL * 60 * 60)) {
+        shouldTrigger = true;
+    }
+
+    if (shouldTrigger) {
+        // 探索/对战/杯赛期间不中断，等返回培养缸再弹出
+        if (isBlockDeepSleepScene()) return;
+        cupPendingNotify = true;
+        Serial.printf("[Engine] Cup notify pending at unix=%u\n", nowUnix);
+    }
+}
+
+bool GameEngine::isBlockDeepSleepScene() const {
+    return curSceneID == SCENE_BATTLE ||
+           curSceneID == SCENE_LOBBY ||
+           curSceneID == SCENE_EXPLORE ||
+           curSceneID == SCENE_CUP ||
+           curSceneID == SCENE_MENU;
 }
 
 uint32_t GameEngine::targetFrameTime() const {
@@ -392,4 +442,21 @@ uint32_t GameEngine::getIdleTimeoutMs() const {
     // 0 = never
     static const uint32_t TIMEOUT_MS[5] = { 30000, 60000, 120000, 300000, 0 };
     return TIMEOUT_MS[idleTimeoutIndex];
+}
+
+void GameEngine::setPendingNpcBattle(const NpcCombatant& npc, SceneID returnScene, bool legend, bool fromExplore, bool fromCup) {
+    npcBattle.active = true;
+    npcBattle.returnScene = returnScene;
+    npcBattle.siz = npc.siz;
+    npcBattle.str = npc.str;
+    npcBattle.end = npc.end;
+    npcBattle.spd = npc.spd;
+    npcBattle.spi = npc.spi;
+    npcBattle.mot = npc.mot;
+    npcBattle.palette = npc.palette;
+    npcBattle.legend = legend;
+    npcBattle.fromExplore = fromExplore;
+    npcBattle.fromCup = fromCup;
+    npcResult.fromExplore = fromExplore;
+    npcResult.fromCup = fromCup;
 }

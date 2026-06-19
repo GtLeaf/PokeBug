@@ -25,22 +25,26 @@ private:
     int selected = 0;
     float animSelected = 0.0f;  // 纵向滚动动画位置
     float foodScroll = 0.0f;    // 食物列表滚动偏移
+    float woodScroll = 0.0f;    // 腐木列表滚动偏移
+    float bowlScroll = 0.0f;    // 食物盘列表滚动偏移
     uint64_t foodConfirmTime = 0; // A 键确认反馈结束时间（ms）
     static int lastSelected;
     static int lastBoxSelected;
     static int lastWoodSelected;
     static int lastBowlSelected;
     static int lastFoodSelected;
-    static constexpr int MAIN_ITEM_COUNT = 6;
+    static constexpr int MAIN_ITEM_COUNT = 7;
     static constexpr int BOX_ITEM_COUNT = 4;
-    static constexpr int WOOD_ITEM_COUNT = 3;
-    static constexpr int BOWL_ITEM_COUNT = 2;
+    static constexpr int WOOD_ITEM_COUNT = 7; // 5 种风格 + Place + Back
+    static constexpr int BOWL_ITEM_COUNT = 4; // 3 种风格 + Back
     static constexpr int FOOD_ITEM_COUNT = 7;
     static constexpr uint32_t FOOD_CONFIRM_MS = 250;
 
     void drawBattery();
     void drawList();
     void drawFoodLayout();
+    void drawWoodLayout();
+    void drawBowlLayout();
     void executeSelection();
     void enterMode(Mode nextMode);
     int itemCount() const;
@@ -52,6 +56,7 @@ private:
         FEED,
         BOX,
         FIGHT,
+        EXPLORE,
         SETTINGS,
         BACK,
     };
@@ -64,13 +69,19 @@ private:
     };
 
     enum WoodItem {
-        WOOD_STYLE = 0,
+        WOOD_TWIG = 0,
+        WOOD_STACK,
+        WOOD_MOSSY,
+        WOOD_PALE,
+        WOOD_HOLLOW,
         WOOD_PLACE,
         WOOD_BACK,
     };
 
     enum BowlItem {
-        BOWL_STYLE = 0,
+        BOWL_LOW = 0,
+        BOWL_BLOCK,
+        BOWL_ROOT,
         BOWL_BACK,
     };
 

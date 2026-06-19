@@ -2,7 +2,7 @@
 
 > 本文件面向 AI 编程助手。若你是第一次接触本项目，请先阅读此文档，再修改代码。
 >
-> 最后更新：2026-06-17（基于当前实际源码重写）
+> 最后更新：2026-06-19（新增探索模式、甲虫杯、本地 NPC 对战、存档 v8）
 
 ---
 
@@ -53,7 +53,8 @@ src/
 │   └── SaveManager.{h,cpp}           # NVS 存档读写（Bug 数据 + 用户设置）
 ├── game/                             # 游戏逻辑
 │   ├── Bug.{h,cpp}                   # 独角仙实体：生命周期、属性、基因、背包、存档序列化
-│   └── BattleCalc.h                  # 对战公式：HP、伤害、暴击、先攻、MOT 衰减
+│   ├── BattleCalc.h                  # 对战公式：HP、伤害、暴击、先攻、MOT 衰减
+│   └── NpcGenerator.h                # NPC 生成器（探索 & 甲虫杯共用）
 ├── hardware/                         # 硬件抽象与通信
 │   ├── Hal.{h,cpp}                   # M5Unified 封装：显示、按键、IMU、电池、背光
 │   ├── PixelRenderer.{h,cpp}         # 像素精灵/UI 渲染辅助（基于 M5GFX/LGFX_Sprite）
@@ -64,10 +65,18 @@ src/
 │   ├── LobbyScene.{h,cpp}            # 对战大厅（创建/搜索房间）
 │   ├── InfoScene.{h,cpp}             # 属性信息页（2 页：状态 / 战绩）
 │   ├── SettingsScene.{h,cpp}         # 设置界面（亮度/字体/速度/idle/重置）
-│   └── BattleScene.{h,cpp}           # 对战场景
+│   ├── BattleScene.{h,cpp}           # 对战场景（ESP-NOW / 本地 NPC 双模式）
+│   ├── ExploreScene.{h,cpp}          # 探索模式：倾斜移动、随机事件、NPC 遭遇、放生
+│   └── CupScene.{h,cpp}              # 甲虫杯：通知、对阵表、淘汰赛、结算
 └── assets/
     ├── MainSceneAssets.h             # 主场景图片资源声明
-    └── MainSceneAssets.cpp           # 主场景图片 PROGMEM 数据
+    ├── MainSceneAssets.cpp           # 主场景图片 PROGMEM 数据
+    ├── FoodAssets.{h,cpp}            # 食物 RLE 精灵
+    ├── BowlAssets.{h,cpp}            # 食物盘 RLE 精灵
+    ├── WoodAssets.{h,cpp}            # 腐木 RLE 精灵
+    ├── HerculesAdultSprites.{h,cpp}  # 成虫动画 RLE 精灵
+    ├── ActionAssets.{h,cpp}          # 手指戳动作 RLE 精灵
+    └── NpcData.h                     # 12 个 NPC 的 PROGMEM 数据（档位、名字、台词）
 ```
 
 ### 2.1 架构要点
@@ -81,8 +90,26 @@ src/
   - 主场景无操作达到 idle 时间后降低背光，再超过 1 分钟进入 **Deep Sleep**。
   - Deep Sleep 使用 10 分钟（600 s）定时器唤醒；唤醒路径在 `main.cpp` 中仅做最小化状态更新，避免点亮屏幕。
 - 对战时 `BattleLink` 开启 WiFi STA；对战结束后 `BattleLink::end()` 关闭 WiFi/BT 以降低功耗。
+- **本地 NPC 对战**：`BattleScene` 通过 `GameEngine::setPendingNpcBattle()` 接收对手数据，跳过 ESP-NOW 流程，直接本地计算回合并结算。用于探索模式遭遇战与甲虫杯淘汰赛。
+- **杯赛定时器**：`GameEngine` 每 60 秒检查一次 `last_cup_time`，满足 2 小时间隔且当前在培养缸时弹出 `CupScene` 通知。探索/对战/杯赛期间不中断，返回培养缸后触发。
 
-### 2.2 培养缸状态栏（右侧 40×135）
+### 2.2 探索模式
+
+- **入口**：主菜单 `🌲 Explore`（成虫且饥饿度 ≥ 30）。
+- **移动**：IMU 左右倾斜控制甲虫移动，到边缘自动回头。
+- **事件**：每 5–10 秒触发一次随机事件（树汁、食物源、腐木、NPC、稀有事件、无事）。
+- **NPC 对战**：按探索档位权重（新手 40% / 普通 35% / 老手 20% / 传说 5%）生成对手；传说级不可逃跑。
+- **放生**：探索中长按 A 呼出放生确认，确认后基于当前基因小幅变异产生新卵（generation +1）。
+- **消耗与奖励**：进入时扣 20 饥饿度；事件与 NPC 战胜利奖励树汁/SPI/腐木。
+
+### 2.3 甲虫杯
+
+- **触发**：每 2 小时自动触发一次；设备启动时检查 `last_cup_time`，超时立即补偿。
+- **流程**：通知 → 8 强对阵表 → 三轮本地 NPC 对战（8 进 4 → 半决赛 → 决赛）→ 名次结算。
+- **NPC 分布**：新手 10% / 普通 30% / 老手 40% / 传说 20%，整体强于探索。
+- **奖励**：冠军 +6 树汁 +1 腐木，亚军 +4，四强 +2，八强 +1；同时更新本虫杯赛记录与成就。
+
+### 2.4 培养缸状态栏（右侧 40×135）
 
 状态栏聚焦**甲虫状态 + 虚拟环境**，不再展示背包（Sap/Wood）。
 
@@ -214,10 +241,12 @@ pio run --target clean
 
 ### 5.5 存档
 
-- `SaveManager` 使用 NVS 命名空间 `pokebug`，当前 Bug 存档版本 **`SAVE_VERSION = 4`**（定义于 `SaveManager.h`）。
+- `SaveManager` 使用 NVS 命名空间 `pokebug`，当前 Bug 存档版本 **`SAVE_VERSION = 8`**（定义于 `SaveManager.h` 与 `Bug.cpp`）。
 - `Bug::save()` / `Bug::load()` 负责二进制序列化；`SaveManager` 负责 NVS 开启/关闭与版本校验。
-- 当前实现兼容读取 v2 / v3 旧存档；版本不匹配且无法兼容时会拒绝加载并创建新存档。
-- 设置项独立保存：字体缩放、亮度、游戏速度、idle 时间档位、主场景背景。
+- v8 在 v7 基础上新增探索/杯赛字段：`releaseCountTotal`、`cupParticipated`、`cupBest`、`cupWins`、`cupLegendKills`、`achievementFlags`、`cupStreak`。
+- 全局杯赛数据独立保存：`cup_season`（届数）、`last_cup_time`（上次触发时间），换虫/死亡/放生均不影响。
+- 当前实现兼容读取 v5 / v6 / v7 旧存档；版本不匹配且无法兼容时会拒绝加载并创建新存档。
+- 设置项独立保存：字体缩放、亮度、游戏速度、idle 时间档位、主场景背景、腐木风格、食盘风格、食物风格。
 
 ### 5.6 省电
 
@@ -246,10 +275,10 @@ pio run --target clean
 - 烧录协议：`esptool`（`upload_protocol = esptool`）。
 - 首次烧录后，NVS 中没有存档，程序会自动创建新独角仙。
 - 发布前务必：
-  1. 将 `Bug.h` 中的阶段时长改回设计值；
-  2. 检查 `SaveManager::SAVE_VERSION` 与 `Bug::save()` / `load()` 是否一致；
-  3. 验证存档升级路径（版本不匹配会拒绝加载并创建新存档）；
-  4. 确认 `platformio.ini` 中的分区表、依赖版本与硬件匹配。
+  1. 检查 `SaveManager::SAVE_VERSION` 与 `Bug::save()` / `load()` 是否一致；
+  2. 验证存档升级路径（v5/v6/v7 可迁移，更早版本会创建新存档）；
+  3. 确认 `platformio.ini` 中的分区表、依赖版本与硬件匹配；
+  4. 验证探索模式、甲虫杯、本地 NPC 对战的真机流程与存档持久化。
 
 ---
 
@@ -267,6 +296,7 @@ pio run --target clean
 - `platformio.ini`：构建配置。
 - `doc/PokeBug-脑暴.md`：完整游戏设计文档（中文），包含数值设计、UI 布局、迭代路线。
 - `doc/PokeBug-FoodSystem.md`：食物系统与属性成长规格（6 种食物 × 5 阶段 × 阶段吸收系数模型）。
+- `doc/PokeBug-ExploreAndCup.md`：探索模式与甲虫杯设计文档（NPC 4 档体系、事件表、淘汰赛、放生机制）。
 - `default_8MB.csv`：Flash 分区表。
 - PlatformIO 文档：https://docs.platformio.org/
 - M5Unified / M5GFX 文档：https://docs.m5stack.com/

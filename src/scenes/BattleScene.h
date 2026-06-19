@@ -55,6 +55,9 @@ private:
     bool localWin = false;
     bool resultApplied = false;
     bool noOpponent = false;
+    bool localNpcBattle = false;
+    bool legendNpc = false;
+    SceneID returnScene = SCENE_TERRARIUM;
 
     uint32_t stateStartMs = 0;
 

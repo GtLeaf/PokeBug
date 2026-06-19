@@ -27,12 +27,40 @@ void BattleScene::onEnter() {
     meShakeEndMs = 0;
     enemyShakeEndMs = 0;
     initFromBug();
-    BattleLink::ins().begin();
-    stateStartMs = Hal::ins().millis();
+
+    // 检查是否有本地 NPC 对战请求
+    PendingNpcBattle& pending = GameEngine::ins().pendingNpcBattle();
+    if (pending.active) {
+        localNpcBattle = true;
+        legendNpc = pending.legend;
+        returnScene = pending.returnScene;
+        enemy.siz = pending.siz;
+        enemy.str = pending.str;
+        enemy.end = pending.end;
+        enemy.spi = pending.spi;
+        enemy.spd = pending.spd;
+        enemy.mot = pending.mot;
+        enemy.palette = pending.palette;
+        enemy.maxHp = BattleCalc::computeHp(enemy.siz, enemy.end);
+        enemy.hp = enemy.maxHp;
+        state = State::ROUND_START;
+        stateStartMs = Hal::ins().millis();
+        Serial.printf("[BattleScene] Local NPC battle, return=%d legend=%d\n", returnScene, legendNpc);
+    } else {
+        localNpcBattle = false;
+        legendNpc = false;
+        returnScene = SCENE_TERRARIUM;
+        BattleLink::ins().begin();
+        stateStartMs = Hal::ins().millis();
+    }
 }
 
 void BattleScene::onExit() {
-    BattleLink::ins().end();
+    if (localNpcBattle) {
+        GameEngine::ins().clearPendingNpcBattle();
+    } else {
+        BattleLink::ins().end();
+    }
 }
 
 void BattleScene::initFromBug() {
@@ -69,7 +97,9 @@ bool BattleScene::buildSync() {
 }
 
 SceneID BattleScene::update() {
-    BattleLink::ins().update();
+    if (!localNpcBattle) {
+        BattleLink::ins().update();
+    }
 
     switch (state) {
         case State::CONNECTING: {
@@ -153,6 +183,19 @@ SceneID BattleScene::update() {
         }
 
         case State::CLASH: {
+            if (localNpcBattle) {
+                // 本地 NPC 战：直接以主机逻辑计算并应用
+                if (!roundComputed) {
+                    hostRound = computeAuthoritativeRound();
+                    roundComputed = true;
+                }
+                applyAuthoritativeRound(hostRound);
+                roundSent = true;
+                state = State::ROUND_END;
+                stateStartMs = Hal::ins().millis();
+                break;
+            }
+
             if (BattleLink::ins().isHost()) {
                 // 主机：等从机汇报 MOT，计算完整回合状态后下发
                 // 先尝试取新 ready；再检查是否有缓存的未来回合 ready
@@ -255,6 +298,16 @@ SceneID BattleScene::update() {
         }
 
         case State::RESULT: {
+            if (localNpcBattle) {
+                // 本地 NPC 战：直接结算并进入 DONE
+                if (!resultApplied) {
+                    applyBattleResult();
+                }
+                state = State::DONE;
+                stateStartMs = Hal::ins().millis();
+                break;
+            }
+
             if (!resultSent) {
                 computeAndSendResult();
                 resultSent = true;
@@ -431,6 +484,20 @@ void BattleScene::applyBattleResult() {
     resultApplied = true;
 
     GameEngine::ins().getBug().onBattleEnd(localWin, GameEngine::ins().getGameNow());
+    if (localNpcBattle) {
+        PendingNpcBattle& pending = GameEngine::ins().pendingNpcBattle();
+        GameEngine::ins().pendingNpcBattle().resultSet = true;
+        GameEngine::ins().pendingNpcBattle().won = localWin;
+        // 同时写入 GameEngine 的跨场景结果记录
+        NpcBattleResult& res = GameEngine::ins().lastNpcBattleResult();
+        res.valid = true;
+        res.won = localWin;
+        res.fromExplore = pending.fromExplore;
+        res.fromCup = pending.fromCup;
+        // tier 需要从 pending 或 enemy 推断；PendingNpcBattle 没有 tier，用 legend 近似
+        res.tier = legendNpc ? NpcData::Tier::LEGEND : NpcData::Tier::ROOKIE;
+        res.legend = legendNpc;
+    }
     Serial.printf("[BattleScene] battle end, localWin=%d\n", localWin);
 }
 
@@ -451,7 +518,7 @@ bool BattleScene::onButton(const ButtonEvent& ev) {
     }
 
     if (state == State::DONE && ev.action == BtnAction::PRESSED && ev.btn == 0) {
-        nextScene = SCENE_TERRARIUM;
+        nextScene = returnScene;
         return true;
     }
 

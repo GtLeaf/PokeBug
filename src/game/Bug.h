@@ -77,6 +77,7 @@ public:
     float getSpi() const { return spi; }
     uint8_t getMot() const { return mot; }
     uint8_t getHunger() const { return hunger; }
+    void modHunger(int8_t delta);
 
     // ---------- 基因与外观 ----------
     uint8_t getGeneVIG() const { return geneVIG; }
@@ -91,6 +92,8 @@ public:
 
     // ---------- 背包/场景状态 ----------
     uint8_t getFoodCount(FoodType type) const { return foodCounts[(uint8_t)type]; }
+    void addFood(FoodType type, uint8_t amount);
+    void removeFood(FoodType type, uint8_t amount);
     uint8_t getTotalFoodCount() const;
     bool isWoodPlaced() const { return woodPlaced; }
     bool hasFoodInTray() const { return foodInTray; }
@@ -98,6 +101,8 @@ public:
     uint8_t getFoodAmount() const { return foodAmount; }
     bool placeWood();              // 放置腐木到缸内
     void removeWood() { woodPlaced = false; }
+    uint8_t getRottenWood() const { return rottenWood; }
+    void addRottenWood(uint8_t amount = 1);
 
     // 环境加成
     void setFoodTray(uint8_t level, FoodType type);
@@ -115,6 +120,28 @@ public:
 
     // 死亡后重置：保留 generation+1，其余清空
     void resetAfterDeath(uint64_t now);
+
+    // 放生：基于当前基因小幅变异后产生新卵，generation+1
+    void release(uint64_t now);
+
+    // ---------- 探索 & 杯赛记录 ----------
+    uint8_t getReleaseCountTotal() const { return releaseCountTotal; }
+    uint16_t getCupParticipated() const { return cupParticipated; }
+    uint8_t getCupBest() const { return cupBest; }
+    uint8_t getCupWins() const { return cupWins; }
+    uint8_t getCupLegendKills() const { return cupLegendKills; }
+    uint16_t getAchievementFlags() const { return achievementFlags; }
+    uint8_t getCupStreak() const { return cupStreak; }
+
+    void addReleaseCount();
+    void recordCupParticipation();
+    void recordCupResult(uint8_t rank); // rank: 1=冠军,2=亚军,4=四强,8=八强
+    void recordCupWin();
+    void recordCupLegendKill();
+    void setAchievementFlag(uint16_t flag);
+    bool hasAchievementFlag(uint16_t flag) const;
+    void resetCupStreak();
+    void incrementCupStreak();
 
     // 上次更新时间（虚拟时间 ms），供引擎同步
     uint64_t getLastUpdateTime() const { return lastUpdateTime; }
@@ -202,6 +229,15 @@ private:
     uint8_t wins = 0;
     uint8_t losses = 0;
     uint8_t generation = 0;
+
+    // 探索 & 杯赛记录
+    uint8_t releaseCountTotal = 0;
+    uint16_t cupParticipated = 0;
+    uint8_t cupBest = 0;          // 1=冠军,2=亚军,4=四强,8=八强
+    uint8_t cupWins = 0;
+    uint8_t cupLegendKills = 0;
+    uint16_t achievementFlags = 0;
+    uint8_t cupStreak = 0;
 
     // 更新用状态
     uint64_t lastUpdateTime = 0;

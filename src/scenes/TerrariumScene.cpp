@@ -81,6 +81,11 @@ SceneID TerrariumScene::update() {
         faceRight = true;
     }
 
+    // 杯赛通知：仅成虫且未死亡时弹出
+    if (bug.getStage() == Stage::ADULT && !bug.isDead() && GameEngine::ins().hasCupPendingNotify()) {
+        return SCENE_CUP;
+    }
+
     return nextScene;
 }
 
