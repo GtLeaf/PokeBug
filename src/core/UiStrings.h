@@ -91,7 +91,7 @@ static constexpr const char* CUP_NOT_OPEN      = "Registration is\nclosed.";
 
 // 探索模式（ExploreScene）
 static constexpr const char* EXPLORE_END              = "Explore End";
-static constexpr const char* EXPLORE_PRESS_A_RETURN   = "A: Return";
+static constexpr const char* EXPLORE_RESULT_NAV       = "A:Continue B:Return";
 static constexpr const char* EXPLORE_SAP_PLUS         = "Sap +%d";
 static constexpr const char* EXPLORE_FOOD_SOURCE_PLUS = "Food source +%d";
 static constexpr const char* EXPLORE_ROTTEN_WOOD_PLUS = "Rotten wood +1";

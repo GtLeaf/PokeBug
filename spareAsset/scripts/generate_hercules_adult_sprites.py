@@ -22,7 +22,20 @@ SETS = [
     ("RESET", "reset.png"),
 ]
 
-POLICY = {
+# Size policy.
+#
+# Change ADULT_BASE_SCALE to resize every adult action together while keeping
+# each action's relative proportions. For example:
+#   ADULT_BASE_SCALE = 1.10  # all adult sprites become 10% larger
+#   ADULT_BASE_SCALE = 0.90  # all adult sprites become 10% smaller
+#
+# BASE_POLICY stores the current hand-tuned visual targets at 1.0x. These
+# numbers are based on WALK as the body-size reference; do not make every frame
+# independently fill the canvas, or low/raised poses will look like different
+# sized beetles.
+ADULT_BASE_SCALE = 1.0
+
+BASE_POLICY = {
     "WALK": {"max_w": 48, "max_h": 28},
     "EAT": {"max_w": 50, "max_h": 22},
     "TURN": {"max_w": 34, "max_h": 30},
@@ -31,6 +44,29 @@ POLICY = {
     "THREATEN": {"max_w": 58, "max_h": 40},
     "RESET": {"max_w": 44, "max_h": 22},
 }
+
+POLICY = {
+    name: {
+        "max_w": max(1, round(value["max_w"] * ADULT_BASE_SCALE)),
+        "max_h": max(1, round(value["max_h"] * ADULT_BASE_SCALE)),
+    }
+    for name, value in BASE_POLICY.items()
+}
+
+# Palette replacement key written into generated RLE.
+#
+# Usage:
+# 1. Art can keep using the current full-color beetle PNGs.
+# 2. Only the red palette/marking region is classified before resizing. The
+#    beetle body, shadows, outline, legs, and gradients remain original art.
+# 3. After resizing, palette pixels are normalized to exact #ff0000
+#    (RGB565 0xF800). Runtime code can then replace only this palette key.
+# 4. To tune future art, edit classify_pixel() below and rerun:
+#       python3 spareAsset/scripts/generate_hercules_adult_sprites.py
+PALETTE_RGB = (255, 0, 0, 255)
+
+CLASS_NONE = 0
+CLASS_PALETTE = 1
 
 
 def rgb565(r, g, b):
@@ -49,12 +85,31 @@ def is_bg(r, g, b, a, bg):
     return abs(r - bg[0]) < 8 and abs(g - bg[1]) < 8 and abs(b - bg[2]) < 8
 
 
+def classify_pixel(r, g, b, a):
+    """Return palette class for one visible source pixel.
+
+    The thresholds catch exact #ff0000 plus nearby antialiased red pixels from
+    the source PNG. All non-red pixels stay as original art.
+    """
+    if a < 80:
+        return CLASS_NONE
+
+    # Red palette/marking region. This catches exact #ff0000 plus the nearby
+    # reds created by source antialiasing.
+    if r >= 170 and g <= 95 and b <= 80 and r > g * 1.6 and r > b * 1.6:
+        return CLASS_PALETTE
+
+    return CLASS_NONE
+
+
 def transparentized(path):
     im = Image.open(path).convert("RGBA")
     bg = im.getpixel((0, 0))[:3]
     pix = im.load()
     w, h = im.size
     mask = [[False] * w for _ in range(h)]
+    classes = Image.new("L", (w, h), CLASS_NONE)
+    class_pix = classes.load()
     for y in range(h):
         for x in range(w):
             r, g, b, a = pix[x, y]
@@ -62,11 +117,12 @@ def transparentized(path):
                 pix[x, y] = (0, 0, 0, 0)
             else:
                 mask[y][x] = True
-    return im, mask
+                class_pix[x, y] = classify_pixel(r, g, b, a)
+    return im, mask, classes
 
 
 def components(path):
-    im, mask = transparentized(path)
+    im, mask, classes = transparentized(path)
     w, h = im.size
     seen = [[False] * w for _ in range(h)]
     comps = []
@@ -93,7 +149,7 @@ def components(path):
             if count > 100:
                 comps.append((minx, miny, maxx + 1, maxy + 1))
     comps.sort(key=lambda b: (b[0], b[1]))
-    return im, comps
+    return im, classes, comps
 
 
 def trim_alpha(im):
@@ -101,21 +157,47 @@ def trim_alpha(im):
     return im.crop(bbox) if bbox else Image.new("RGBA", (1, 1), (0, 0, 0, 0))
 
 
+def apply_palette_key(img, class_img):
+    keyed = img.copy()
+    pix = keyed.load()
+    class_pix = class_img.load()
+    for y in range(keyed.height):
+        for x in range(keyed.width):
+            if pix[x, y][3] < 80:
+                continue
+            cls = class_pix[x, y]
+            if cls == CLASS_PALETTE:
+                pix[x, y] = PALETTE_RGB
+    return keyed
+
+
 def make_frames(name, filename):
-    im, comps = components(SRC / filename)
+    im, classes, comps = components(SRC / filename)
     policy = POLICY[name]
     frames = []
     for i, (x1, y1, x2, y2) in enumerate(comps):
-        crop = trim_alpha(im.crop((x1, y1, x2, y2)))
+        raw_crop = im.crop((x1, y1, x2, y2))
+        raw_classes = classes.crop((x1, y1, x2, y2))
+        bbox = raw_crop.getbbox()
+        crop = raw_crop.crop(bbox) if bbox else Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+        class_crop = raw_classes.crop(bbox) if bbox else Image.new("L", (1, 1), CLASS_NONE)
         scale = min(policy["max_w"] / crop.width, policy["max_h"] / crop.height)
         resized = crop.resize(
             (max(1, round(crop.width * scale)), max(1, round(crop.height * scale))),
             Image.Resampling.LANCZOS,
         )
-        resized = trim_alpha(resized)
-        frames.append(resized)
-        resized.save(EXTRACTED / f"{name.lower()}_{i}.png")
-        print(f"{name.lower()}_{i}: {crop.width}x{crop.height} -> {resized.width}x{resized.height}")
+        resized_classes = class_crop.resize(resized.size, Image.Resampling.NEAREST)
+        bbox = resized.getbbox()
+        resized = resized.crop(bbox) if bbox else resized
+        resized_classes = resized_classes.crop(bbox) if bbox else resized_classes
+        keyed = apply_palette_key(resized, resized_classes)
+        frames.append(keyed)
+        keyed.save(EXTRACTED / f"{name.lower()}_{i}.png")
+        palette_pixels = sum(1 for v in resized_classes.getdata() if v == CLASS_PALETTE)
+        print(
+            f"{name.lower()}_{i}: {crop.width}x{crop.height} -> "
+            f"{keyed.width}x{keyed.height} palette_pixels={palette_pixels}"
+        )
     return frames
 
 
@@ -152,16 +234,19 @@ def fmt(vals):
 
 
 def write_preview(all_sets):
-    cell_w = 76
-    cell_h = 56
+    max_w = max(fr.width for frames in all_sets.values() for fr in frames)
+    max_h = max(fr.height for frames in all_sets.values() for fr in frames)
+    cell_w = max(76, max_w + 18)
+    cell_h = max(56, max_h + 17)
+    ground_y = cell_h - 12
     rows = []
     for name, _ in SETS:
         row = Image.new("RGBA", (cell_w * max(len(all_sets[name]), 1), cell_h), (0, 0, 0, 0))
         d = ImageDraw.Draw(row)
-        d.line((0, 44, row.width, 44), fill=(255, 0, 0, 180), width=1)
+        d.line((0, ground_y, row.width, ground_y), fill=(255, 0, 0, 180), width=1)
         for i, fr in enumerate(all_sets[name]):
             x = i * cell_w + (cell_w - fr.width) // 2
-            y = 44 - fr.height
+            y = ground_y - fr.height
             row.alpha_composite(fr, (x, y))
             d.rectangle((i * cell_w, 0, (i + 1) * cell_w - 1, cell_h - 1), outline=(120, 120, 120, 255))
             d.text((i * cell_w + 2, 2), f"{name.lower()} {fr.width}x{fr.height}", fill=(255, 255, 0, 255))
@@ -184,6 +269,8 @@ namespace HerculesAdultSprites {{
 
 static constexpr uint8_t MAX_FRAME_W = {max_w};
 static constexpr uint8_t MAX_FRAME_H = {max_h};
+
+static constexpr uint16_t PALETTE_KEY = 0xF800;
 
 struct RleFrame {{
     uint16_t offset;
@@ -244,11 +331,16 @@ def main():
     EXTRACTED.mkdir(parents=True, exist_ok=True)
     PREVIEWS.mkdir(parents=True, exist_ok=True)
     GENERATED.mkdir(parents=True, exist_ok=True)
+    print(f"ADULT_BASE_SCALE={ADULT_BASE_SCALE:.2f}")
+    print(f"POLICY={POLICY}")
     all_sets = {name: make_frames(name, filename) for name, filename in SETS}
     write_preview(all_sets)
     write_outputs(all_sets)
     (GENERATED / OUT_H.name).write_text(OUT_H.read_text(encoding="utf-8"), encoding="utf-8")
     (GENERATED / OUT_CPP.name).write_text(OUT_CPP.read_text(encoding="utf-8"), encoding="utf-8")
+    max_w = max(fr.width for frames in all_sets.values() for fr in frames)
+    max_h = max(fr.height for frames in all_sets.values() for fr in frames)
+    print(f"MAX_FRAME={max_w}x{max_h}, GIANT_1.2_HALF_WIDTH={round(max_w * 1.2 / 2)}")
 
 
 if __name__ == "__main__":

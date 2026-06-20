@@ -62,8 +62,8 @@ private:
     static constexpr int WOOD_REST_X = 154; // 腐木上的休息位置（腐木中心）
     static constexpr uint32_t REST_WAKEUP_COOLDOWN_MIN_MS = 10000; // 唤醒后清醒最短时间 10s
     static constexpr uint32_t REST_WAKEUP_COOLDOWN_MAX_MS = 30000; // 唤醒后清醒最长时间 30s
-    static constexpr int MIN_X = 30;       // 左边界
-    static constexpr int MAX_X = 171;      // 右边界，避免最大成虫帧进入右侧状态栏
+    static constexpr int MIN_X = 35;       // 左边界，预留巨体最大缩放半宽
+    static constexpr int MAX_X = 165;      // 右边界，避免巨体最大缩放进入右侧状态栏
     static constexpr uint32_t TURN_DURATION_FRAMES = 16;  // 20fps 下约 0.8 秒
 
     // 倾斜交互参数

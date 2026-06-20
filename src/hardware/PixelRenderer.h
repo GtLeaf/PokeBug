@@ -47,6 +47,20 @@ public:
     static void drawRgb565Rle(int x, int y, int w, int h,
                               const uint16_t* data, uint16_t offset,
                               uint16_t length, bool flipX = false);
+    static void drawRgb565RleMapped(int x, int y, int w, int h,
+                                    const uint16_t* data, uint16_t offset,
+                                    uint16_t length,
+                                    uint16_t keyMain, uint16_t targetMain,
+                                    uint16_t keyShadow, uint16_t targetShadow,
+                                    uint16_t keyMarking, uint16_t targetMarking,
+                                    bool flipX = false);
+    static void drawRgb565RleMappedScaled(int x, int y, int w, int h,
+                                          const uint16_t* data, uint16_t offset,
+                                          uint16_t length, float scale,
+                                          uint16_t keyMain, uint16_t targetMain,
+                                          uint16_t keyShadow, uint16_t targetShadow,
+                                          uint16_t keyMarking, uint16_t targetMarking,
+                                          bool flipX = false);
     static void drawRgb565RleScaled(int x, int y, int w, int h,
                                     const uint16_t* data, uint16_t offset,
                                     uint16_t length, float scale, bool flipX = false);

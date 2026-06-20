@@ -17,6 +17,66 @@ const uint16_t TerrariumScene::PALETTE[4][2] = {
     { 0xE71C, 0x8010 },   // 白化淡紫/暗紫
 };
 
+namespace {
+
+uint16_t adultHueMain(Temperament temperament) {
+    switch (temperament) {
+        case Temperament::BRUTE:     return 0xF800; // 深红
+        case Temperament::SWIFT:     return 0x6B7D; // 灰蓝
+        case Temperament::GIANT:     return 0xFD20; // 橙褐
+        case Temperament::RESILIENT: return 0xFE00; // 金色
+        case Temperament::BALANCED:  return 0xFFFF; // 白/浅灰
+        case Temperament::SPIRIT:    return 0x07E0; // 青绿
+    }
+    return 0xF800;
+}
+
+uint16_t mixRgb565(uint16_t base, uint16_t mix, float mixRatio) {
+    if (mixRatio < 0.0f) mixRatio = 0.0f;
+    if (mixRatio > 1.0f) mixRatio = 1.0f;
+    uint8_t baseR = (base >> 11) & 0x1F;
+    uint8_t baseG = (base >> 5) & 0x3F;
+    uint8_t baseB = base & 0x1F;
+    uint8_t mixR = (mix >> 11) & 0x1F;
+    uint8_t mixG = (mix >> 5) & 0x3F;
+    uint8_t mixB = mix & 0x1F;
+    uint8_t r = (uint8_t)(baseR * (1.0f - mixRatio) + mixR * mixRatio);
+    uint8_t g = (uint8_t)(baseG * (1.0f - mixRatio) + mixG * mixRatio);
+    uint8_t b = (uint8_t)(baseB * (1.0f - mixRatio) + mixB * mixRatio);
+    return (uint16_t)((r << 11) | (g << 5) | b);
+}
+
+uint16_t brightenRgb565(uint16_t color, float factor) {
+    uint8_t r = (color >> 11) & 0x1F;
+    uint8_t g = (color >> 5) & 0x3F;
+    uint8_t b = color & 0x1F;
+    uint16_t rr = (uint16_t)(r * factor);
+    uint16_t gg = (uint16_t)(g * factor);
+    uint16_t bb = (uint16_t)(b * factor);
+    if (rr > 0x1F) rr = 0x1F;
+    if (gg > 0x3F) gg = 0x3F;
+    if (bb > 0x1F) bb = 0x1F;
+    return (uint16_t)((rr << 11) | (gg << 5) | bb);
+}
+
+uint16_t adultDepthColor(Temperament temperament, float ratio) {
+    if (ratio < 0.0f) ratio = 0.0f;
+    if (ratio > 1.0f) ratio = 1.0f;
+    uint16_t base = adultHueMain(temperament);
+    if (ratio < 0.25f) {
+        return mixRgb565(mixRgb565(base, PixelRenderer::GRAY, 0.5f), PixelRenderer::WHITE, 0.3f);
+    }
+    if (ratio < 0.50f) {
+        return mixRgb565(base, PixelRenderer::GRAY, 0.3f);
+    }
+    if (ratio < 0.75f) {
+        return base;
+    }
+    return brightenRgb565(base, 1.25f);
+}
+
+}
+
 void TerrariumScene::onEnter() {
     animFrame = 0;
     resetPressStart = 0;
@@ -350,12 +410,21 @@ void TerrariumScene::drawAdult(int x, int y, uint8_t palette) {
     uint16_t length = pgm_read_word(&frames[frameIndex].length);
     uint8_t frameW = pgm_read_byte(&frames[frameIndex].width);
     uint8_t frameH = pgm_read_byte(&frames[frameIndex].height);
+    float adultScale = bug.getAdultScale();
+    uint16_t adultHue = adultDepthColor(bug.getTemperament(), bug.getAdultDepth());
+    int drawX = (int)(x - (frameW * adultScale) / 2.0f);
+    int drawY = (int)(y - frameH * adultScale);
     // y 是脚/底部参考点，让精灵底部对齐 y
-    PixelRenderer::drawRgb565Rle(x - frameW / 2,
-                                 y - frameH,
-                                 frameW,
-                                 frameH,
-                                 data, offset, length, flipSprite);
+    PixelRenderer::drawRgb565RleMappedScaled(drawX,
+                                             drawY,
+                                             frameW,
+                                             frameH,
+                                             data, offset, length,
+                                             adultScale,
+                                             HerculesAdultSprites::PALETTE_KEY, adultHue,
+                                             HerculesAdultSprites::PALETTE_KEY, adultHue,
+                                             HerculesAdultSprites::PALETTE_KEY, adultHue,
+                                             flipSprite);
 }
 
 // 判断成虫是否想去进食：饥饿或纯粹嘴馋

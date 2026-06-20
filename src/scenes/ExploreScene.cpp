@@ -73,7 +73,7 @@ SceneID ExploreScene::update() {
         }
         if (now - exploreStartMs >= EXPLORE_DURATION_MS) {
             snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_END);
-            snprintf(resultLine2, sizeof(resultLine2), "%s", UiStrings::EXPLORE_PRESS_A_RETURN);
+            snprintf(resultLine2, sizeof(resultLine2), "%s", UiStrings::EXPLORE_RESULT_NAV);
             state = State::RESULT;
             resultTimeoutMs = now + 30000;
         }
@@ -285,8 +285,14 @@ bool ExploreScene::onButton(const ButtonEvent& ev) {
 
     if (state == State::EVENT_POPUP || state == State::RESULT) {
         if (ev.btn == 0) {
+            // 继续探索
             state = State::EXPLORING;
             resetEventTimer(now);
+            return true;
+        }
+        if (ev.btn == 1) {
+            // 返回培养缸
+            state = State::RETURNING;
             return true;
         }
         return false;

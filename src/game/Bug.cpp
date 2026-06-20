@@ -296,6 +296,43 @@ const char* Bug::getTemperamentName() const {
     }
 }
 
+float Bug::getAdultDepth() const {
+    auto ratio = [](float value, float cap) -> float {
+        if (cap <= 0.0f) return 0.0f;
+        float r = value / cap;
+        if (r < 0.0f) return 0.0f;
+        if (r > 1.0f) return 1.0f;
+        return r;
+    };
+
+    switch (temperament) {
+        case Temperament::BRUTE:
+            return ratio(str, strCap());
+        case Temperament::SWIFT:
+            return ratio(spd, spdCap());
+        case Temperament::GIANT:
+            return ratio(siz, sizCap());
+        case Temperament::RESILIENT:
+            return ratio(end, endCap());
+        case Temperament::SPIRIT:
+            return ratio(spi, spiCap());
+        case Temperament::BALANCED:
+            return (ratio(siz, sizCap()) +
+                    ratio(str, strCap()) +
+                    ratio(end, endCap()) +
+                    ratio(spd, spdCap()) +
+                    ratio(spi, spiCap())) / 5.0f;
+    }
+    return 0.0f;
+}
+
+float Bug::getAdultScale() const {
+    if (temperament != Temperament::GIANT) return 1.0f;
+    if (siz < 10.0f) return 0.9f;
+    if (siz < 18.0f) return 1.1f;
+    return 1.2f;
+}
+
 float Bug::getEnvMultiplier(int attrIndex) const {
     float mult = 1.0f;
 

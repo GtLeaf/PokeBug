@@ -89,6 +89,8 @@ public:
     const char* getHatchHint() const;
     Temperament getTemperament() const { return temperament; }
     const char* getTemperamentName() const;
+    float getAdultDepth() const;
+    float getAdultScale() const;
 
     // ---------- 背包/场景状态 ----------
     uint8_t getFoodCount(FoodType type) const { return foodCounts[(uint8_t)type]; }

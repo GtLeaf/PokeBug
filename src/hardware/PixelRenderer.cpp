@@ -1,4 +1,5 @@
 #include "PixelRenderer.h"
+#include <cmath>
 #include <cstdio>
 
 LGFX_Sprite* PixelRenderer::canvas = nullptr;
@@ -115,6 +116,145 @@ void PixelRenderer::drawRgb565Rle(int x, int y, int w, int h,
             canvas->drawPixel(x + col, y + row, color);
         }
     }
+}
+
+void PixelRenderer::drawRgb565RleMapped(int x, int y, int w, int h,
+                                        const uint16_t* data, uint16_t offset,
+                                        uint16_t length,
+                                        uint16_t keyMain, uint16_t targetMain,
+                                        uint16_t keyShadow, uint16_t targetShadow,
+                                        uint16_t keyMarking, uint16_t targetMarking,
+                                        bool flipX) {
+    if (!canvas || !data || w <= 0 || h <= 0) return;
+
+    const uint16_t total = (uint16_t)(w * h);
+    uint16_t idx = 0;
+    uint16_t pixel = 0;
+    while (idx < length && pixel < total) {
+        uint16_t token = pgm_read_word(&data[offset + idx++]);
+        uint16_t run = token & 0x7FFF;
+        if (run == 0) continue;
+
+        if (token & 0x8000) {
+            pixel += run;
+            if (pixel > total) pixel = total;
+            continue;
+        }
+
+        for (uint16_t i = 0; i < run && idx < length && pixel < total; ++i, ++pixel) {
+            uint16_t color = pgm_read_word(&data[offset + idx++]);
+            if (color == keyMain) color = targetMain;
+            else if (color == keyShadow) color = targetShadow;
+            else if (color == keyMarking) color = targetMarking;
+
+            int col = pixel % w;
+            int row = pixel / w;
+            if (flipX) col = w - 1 - col;
+            canvas->drawPixel(x + col, y + row, color);
+        }
+    }
+}
+
+void PixelRenderer::drawRgb565RleMappedScaled(int x, int y, int w, int h,
+                                              const uint16_t* data, uint16_t offset,
+                                              uint16_t length, float scale,
+                                              uint16_t keyMain, uint16_t targetMain,
+                                              uint16_t keyShadow, uint16_t targetShadow,
+                                              uint16_t keyMarking, uint16_t targetMarking,
+                                              bool flipX) {
+    if (!canvas || !data || w <= 0 || h <= 0 || scale <= 0.0f) return;
+    if (scale == 1.0f) {
+        drawRgb565RleMapped(x, y, w, h, data, offset, length,
+                            keyMain, targetMain,
+                            keyShadow, targetShadow,
+                            keyMarking, targetMarking,
+                            flipX);
+        return;
+    }
+
+    auto mapColor = [&](uint16_t color) -> uint16_t {
+        if (color == keyMain) return targetMain;
+        if (color == keyShadow) return targetShadow;
+        if (color == keyMarking) return targetMarking;
+        return color;
+    };
+
+    if (scale > 1.0f) {
+        const uint16_t total = (uint16_t)(w * h);
+        uint16_t idx = 0;
+        uint16_t pixel = 0;
+        while (idx < length && pixel < total) {
+            uint16_t token = pgm_read_word(&data[offset + idx++]);
+            uint16_t run = token & 0x7FFF;
+            if (run == 0) continue;
+
+            if (token & 0x8000) {
+                pixel += run;
+                if (pixel > total) pixel = total;
+                continue;
+            }
+
+            for (uint16_t i = 0; i < run && idx < length && pixel < total; ++i, ++pixel) {
+                uint16_t color = mapColor(pgm_read_word(&data[offset + idx++]));
+                int col = pixel % w;
+                int row = pixel / w;
+                if (flipX) col = w - 1 - col;
+                int drawX = (int)(x + col * scale);
+                int drawY = (int)(y + row * scale);
+                int drawW = (int)ceilf(scale);
+                int drawH = (int)ceilf(scale);
+                canvas->fillRect(drawX, drawY, drawW, drawH, color);
+            }
+        }
+        return;
+    }
+
+    int outW = (int)(w * scale);
+    int outH = (int)(h * scale);
+    if (outW <= 0) outW = 1;
+    if (outH <= 0) outH = 1;
+
+    uint16_t* buf = (uint16_t*)malloc((size_t)w * h * sizeof(uint16_t));
+    if (!buf) {
+        drawRgb565RleMapped(x, y, w, h, data, offset, length,
+                            keyMain, targetMain,
+                            keyShadow, targetShadow,
+                            keyMarking, targetMarking,
+                            flipX);
+        return;
+    }
+
+    const uint16_t total = (uint16_t)(w * h);
+    uint16_t idx = 0;
+    uint16_t pixel = 0;
+    while (idx < length && pixel < total) {
+        uint16_t token = pgm_read_word(&data[offset + idx++]);
+        uint16_t run = token & 0x7FFF;
+        if (run == 0) continue;
+
+        if (token & 0x8000) {
+            pixel += run;
+            if (pixel > total) pixel = total;
+            continue;
+        }
+
+        for (uint16_t i = 0; i < run && idx < length && pixel < total; ++i, ++pixel) {
+            buf[pixel] = mapColor(pgm_read_word(&data[offset + idx++]));
+        }
+    }
+
+    for (int row = 0; row < outH; row++) {
+        int srcRow = (int)(row / scale);
+        if (srcRow >= h) srcRow = h - 1;
+        for (int col = 0; col < outW; col++) {
+            int srcCol = (int)(col / scale);
+            if (srcCol >= w) srcCol = w - 1;
+            int finalCol = flipX ? (w - 1 - srcCol) : srcCol;
+            canvas->drawPixel(x + col, y + row, buf[srcRow * w + finalCol]);
+        }
+    }
+
+    free(buf);
 }
 
 void PixelRenderer::drawRgb565RleScaled(int x, int y, int w, int h,
