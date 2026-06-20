@@ -34,6 +34,7 @@ static constexpr const char* MENU_BOX         = "Box";         // 箱子/背包
 static constexpr const char* MENU_FIGHT       = "Fight";       // 对战
 static constexpr const char* MENU_EXPLORE     = "Explore";     // 探索
 static constexpr const char* MENU_SETTINGS    = "Settings";    // 设置
+static constexpr const char* MENU_CUP         = "Cup";         // 甲虫杯
 static constexpr const char* MENU_WOOD        = "Wood";        // 腐木
 static constexpr const char* MENU_BOWL        = "Bowl";        // 食物盘
 
@@ -81,6 +82,76 @@ static constexpr const char* TEMP_GIANT       = "Giant";       // 巨体：SIZ�
 static constexpr const char* TEMP_BRUTE       = "Brute";       // 蛮力：STR提升，END降低
 static constexpr const char* TEMP_BALANCED    = "Balanced";    // 均衡：无增益无减益
 static constexpr const char* TEMP_SPIRIT      = "Spirit";      // 灵心：SPI提升，STR降低
+
+// 杯赛入口条件提示
+static constexpr const char* CUP_NEED_ADULT    = "Only adult beetles\ncan join the cup.";
+static constexpr const char* CUP_BEETLE_DIED   = "Your beetle\nhas passed away.";
+static constexpr const char* CUP_NEED_HUNGER   = "Hunger too low.\nFeed first.";
+static constexpr const char* CUP_NOT_OPEN      = "Registration is\nclosed.";
+
+// 探索模式（ExploreScene）
+static constexpr const char* EXPLORE_END              = "Explore End";
+static constexpr const char* EXPLORE_PRESS_A_RETURN   = "A: Return";
+static constexpr const char* EXPLORE_SAP_PLUS         = "Sap +%d";
+static constexpr const char* EXPLORE_FOOD_SOURCE_PLUS = "Food source +%d";
+static constexpr const char* EXPLORE_ROTTEN_WOOD_PLUS = "Rotten wood +1";
+static constexpr const char* EXPLORE_WOOD_FULL_SAP    = "Wood full, sap +1";
+static constexpr const char* EXPLORE_GOLDEN_SAP       = "Golden sap +5";
+static constexpr const char* EXPLORE_RESIN_CRYSTAL    = "Resin crystal +3 sap";
+static constexpr const char* EXPLORE_BUTTERFLY_GUIDES = "Butterfly guides...";
+static constexpr const char* EXPLORE_EXTRA_SAP        = "Extra sap +1";
+static constexpr const char* EXPLORE_MUSHROOMS        = "Mushrooms +3 sap +wood";
+static constexpr const char* EXPLORE_HONEYDEW_SPRING  = "Honeydew spring +6";
+static constexpr const char* EXPLORE_PHANTOM_BLESSING = "Phantom beetle blessing!";
+static constexpr const char* EXPLORE_NOTHING_HAPPENED = "Nothing happened...";
+static constexpr const char* EXPLORE_VICTORY_SAP      = "Victory! Sap +%d";
+static constexpr const char* EXPLORE_SPI_PLUS         = "SPI +%.1f";
+static constexpr const char* EXPLORE_NO_PENALTY       = "No penalty";
+static constexpr const char* EXPLORE_DEFEATED         = "Defeated...";
+static constexpr const char* EXPLORE_FLED             = "Fled...";
+static constexpr const char* EXPLORE_SAFE_RETURN      = "Safe return";
+static constexpr const char* EXPLORE_TIME_REMAIN      = "Exploring %lus";
+static constexpr const char* EXPLORE_NAV_BACK_RELEASE = "B:Back A:Release";
+
+// 腐木（Wood）
+static constexpr const char* WOOD_PLACED        = "Wood placed!";
+static constexpr const char* WOOD_NEED_ROTTEN   = "Need rotten wood.";
+static constexpr const char* EXPLORE_CONTINUE         = "A:Continue";
+static constexpr const char* EXPLORE_BEETLE_LABEL     = "Beetle:%s";
+static constexpr const char* EXPLORE_FIGHT            = "A:Fight";
+static constexpr const char* EXPLORE_FLEE             = "B:Flee";
+static constexpr const char* EXPLORE_CANT_FLEE        = "Can't flee";
+static constexpr const char* EXPLORE_RELEASE_CONFIRM  = "Release this beetle?";
+static constexpr const char* EXPLORE_RELEASE_EGG      = "It will leave an egg...";
+static constexpr const char* EXPLORE_CONFIRM          = "A:Confirm";
+static constexpr const char* EXPLORE_CANCEL           = "B:Cancel";
+
+// 甲虫杯（CupScene）
+static constexpr const char* CUP_SEASON_TITLE         = "Season %u Cup";
+static constexpr const char* CUP_STARTING             = "Cup is starting!";
+static constexpr const char* CUP_NAV_JOIN_QUIT        = "A:Join  B:Quit";
+static constexpr const char* CUP_BRACKET              = "Bracket";
+static constexpr const char* CUP_YOU_VS               = "You VS %s";
+static constexpr const char* CUP_VS                   = " VS ";
+static constexpr const char* CUP_START_ROUND          = "A:Start Round 1";
+static constexpr const char* CUP_ROUND_QUARTER        = "Quarter";
+static constexpr const char* CUP_ROUND_SEMI           = "Semi";
+static constexpr const char* CUP_ROUND_FINAL          = "Final";
+static constexpr const char* CUP_OPPONENT             = "Opponent: %s";
+static constexpr const char* CUP_BEETLE_LABEL         = "Beetle: %s";
+static constexpr const char* CUP_BATTLE               = "A:Battle";
+static constexpr const char* CUP_REWARD_ISSUED        = "Reward issued";
+static constexpr const char* CUP_DID_NOT_JOIN         = "Did not join";
+static constexpr const char* CUP_BACK                 = "A:Back";
+static constexpr const char* CUP_CHAMPION             = "Champion!";
+static constexpr const char* CUP_RUNNER_UP            = "Runner-up";
+static constexpr const char* CUP_TOP_FOUR             = "Top 4";
+static constexpr const char* CUP_TOP_EIGHT            = "Top 8";
+
+// Fight 子菜单
+static constexpr const char* MENU_FIGHT_CUP           = "Beetle Cup";
+static constexpr const char* MENU_FIGHT_CREATE        = "Create Room";
+static constexpr const char* MENU_FIGHT_SEARCH        = "Search Room";
 
 // 孵化提示
 static constexpr const char* HATCH_HINT_VIGOROUS = "Full of energy!";

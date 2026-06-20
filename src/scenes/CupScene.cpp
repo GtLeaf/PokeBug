@@ -21,6 +21,13 @@ bool CupScene::sBeatLegend[3] = {false, false, false};
 void CupScene::onEnter() {
     stateStartMs = Hal::ins().millis();
     if (!sInitialized) {
+        // 只有报名开放期才能进入；否则按未参赛结算
+        if (GameEngine::ins().getCupCycleState() != GameEngine::CupCycleState::REGISTER_OPEN) {
+            sInitialized = true;
+            finishCup(0);
+            Serial.printf("[Cup] Enter but registration closed, finishCup(0)\n");
+            return;
+        }
         initCup();
         sInitialized = true;
         sRound = 0;
@@ -44,7 +51,6 @@ void CupScene::onExit() {
     if (nextScene != SCENE_CUP && nextScene != SCENE_BATTLE) {
         // 真正离开杯赛：清理状态
         sInitialized = false;
-        GameEngine::ins().setCupPendingNotify(false);
     }
 }
 
@@ -54,18 +60,18 @@ void CupScene::initCup() {
         sOpponents[i] = NpcGenerator::generateForCup(bug);
     }
     for (int i = 0; i < 3; i++) sBeatLegend[i] = false;
-    uint16_t season = GameEngine::ins().getCupSeason() + 1;
-    GameEngine::ins().setCupSeason(season);
-    GameEngine::ins().setLastCupTime((uint32_t)(Hal::ins().millis() / 1000ULL));
-    SaveManager::ins().saveCupGlobal(season, GameEngine::ins().getLastCupTime());
+    // 赛季已在引擎 checkCupCycle 中递增，直接使用当前赛季
+    uint16_t season = GameEngine::ins().getCupSeason();
+    SaveManager::ins().saveCupGlobal(season, GameEngine::ins().getLastCupGameTime(),
+                                     (uint8_t)GameEngine::ins().getCupCycleState());
 }
 
 SceneID CupScene::update() {
-    uint32_t now = Hal::ins().millis();
-
+    // 报名通知态：若超过报名截止时间则自动放弃
     if (state == State::NOTIFY) {
-        if (now - stateStartMs >= NOTIFY_TIMEOUT_MS) {
-            // 自动放弃
+        uint64_t deadline = (uint64_t)GameEngine::ins().getLastCupGameTime() * 1000ULL
+                          + GameEngine::CUP_REGISTER_MS;
+        if (GameEngine::ins().getGameNow() >= deadline) {
             finishCup(0);
         }
     }
@@ -78,8 +84,12 @@ bool CupScene::onButton(const ButtonEvent& ev) {
 
     if (state == State::NOTIFY) {
         if (ev.btn == 0) {
-            // 参赛
+            // 参赛：标记本赛季为进行中并持久化
             sParticipatedThisSeason = true;
+            GameEngine::ins().setCupCycleState(GameEngine::CupCycleState::IN_PROGRESS);
+            SaveManager::ins().saveCupGlobal(GameEngine::ins().getCupSeason(),
+                                             GameEngine::ins().getLastCupGameTime(),
+                                             (uint8_t)GameEngine::CupCycleState::IN_PROGRESS);
             Bug& bug = GameEngine::ins().getBug();
             bug.recordCupParticipation();
             // 连续参赛 +1
@@ -166,8 +176,11 @@ void CupScene::finishCup(uint8_t rank) {
         bug.resetCupStreak();
     }
     applyCupRewards();
-    GameEngine::ins().setLastCupTime((uint32_t)(Hal::ins().millis() / 1000ULL));
-    SaveManager::ins().saveCupGlobal(GameEngine::ins().getCupSeason(), GameEngine::ins().getLastCupTime());
+    // 本赛季结束，关闭报名窗口直到下一周期
+    GameEngine::ins().setCupCycleState(GameEngine::CupCycleState::REGISTER_EXPIRED);
+    SaveManager::ins().saveCupGlobal(GameEngine::ins().getCupSeason(),
+                                     GameEngine::ins().getLastCupGameTime(),
+                                     (uint8_t)GameEngine::CupCycleState::REGISTER_EXPIRED);
     GameEngine::ins().forceSave();
     state = State::RESULT;
     stateStartMs = Hal::ins().millis();
@@ -215,16 +228,16 @@ void CupScene::drawNotify() {
     canvas.setTextSize(fs);
 
     char buf[32];
-    snprintf(buf, sizeof(buf), "第 %u 届 甲虫杯", GameEngine::ins().getCupSeason());
+    snprintf(buf, sizeof(buf), UiStrings::CUP_SEASON_TITLE, GameEngine::ins().getCupSeason());
     int tw = canvas.textWidth(buf);
     PixelRenderer::drawPixelText(cx - tw / 2, 30, buf, PixelRenderer::YELLOW, fs);
 
-    const char* title = "甲虫杯即将开始！";
+    const char* title = UiStrings::CUP_STARTING;
     tw = canvas.textWidth(title);
     PixelRenderer::drawPixelText(cx - tw / 2, 54, title, PixelRenderer::WHITE, fs);
 
-    tw = canvas.textWidth("A:参赛  B:放弃");
-    PixelRenderer::drawPixelText(cx - tw / 2, 100, "A:参赛  B:放弃", PixelRenderer::GRAY, fs);
+    tw = canvas.textWidth(UiStrings::CUP_NAV_JOIN_QUIT);
+    PixelRenderer::drawPixelText(cx - tw / 2, 100, UiStrings::CUP_NAV_JOIN_QUIT, PixelRenderer::GRAY, fs);
 }
 
 void CupScene::drawBracket() {
@@ -233,24 +246,25 @@ void CupScene::drawBracket() {
     int cx = Hal::DISPLAY_W / 2;
     canvas.setTextSize(fs);
 
-    const char* title = "8强对阵表";
+    const char* title = UiStrings::CUP_BRACKET;
     int tw = canvas.textWidth(title);
     PixelRenderer::drawPixelText(cx - tw / 2, 8, title, PixelRenderer::YELLOW, fs);
 
     char buf[48];
     // 玩家固定 A1
-    snprintf(buf, sizeof(buf), "你 VS %s", npcNameForIndex(sOpponents[0].index));
+    snprintf(buf, sizeof(buf), UiStrings::CUP_YOU_VS, npcNameForIndex(sOpponents[0].index));
     PixelRenderer::drawPixelText(12, 30, buf, PixelRenderer::WHITE, fs);
 
     for (int i = 1; i < 4; i++) {
-        snprintf(buf, sizeof(buf), "%s VS %s",
+        snprintf(buf, sizeof(buf), "%s%s%s",
                  npcNameForIndex(sOpponents[i * 2 - 1].index),
+                 UiStrings::CUP_VS,
                  npcNameForIndex(sOpponents[i * 2].index));
         PixelRenderer::drawPixelText(12, 30 + i * 14, buf, PixelRenderer::GRAY, fs);
     }
 
-    tw = canvas.textWidth("A:开始第一轮");
-    PixelRenderer::drawPixelText(cx - tw / 2, 110, "A:开始第一轮", PixelRenderer::GREEN, fs);
+    tw = canvas.textWidth(UiStrings::CUP_START_ROUND);
+    PixelRenderer::drawPixelText(cx - tw / 2, 110, UiStrings::CUP_START_ROUND, PixelRenderer::GREEN, fs);
 }
 
 void CupScene::drawRoundIntro() {
@@ -259,23 +273,25 @@ void CupScene::drawRoundIntro() {
     int cx = Hal::DISPLAY_W / 2;
     canvas.setTextSize(fs);
 
-    const char* roundName[3] = {"8强赛", "半决赛", "决赛"};
+    const char* roundName[3] = {UiStrings::CUP_ROUND_QUARTER,
+                                UiStrings::CUP_ROUND_SEMI,
+                                UiStrings::CUP_ROUND_FINAL};
     char buf[32];
     snprintf(buf, sizeof(buf), "%s", roundName[sRound]);
     int tw = canvas.textWidth(buf);
     PixelRenderer::drawPixelText(cx - tw / 2, 30, buf, PixelRenderer::YELLOW, fs);
 
     NpcCombatant& npc = sOpponents[sRound];
-    snprintf(buf, sizeof(buf), "对手: %s", npcNameForIndex(npc.index));
+    snprintf(buf, sizeof(buf), UiStrings::CUP_OPPONENT, npcNameForIndex(npc.index));
     tw = canvas.textWidth(buf);
     PixelRenderer::drawPixelText(cx - tw / 2, 56, buf, PixelRenderer::WHITE, fs);
 
-    snprintf(buf, sizeof(buf), "甲虫: %s", npcBugNameForIndex(npc.index));
+    snprintf(buf, sizeof(buf), UiStrings::CUP_BEETLE_LABEL, npcBugNameForIndex(npc.index));
     tw = canvas.textWidth(buf);
     PixelRenderer::drawPixelText(cx - tw / 2, 74, buf, PixelRenderer::CYAN, fs);
 
-    tw = canvas.textWidth("A:对战");
-    PixelRenderer::drawPixelText(cx - tw / 2, 110, "A:对战", PixelRenderer::GREEN, fs);
+    tw = canvas.textWidth(UiStrings::CUP_BATTLE);
+    PixelRenderer::drawPixelText(cx - tw / 2, 110, UiStrings::CUP_BATTLE, PixelRenderer::GREEN, fs);
 }
 
 void CupScene::drawResult() {
@@ -290,22 +306,22 @@ void CupScene::drawResult() {
     int tw = canvas.textWidth(buf);
     PixelRenderer::drawPixelText(cx - tw / 2, 36, buf, PixelRenderer::YELLOW, fs);
 
-    const char* reward = "奖励已发放";
-    if (sFinalRank == 0) reward = "本次未参赛";
+    const char* reward = UiStrings::CUP_REWARD_ISSUED;
+    if (sFinalRank == 0) reward = UiStrings::CUP_DID_NOT_JOIN;
     tw = canvas.textWidth(reward);
     PixelRenderer::drawPixelText(cx - tw / 2, 64, reward, PixelRenderer::WHITE, fs);
 
-    tw = canvas.textWidth("A:返回");
-    PixelRenderer::drawPixelText(cx - tw / 2, 110, "A:返回", PixelRenderer::GRAY, fs);
+    tw = canvas.textWidth(UiStrings::CUP_BACK);
+    PixelRenderer::drawPixelText(cx - tw / 2, 110, UiStrings::CUP_BACK, PixelRenderer::GRAY, fs);
 }
 
 const char* CupScene::rankText(uint8_t rank) const {
     switch (rank) {
-        case 1: return "🏆 冠军！";
-        case 2: return "🥈 亚军";
-        case 4: return "🏅 四强";
-        case 8: return "八强";
-        default: return "未参赛";
+        case 1: return UiStrings::CUP_CHAMPION;
+        case 2: return UiStrings::CUP_RUNNER_UP;
+        case 4: return UiStrings::CUP_TOP_FOUR;
+        case 8: return UiStrings::CUP_TOP_EIGHT;
+        default: return UiStrings::CUP_DID_NOT_JOIN;
     }
 }
 

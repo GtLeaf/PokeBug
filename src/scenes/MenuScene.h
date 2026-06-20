@@ -19,6 +19,7 @@ private:
         WOOD,
         BOWL,
         FOOD,
+        FIGHT,
     };
 
     Mode mode = Mode::MAIN;
@@ -28,20 +29,25 @@ private:
     float woodScroll = 0.0f;    // 腐木列表滚动偏移
     float bowlScroll = 0.0f;    // 食物盘列表滚动偏移
     uint64_t foodConfirmTime = 0; // A 键确认反馈结束时间（ms）
+    const char* toastMsg = nullptr;
+    uint64_t toastEndMs = 0;
     static int lastSelected;
     static int lastBoxSelected;
     static int lastWoodSelected;
     static int lastBowlSelected;
     static int lastFoodSelected;
+    static int lastFightSelected;
     static constexpr int MAIN_ITEM_COUNT = 7;
     static constexpr int BOX_ITEM_COUNT = 4;
-    static constexpr int WOOD_ITEM_COUNT = 7; // 5 种风格 + Place + Back
+    static constexpr int WOOD_ITEM_COUNT = 6; // 5 种风格 + Back
     static constexpr int BOWL_ITEM_COUNT = 4; // 3 种风格 + Back
     static constexpr int FOOD_ITEM_COUNT = 7;
+    static constexpr int FIGHT_ITEM_COUNT = 4;
     static constexpr uint32_t FOOD_CONFIRM_MS = 250;
 
     void drawBattery();
     void drawList();
+    void drawFightList();
     void drawFoodLayout();
     void drawWoodLayout();
     void drawBowlLayout();
@@ -50,6 +56,10 @@ private:
     int itemCount() const;
     const char* itemLabel(int index, char* buf, size_t bufSize) const;
     void saveSettingsNow();
+
+    bool isCupAvailable() const;
+    void showToast(const char* msg, uint32_t durationMs = 2000);
+    void drawToast();
 
     enum MenuItem {
         INFO = 0,
@@ -74,7 +84,6 @@ private:
         WOOD_MOSSY,
         WOOD_PALE,
         WOOD_HOLLOW,
-        WOOD_PLACE,
         WOOD_BACK,
     };
 
@@ -93,5 +102,12 @@ private:
         FOOD_JELLY,
         FOOD_BERRY,
         FOOD_BACK,
+    };
+
+    enum FightItem {
+        FIGHT_CUP = 0,
+        FIGHT_CREATE,
+        FIGHT_SEARCH,
+        FIGHT_BACK,
     };
 };

@@ -72,8 +72,8 @@ SceneID ExploreScene::update() {
             triggerEvent(now);
         }
         if (now - exploreStartMs >= EXPLORE_DURATION_MS) {
-            snprintf(resultLine1, sizeof(resultLine1), "%s", "探索结束");
-            snprintf(resultLine2, sizeof(resultLine2), "%s", "按 A 返回");
+            snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_END);
+            snprintf(resultLine2, sizeof(resultLine2), "%s", UiStrings::EXPLORE_PRESS_A_RETURN);
             state = State::RESULT;
             resultTimeoutMs = now + 30000;
         }
@@ -139,63 +139,63 @@ void ExploreScene::applyEventReward(bool flee) {
     switch (eventType) {
         case EventType::SAP:
             bug.addFood(FoodType::DROP, eventValue);
-            snprintf(resultLine1, sizeof(resultLine1), "发现树汁 +%d", eventValue);
+            snprintf(resultLine1, sizeof(resultLine1), UiStrings::EXPLORE_SAP_PLUS, eventValue);
             break;
         case EventType::FOOD_SOURCE:
             bug.addFood(FoodType::DROP, eventValue);
-            snprintf(resultLine1, sizeof(resultLine1), "发现食物源 +%d", eventValue);
+            snprintf(resultLine1, sizeof(resultLine1), UiStrings::EXPLORE_FOOD_SOURCE_PLUS, eventValue);
             break;
         case EventType::WOOD:
             if (bug.getRottenWood() == 0 && !bug.isWoodPlaced()) {
                 bug.addRottenWood(1);
-                snprintf(resultLine1, sizeof(resultLine1), "%s", "发现腐木 +1");
+                snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_ROTTEN_WOOD_PLUS);
             } else {
                 bug.addFood(FoodType::DROP, 1);
-                snprintf(resultLine1, sizeof(resultLine1), "%s", "已有腐木，换成树汁 +1");
+                snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_WOOD_FULL_SAP);
             }
             break;
         case EventType::RARE: {
             switch (rareSubType) {
                 case 0: // 金色树汁
                     bug.addFood(FoodType::DROP, 5);
-                    snprintf(resultLine1, sizeof(resultLine1), "%s", "金色树汁 +5");
+                    snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_GOLDEN_SAP);
                     break;
                 case 1: // 树脂结晶
                     bug.addFood(FoodType::DROP, 3);
                     // 简化：直接 END +0.5
                     // bug.modEnd(0.5f); // 稍后添加
-                    snprintf(resultLine1, sizeof(resultLine1), "%s", "树脂结晶 +3 树汁");
+                    snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_RESIN_CRYSTAL);
                     break;
                 case 2: { // 蝴蝶引路
                     bug.addFood(FoodType::DROP, 1);
-                    snprintf(resultLine1, sizeof(resultLine1), "%s", "蝴蝶引路...");
+                    snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_BUTTERFLY_GUIDES);
                     // 立即再触发一次普通事件
                     state = State::EVENT_POPUP; // 先显示本条，下一帧再触发？
                     // 简化：直接给额外树汁
                     bug.addFood(FoodType::DROP, 1);
-                    snprintf(resultLine2, sizeof(resultLine2), "%s", "额外 +1 树汁");
+                    snprintf(resultLine2, sizeof(resultLine2), "%s", UiStrings::EXPLORE_EXTRA_SAP);
                     break;
                 }
                 case 3: // 雨后菌丛
                     bug.addFood(FoodType::DROP, 3);
                     bug.addRottenWood(1);
-                    snprintf(resultLine1, sizeof(resultLine1), "%s", "雨后菌丛 +3 +腐木");
+                    snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_MUSHROOMS);
                     break;
                 case 4: // 蜜露喷泉
                     bug.addFood(FoodType::DROP, 6);
-                    snprintf(resultLine1, sizeof(resultLine1), "%s", "蜜露喷泉 +6");
+                    snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_HONEYDEW_SPRING);
                     break;
                 case 5: // 幻影甲虫
                     bug.addFood(FoodType::DROP, 5);
                     bug.addRottenWood(1);
                     // bug.modSpi(0.5f);
-                    snprintf(resultLine1, sizeof(resultLine1), "%s", "幻影甲虫祝福！");
+                    snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_PHANTOM_BLESSING);
                     break;
             }
             break;
         }
         case EventType::NOTHING:
-            snprintf(resultLine1, sizeof(resultLine1), "%s", "什么也没发生...");
+            snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_NOTHING_HAPPENED);
             break;
         default:
             break;
@@ -223,7 +223,7 @@ void ExploreScene::applyNpcBattleResult(const NpcBattleResult& res) {
         bug.addFood(FoodType::DROP, sap);
         // SPI 增加（简化直接加，上限由 Bug 内部 clamp）
         // 由于 Bug::spi 私有且无 modSpi，这里通过 onBattleEnd 已处理 SPI
-        snprintf(resultLine1, sizeof(resultLine1), "胜利！+%d 树汁", sap);
+        snprintf(resultLine1, sizeof(resultLine1), UiStrings::EXPLORE_VICTORY_SAP, sap);
         snprintf(resultLine2, sizeof(resultLine2), "SPI +%.1f", spi);
     } else {
         bug.onBattleEnd(false, GameEngine::ins().getGameNow());
@@ -235,7 +235,8 @@ void ExploreScene::applyNpcBattleResult(const NpcBattleResult& res) {
             case NpcData::Tier::LEGEND:  sapLoss = 99; break; // 清零
             default: break;
         }
-        char lossBuf[32] = "无惩罚";
+        char lossBuf[32];
+        snprintf(lossBuf, sizeof(lossBuf), "%s", UiStrings::EXPLORE_NO_PENALTY);
         if (sapLoss > 0) {
             uint8_t have = bug.getFoodCount(FoodType::DROP);
             if (sapLoss > have) sapLoss = have;
@@ -244,7 +245,7 @@ void ExploreScene::applyNpcBattleResult(const NpcBattleResult& res) {
                 snprintf(lossBuf, sizeof(lossBuf), "-%d 树汁", sapLoss);
             }
         }
-        snprintf(resultLine1, sizeof(resultLine1), "%s", "战败了...");
+        snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_DEFEATED);
         snprintf(resultLine2, sizeof(resultLine2), "%s", lossBuf);
     }
 }
@@ -298,8 +299,8 @@ bool ExploreScene::onButton(const ButtonEvent& ev) {
         }
         if (ev.btn == 1 && canFlee) {
             // 逃跑不算败绩，无惩罚
-            snprintf(resultLine1, sizeof(resultLine1), "%s", "逃跑了...");
-            snprintf(resultLine2, sizeof(resultLine2), "%s", "安全返回探索");
+            snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_FLED);
+            snprintf(resultLine2, sizeof(resultLine2), "%s", UiStrings::EXPLORE_SAFE_RETURN);
             state = State::RESULT;
             resultTimeoutMs = now + 10000;
             return true;
@@ -390,9 +391,9 @@ void ExploreScene::drawExploring() {
     uint32_t remain = (EXPLORE_DURATION_MS > (Hal::ins().millis() - exploreStartMs))
                           ? (EXPLORE_DURATION_MS - (Hal::ins().millis() - exploreStartMs)) / 1000
                           : 0;
-    snprintf(buf, sizeof(buf), "探索中 %lus", remain);
+    snprintf(buf, sizeof(buf), UiStrings::EXPLORE_TIME_REMAIN, remain);
     PixelRenderer::drawPixelText(8, 6, buf, PixelRenderer::WHITE, fs);
-    PixelRenderer::drawPixelText(8, Hal::DISPLAY_H - 14, "B返回 A放生", PixelRenderer::GRAY, fs);
+    PixelRenderer::drawPixelText(8, Hal::DISPLAY_H - 14, UiStrings::EXPLORE_NAV_BACK_RELEASE, PixelRenderer::GRAY, fs);
 }
 
 void ExploreScene::drawPopup() {
@@ -409,8 +410,8 @@ void ExploreScene::drawPopup() {
         tw = canvas.textWidth(resultLine2);
         PixelRenderer::drawPixelText(cx - tw / 2, 44 + (int)(10 * fs), resultLine2, PixelRenderer::CYAN, fs);
     }
-    tw = canvas.textWidth("A:继续");
-    PixelRenderer::drawPixelText(cx - tw / 2, Hal::DISPLAY_H - 44, "A:继续", PixelRenderer::GRAY, fs);
+    tw = canvas.textWidth(UiStrings::EXPLORE_CONTINUE);
+    PixelRenderer::drawPixelText(cx - tw / 2, Hal::DISPLAY_H - 44, UiStrings::EXPLORE_CONTINUE, PixelRenderer::GRAY, fs);
 }
 
 void ExploreScene::drawNpcPrompt() {
@@ -425,17 +426,17 @@ void ExploreScene::drawNpcPrompt() {
     snprintf(buf, sizeof(buf), "[%s]%s", NpcData::tierName(npc.tier), npcName);
     int tw = canvas.textWidth(buf);
     PixelRenderer::drawPixelText(cx - tw / 2, 36, buf, PixelRenderer::YELLOW, fs);
-    snprintf(buf, sizeof(buf), "甲虫:%s", npcBugName);
+    snprintf(buf, sizeof(buf), UiStrings::EXPLORE_BEETLE_LABEL, npcBugName);
     tw = canvas.textWidth(buf);
     PixelRenderer::drawPixelText(cx - tw / 2, 52, buf, PixelRenderer::WHITE, fs);
     tw = canvas.textWidth(npcMeetLine);
     PixelRenderer::drawPixelText(cx - tw / 2, 70, npcMeetLine, PixelRenderer::CYAN, fs);
 
-    PixelRenderer::drawPixelText(cx - 50, Hal::DISPLAY_H - 36, "A:迎战", PixelRenderer::GREEN, fs);
+    PixelRenderer::drawPixelText(cx - 50, Hal::DISPLAY_H - 36, UiStrings::EXPLORE_FIGHT, PixelRenderer::GREEN, fs);
     if (canFlee) {
-        PixelRenderer::drawPixelText(cx + 20, Hal::DISPLAY_H - 36, "B:逃跑", PixelRenderer::GRAY, fs);
+        PixelRenderer::drawPixelText(cx + 20, Hal::DISPLAY_H - 36, UiStrings::EXPLORE_FLEE, PixelRenderer::GRAY, fs);
     } else {
-        PixelRenderer::drawPixelText(cx + 20, Hal::DISPLAY_H - 36, "无法逃跑", PixelRenderer::RED, fs);
+        PixelRenderer::drawPixelText(cx + 20, Hal::DISPLAY_H - 36, UiStrings::EXPLORE_CANT_FLEE, PixelRenderer::RED, fs);
     }
 }
 
@@ -447,12 +448,12 @@ void ExploreScene::drawReleaseConfirm() {
 
     int cx = Hal::DISPLAY_W / 2;
     canvas.setTextSize(fs);
-    int tw = canvas.textWidth("放生这只甲虫吗？");
-    PixelRenderer::drawPixelText(cx - tw / 2, 44, "放生这只甲虫吗？", PixelRenderer::WHITE, fs);
-    tw = canvas.textWidth("它会留下一颗卵...");
-    PixelRenderer::drawPixelText(cx - tw / 2, 64, "它会留下一颗卵...", PixelRenderer::GRAY, fs);
-    PixelRenderer::drawPixelText(cx - 50, Hal::DISPLAY_H - 44, "A:确认", PixelRenderer::GREEN, fs);
-    PixelRenderer::drawPixelText(cx + 20, Hal::DISPLAY_H - 44, "B:取消", PixelRenderer::GRAY, fs);
+    int tw = canvas.textWidth(UiStrings::EXPLORE_RELEASE_CONFIRM);
+    PixelRenderer::drawPixelText(cx - tw / 2, 44, UiStrings::EXPLORE_RELEASE_CONFIRM, PixelRenderer::WHITE, fs);
+    tw = canvas.textWidth(UiStrings::EXPLORE_RELEASE_EGG);
+    PixelRenderer::drawPixelText(cx - tw / 2, 64, UiStrings::EXPLORE_RELEASE_EGG, PixelRenderer::GRAY, fs);
+    PixelRenderer::drawPixelText(cx - 50, Hal::DISPLAY_H - 44, UiStrings::EXPLORE_CONFIRM, PixelRenderer::GREEN, fs);
+    PixelRenderer::drawPixelText(cx + 20, Hal::DISPLAY_H - 44, UiStrings::EXPLORE_CANCEL, PixelRenderer::GRAY, fs);
 }
 
 void ExploreScene::drawResult() {

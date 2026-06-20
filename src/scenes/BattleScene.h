@@ -88,6 +88,7 @@ private:
     void startRound();
     battle_round_t computeAuthoritativeRound();
     void applyAuthoritativeRound(const battle_round_t& round);
+    void computeLocalWin();
     void computeAndSendResult();
     void applyBattleResult();
 

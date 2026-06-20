@@ -91,7 +91,8 @@ src/
   - Deep Sleep 使用 10 分钟（600 s）定时器唤醒；唤醒路径在 `main.cpp` 中仅做最小化状态更新，避免点亮屏幕。
 - 对战时 `BattleLink` 开启 WiFi STA；对战结束后 `BattleLink::end()` 关闭 WiFi/BT 以降低功耗。
 - **本地 NPC 对战**：`BattleScene` 通过 `GameEngine::setPendingNpcBattle()` 接收对手数据，跳过 ESP-NOW 流程，直接本地计算回合并结算。用于探索模式遭遇战与甲虫杯淘汰赛。
-- **杯赛定时器**：`GameEngine` 每 60 秒检查一次 `last_cup_time`，满足 2 小时间隔且当前在培养缸时弹出 `CupScene` 通知。探索/对战/杯赛期间不中断，返回培养缸后触发。
+- **Fight 子菜单**：主菜单 `Fight` 进入子菜单，包含 `PvP`（ESP-NOW 对战大厅）和 `Cup`（甲虫杯）。Cup 仅在成虫、存活且饥饿度 ≥ 30 时可选，不满足时置灰，按 A 弹出提示框说明原因。
+- **UI 文案**：`ExploreScene` 与 `CupScene` 内所有用户可见字符串统一收归到 `UiStrings.h`，当前为英文。
 
 ### 2.2 探索模式
 
@@ -104,10 +105,11 @@ src/
 
 ### 2.3 甲虫杯
 
-- **触发**：每 2 小时自动触发一次；设备启动时检查 `last_cup_time`，超时立即补偿。
-- **流程**：通知 → 8 强对阵表 → 三轮本地 NPC 对战（8 进 4 → 半决赛 → 决赛）→ 名次结算。
+- **入口**：`Fight` 子菜单 → `Beetle Cup`；仅成虫、存活、饥饿度 ≥ 30 且处于报名开放期时可选，不满足时置灰，按 A 弹出提示说明原因。
+- **周期**：基于 `gameNow` 虚拟时间，每 **7 游戏天** 一届新赛季，每届只有 **1 游戏天** 的报名窗口。报名窗口关闭后如果玩家未参赛，本赛季自动结束且没有任何奖励。
+- **流程**：通知 → 8 强对阵表 → 三轮本地 NPC 对战（Quarter → Semi → Final）→ 名次结算。
 - **NPC 分布**：新手 10% / 普通 30% / 老手 40% / 传说 20%，整体强于探索。
-- **奖励**：冠军 +6 树汁 +1 腐木，亚军 +4，四强 +2，八强 +1；同时更新本虫杯赛记录与成就。
+- **奖励**：冠军 +6 树汁 +1 腐木，亚军 +4，四强 +2，八强 +1；未参赛无奖励。同时更新本虫杯赛记录与成就。
 
 ### 2.4 培养缸状态栏（右侧 40×135）
 
@@ -207,10 +209,10 @@ pio run --target clean
 ### 5.2 属性与基因
 
 - 每只独角仙有 4 组基因（VIG / ATK / MNT / APP），每组 1 字节 `[显性4bit | 隐性4bit]`。
-- 基因在 `Bug::initNew()` 时均匀随机生成；显性值影响成长倍率（0.8 ~ 2.3），显+隐平均值影响属性上限（6 ~ 10）。
-- **VIG** → SIZ + END；**ATK** → STR；**MNT** → SPI；**APP** → SPD + 外观调色板（`getPaletteId()`）。
+> 基因在 `Bug::initNew()` 时均匀随机生成；显性值影响成长倍率（0.8 ~ 2.3），显+隐平均值影响属性上限（**SIZ/STR/END/SPI/SPD 均为 6 ~ 21**）。
+- **VIG** → SIZ + END；**ATK** → STR；**MNT** → SPI；**APP** → SPD + 外观调色板（`getPaletteId()`）。**颜色越深，SPD 成长倍率越高、上限越高**。
 - MVP 中基因数值不直接展示，仅通过孵化提示语（`Bug::getHatchHint()`）和外观调色板（`Bug::getPaletteId()`，0-3）让玩家感知差异。
-- 属性：SIZ / STR / END / SPI / **SPD** 为 1-10 的浮点；MOT 为 0-100 的整数；饥饿度 hunger 为 0-100。
+- 属性：**SIZ / STR / END / SPI / SPD 为 1.0 ~ 21.0 的浮点（基因上限 6~21）**；MOT 为 0-100 的整数；饥饿度 hunger 为 0-100。
 - **基因 APP 同时影响调色板（外观）与 SPD 上限/倍率**。
 - **卵期气质（Temperament）**：参考宝可梦性格，卵期交互行为（倾斜 ≥ 30% 总时长 / 戳 ≥ 4 次 / 喷水 ≥ 4 次 / 摇晃 ≥ 4 次 + 剧烈 ≥ 1 次）决定 6 种气质之一（迅捷/韧甲/巨体/蛮力/均衡/灵心），其中 5 种提升一项属性 ×1.10、降低一项属性 ×0.90，**均衡**无增益无减益，**灵心**兜底。判定三层：L1 倾斜（最高优先级）→ L2 操作类次数最高者（平局最近触发）→ L3 均衡（操作类 1~3）→ L4 灵心兜底。倾斜按虚拟时间累计，受 `gameSpeed` 影响。气质终身影响所有阶段成长。详见 `doc/PokeBug-FoodSystem.md` §11。
 - **环境物品加成**：食物盘有食物时所有属性吸收 × 1.05，特定食物再 × 1.03（对应属性）；空盘 MOT 衰减 +20%。腐木 5 种风格各有 3% 属性倾向，成虫休息时对应属性恢复 +0.02/min。食物盘 + 腐木是长期投资，影响整个阶段。详见 `doc/PokeBug-FoodSystem.md` §13。
@@ -244,7 +246,7 @@ pio run --target clean
 - `SaveManager` 使用 NVS 命名空间 `pokebug`，当前 Bug 存档版本 **`SAVE_VERSION = 8`**（定义于 `SaveManager.h` 与 `Bug.cpp`）。
 - `Bug::save()` / `Bug::load()` 负责二进制序列化；`SaveManager` 负责 NVS 开启/关闭与版本校验。
 - v8 在 v7 基础上新增探索/杯赛字段：`releaseCountTotal`、`cupParticipated`、`cupBest`、`cupWins`、`cupLegendKills`、`achievementFlags`、`cupStreak`。
-- 全局杯赛数据独立保存：`cup_season`（届数）、`last_cup_time`（上次触发时间），换虫/死亡/放生均不影响。
+- 全局杯赛数据独立保存：`cup_season`（届数）、`cup_game_time`（上一届开始时的虚拟游戏时间，秒）、`cup_state`（周期状态：0=IDLE,1=REGISTER_OPEN,2=REGISTER_EXPIRED,3=IN_PROGRESS），旧 key `last_cup_time` 仍可在首次升级时读取兼容，换虫/死亡/放生均不影响。
 - 当前实现兼容读取 v5 / v6 / v7 旧存档；版本不匹配且无法兼容时会拒绝加载并创建新存档。
 - 设置项独立保存：字体缩放、亮度、游戏速度、idle 时间档位、主场景背景、腐木风格、食盘风格、食物风格。
 
@@ -303,4 +305,4 @@ pio run --target clean
 
 ---
 
-*最后更新：2026-06-17*
+*最后更新：2026-06-19*

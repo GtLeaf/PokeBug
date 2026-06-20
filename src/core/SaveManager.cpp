@@ -78,20 +78,28 @@ void SaveManager::clear() {
     }
 }
 
-bool SaveManager::saveCupGlobal(uint16_t season, uint32_t lastCupTime) {
+bool SaveManager::saveCupGlobal(uint16_t season, uint32_t lastCupGameTime, uint8_t state) {
     Preferences prefs;
     if (!prefs.begin(NAMESPACE, false)) return false;
     prefs.putUShort(KEY_CUP_SEASON, season);
-    prefs.putUInt(KEY_CUP_TIME, lastCupTime);
+    prefs.putUInt(KEY_CUP_TIME, lastCupGameTime);        // 旧 key，保持兼容
+    prefs.putUInt(KEY_CUP_GAME_TIME, lastCupGameTime);   // 新 key，语义为游戏时间秒
+    prefs.putUChar(KEY_CUP_STATE, state);
     prefs.end();
     return true;
 }
 
-bool SaveManager::loadCupGlobal(uint16_t& season, uint32_t& lastCupTime) {
+bool SaveManager::loadCupGlobal(uint16_t& season, uint32_t& lastCupGameTime, uint8_t& state) {
     Preferences prefs;
     if (!prefs.begin(NAMESPACE, true)) return false;
     season = prefs.getUShort(KEY_CUP_SEASON, 0);
-    lastCupTime = prefs.getUInt(KEY_CUP_TIME, 0);
+    // 优先读取新 key；不存在则回退旧 key（首次升级）
+    if (prefs.isKey(KEY_CUP_GAME_TIME)) {
+        lastCupGameTime = prefs.getUInt(KEY_CUP_GAME_TIME, 0);
+    } else {
+        lastCupGameTime = prefs.getUInt(KEY_CUP_TIME, 0);
+    }
+    state = prefs.getUChar(KEY_CUP_STATE, 0);
     prefs.end();
     return true;
 }
@@ -101,6 +109,8 @@ void SaveManager::clearCupGlobal() {
     if (prefs.begin(NAMESPACE, false)) {
         prefs.remove(KEY_CUP_SEASON);
         prefs.remove(KEY_CUP_TIME);
+        prefs.remove(KEY_CUP_GAME_TIME);
+        prefs.remove(KEY_CUP_STATE);
         prefs.end();
     }
 }

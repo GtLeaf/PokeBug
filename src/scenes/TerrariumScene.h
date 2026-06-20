@@ -54,6 +54,7 @@ private:
     bool tiltHighSideIsRight = false;  // 高处是否在右侧
     uint32_t stateTimer = 0;      // 当前状态已持续帧数
     uint32_t stateDuration = 0;   // 当前状态目标持续帧数
+    uint8_t eatFrameInterval = 0; // EAT 动画每帧持续帧数（20fps 下 20~40 = 1~2 秒）
     uint32_t restResumeAllowedMs = 0; // 允许重新进入夜间休息的时间戳
 
     static constexpr int GROUND_Y = 125;   // 甲虫贴地时脚所在的 Y 坐标

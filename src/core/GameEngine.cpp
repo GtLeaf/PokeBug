@@ -59,8 +59,29 @@ void GameEngine::begin() {
     }
 
     // 加载全局杯赛数据
-    SaveManager::ins().loadCupGlobal(cupSeason, lastCupTime);
-    Serial.printf("[Engine] Cup global loaded: season=%u last=%u\n", cupSeason, lastCupTime);
+    uint8_t cupStateRaw = 0;
+    SaveManager::ins().loadCupGlobal(cupSeason, lastCupGameTime, cupStateRaw);
+    if (cupStateRaw <= (uint8_t)CupCycleState::IN_PROGRESS) {
+        cupCycleState = static_cast<CupCycleState>(cupStateRaw);
+    } else {
+        cupCycleState = CupCycleState::IDLE;
+    }
+    Serial.printf("[Engine] Cup global loaded: season=%u lastGameTime=%u state=%u gameNow=%llu\n",
+                  cupSeason, lastCupGameTime, cupStateRaw, gameNow);
+
+    // 首次迁移或新存档：用当前游戏时间作为上一届起点，避免旧真实时间秒被误用
+    if (lastCupGameTime == 0 || (uint64_t)lastCupGameTime * 1000ULL > gameNow) {
+        lastCupGameTime = (uint32_t)(gameNow / 1000ULL);
+        Serial.printf("[Engine] Cup time reset to current game time\n");
+    }
+
+    // 新存档赛季从 1 开始显示
+    if (cupSeason == 0) {
+        cupSeason = 1;
+    }
+
+    // 根据当前游戏时间立即校正杯赛周期状态
+    checkCupCycle();
 
     // 注册全局按钮监听：仅在培养缸主场景时长按 B 进入 Deep Sleep
     engineDispatcherHandle = ButtonDispatcher::ins().subscribe([this](const ButtonEvent& ev) -> bool {
@@ -135,11 +156,8 @@ void GameEngine::run() {
         }
     }
 
-    // 杯赛触发检查（每 60s 一次，避免每帧计算）
-    if (realNow - lastCupCheckMs >= CUP_CHECK_MS) {
-        checkCupTrigger(realNow);
-        lastCupCheckMs = realNow;
-    }
+    // 杯赛周期检查（基于虚拟游戏时间）
+    checkCupCycle();
 
     // 自动保存
     if (realNow - lastSaveTime > AUTO_SAVE_MS) {
@@ -177,7 +195,7 @@ void GameEngine::run() {
         SaveManager::ins().saveSettings(PixelRenderer::getContentFontScale(), brightness,
                                         gameSpeed, idleTimeoutIndex, mainSceneBg,
                                         woodStyle, bowlStyle, foodStyle);
-        SaveManager::ins().saveCupGlobal(cupSeason, lastCupTime);
+        SaveManager::ins().saveCupGlobal(cupSeason, lastCupGameTime, (uint8_t)cupCycleState);
         Serial.println("[Engine] Enter deep sleep");
         Hal::ins().setBrightness(0);
         esp_sleep_enable_timer_wakeup(600 * 1000000ULL);
@@ -286,25 +304,43 @@ void GameEngine::processIMU() {
     }
 }
 
-void GameEngine::checkCupTrigger(uint32_t realNow) {
-    if (cupPendingNotify) return;
-    if (bug.isDead() || bug.getStage() != Stage::ADULT) return;
-    if (bug.getHunger() < 30) return;
-
-    uint32_t nowUnix = (uint32_t)(realNow / 1000ULL);
-    // 首次启动或上次时间为 0：2 小时后触发
-    bool shouldTrigger = false;
-    if (lastCupTime == 0) {
-        if (nowUnix >= 2ULL * 60 * 60) shouldTrigger = true;
-    } else if (nowUnix >= lastCupTime + (2ULL * 60 * 60)) {
-        shouldTrigger = true;
+void GameEngine::checkCupCycle() {
+    // 深睡等场景可能一次性推进多个 7 天周期，用循环对齐到当前周期
+    while (gameNow >= (uint64_t)lastCupGameTime * 1000ULL + CUP_CYCLE_MS) {
+        lastCupGameTime += (uint32_t)(CUP_CYCLE_MS / 1000ULL);
+        cupSeason++;
+        cupCycleState = CupCycleState::IDLE;
+        Serial.printf("[Engine] Cup season advanced to %u, startTime=%u\n", cupSeason, lastCupGameTime);
     }
 
-    if (shouldTrigger) {
-        // 探索/对战/杯赛期间不中断，等返回培养缸再弹出
-        if (isBlockDeepSleepScene()) return;
-        cupPendingNotify = true;
-        Serial.printf("[Engine] Cup notify pending at unix=%u\n", nowUnix);
+    uint64_t registerStart = (uint64_t)lastCupGameTime * 1000ULL;
+    uint64_t registerEnd   = registerStart + CUP_REGISTER_MS;
+
+    switch (cupCycleState) {
+        case CupCycleState::IDLE:
+            if (gameNow >= registerEnd) {
+                // 已过报名截止时间，本赛季自动关闭
+                cupCycleState = CupCycleState::REGISTER_EXPIRED;
+                Serial.printf("[Engine] Cup registration expired (reboot gap)\n");
+            } else if (gameNow >= registerStart) {
+                // 报名期开始
+                cupCycleState = CupCycleState::REGISTER_OPEN;
+                Serial.printf("[Engine] Cup registration open until gameNow=%llu\n", registerEnd);
+            }
+            break;
+
+        case CupCycleState::REGISTER_OPEN:
+            if (gameNow >= registerEnd) {
+                // 报名结束，玩家未参与
+                cupCycleState = CupCycleState::REGISTER_EXPIRED;
+                Serial.printf("[Engine] Cup registration expired\n");
+            }
+            break;
+
+        case CupCycleState::REGISTER_EXPIRED:
+        case CupCycleState::IN_PROGRESS:
+        default:
+            break;
     }
 }
 

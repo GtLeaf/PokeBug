@@ -299,8 +299,9 @@ SceneID BattleScene::update() {
 
         case State::RESULT: {
             if (localNpcBattle) {
-                // 本地 NPC 战：直接结算并进入 DONE
+                // 本地 NPC 战：计算胜负后直接结算并进入 DONE
                 if (!resultApplied) {
+                    computeLocalWin();
                     applyBattleResult();
                 }
                 state = State::DONE;
@@ -434,7 +435,8 @@ battle_round_t BattleScene::computeAuthoritativeRound() {
 }
 
 void BattleScene::applyAuthoritativeRound(const battle_round_t& round) {
-    if (BattleLink::ins().isHost()) {
+    // 本地 NPC 战没有经 BattleLink 设置 host 身份，统一按 host 视角（me=host, enemy=client）应用
+    if (localNpcBattle || BattleLink::ins().isHost()) {
         me.hp = round.host_hp;
         enemy.hp = round.client_hp;
         me.mot = round.host_mot;
@@ -463,7 +465,7 @@ void BattleScene::applyAuthoritativeRound(const battle_round_t& round) {
                   roundNum, round.host_dmg, round.client_dmg, round.host_hp, round.client_hp);
 }
 
-void BattleScene::computeAndSendResult() {
+void BattleScene::computeLocalWin() {
     // 判断胜负
     if (me.hp <= 0 && enemy.hp > 0) {
         localWin = false;
@@ -475,6 +477,10 @@ void BattleScene::computeAndSendResult() {
         float enemyPct = (float)enemy.hp / enemy.maxHp;
         localWin = (myPct >= enemyPct);
     }
+}
+
+void BattleScene::computeAndSendResult() {
+    computeLocalWin();
     BattleLink::ins().sendResult(localWin);
     Serial.printf("[BattleScene] result sent: %s\n", localWin ? "win" : "loss");
 }

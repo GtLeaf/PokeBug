@@ -14,6 +14,22 @@ void LobbyScene::onEnter() {
     roomCount = 0;
     messageText = nullptr;
     BattleLink::ins().begin();
+
+    // 由 Fight 子菜单指定入口模式时直接跳转
+    LobbyMode startMode = GameEngine::ins().getLobbyMode();
+    GameEngine::ins().setLobbyMode(LobbyMode::LOBBY_DEFAULT);
+    switch (startMode) {
+        case LobbyMode::LOBBY_CREATE:
+            enterHostWaiting();
+            break;
+        case LobbyMode::LOBBY_SEARCH:
+            enterSearchScanning();
+            break;
+        default:
+            enterModeSelect();
+            break;
+    }
+
     Serial.println("[Lobby] entered");
 }
 

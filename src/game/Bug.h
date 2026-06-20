@@ -252,6 +252,8 @@ private:
     Temperament determineTemperament(uint64_t now);
     void updatePupaSpi(uint64_t now, uint32_t deltaMs);
 
+    float spdGrowthMult() const { return 0.8f + dominant(geneAPP) * 0.1f; }
+    uint8_t spdCap() const { return (uint8_t)(6 + (dominant(geneAPP) + recessive(geneAPP)) / 2); }
     static uint8_t dominant(uint8_t gene) { return gene >> 4; }
     static uint8_t recessive(uint8_t gene) { return gene & 0x0F; }
     float sizGrowthMult() const { return 0.8f + dominant(geneVIG) * 0.1f; }

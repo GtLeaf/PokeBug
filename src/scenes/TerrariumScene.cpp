@@ -81,11 +81,6 @@ SceneID TerrariumScene::update() {
         faceRight = true;
     }
 
-    // 杯赛通知：仅成虫且未死亡时弹出
-    if (bug.getStage() == Stage::ADULT && !bug.isDead() && GameEngine::ins().hasCupPendingNotify()) {
-        return SCENE_CUP;
-    }
-
     return nextScene;
 }
 
@@ -327,7 +322,7 @@ void TerrariumScene::drawAdult(int x, int y, uint8_t palette) {
         frames = HerculesAdultSprites::EAT_FRAMES;
         data = HerculesAdultSprites::EAT_RLE;
         frameCount = HerculesAdultSprites::EAT_FRAME_COUNT;
-        frameIndex = (animFrame / 16) % frameCount;
+        frameIndex = (stateTimer / eatFrameInterval) % frameCount;
         flipSprite = !faceRight;
     } else if (adultState == AdultState::TURN) {
         // 转身过渡每次随机取一张中间姿态；同一次转身中保持不变。
@@ -508,6 +503,7 @@ void TerrariumScene::updateAdultMovement() {
                         adultState = AdultState::EAT;
                         stateTimer = 0;
                         stateDuration = random(180, 420);  // 吃 3-7 秒
+                        eatFrameInterval = (uint8_t)random(20, 41); // 每帧 1~2 秒
                     } else {
                         adultState = AdultState::IDLE;
                         stateTimer = 0;

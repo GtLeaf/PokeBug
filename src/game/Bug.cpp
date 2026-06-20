@@ -91,7 +91,7 @@ void Bug::clampAttributes() {
     if (end < 1.0f) end = 1.0f;
     if (end > endCap()) end = endCap();
     if (spd < 1.0f) spd = 1.0f;
-    if (spd > 10.0f) spd = 10.0f;
+    if (spd > spdCap()) spd = spdCap();
     if (spi < 1.0f) spi = 1.0f;
     if (spi > spiCap()) spi = spiCap();
     if (mot > 100) mot = 100;

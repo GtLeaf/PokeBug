@@ -8,6 +8,13 @@
 #include <cstdint>
 #include "../game/NpcGenerator.h"
 
+// 大厅入口模式：由 MenuScene 写入，LobbyScene 读取
+enum class LobbyMode {
+    LOBBY_DEFAULT,
+    LOBBY_CREATE,
+    LOBBY_SEARCH,
+};
+
 // 本地 NPC 对战上下文：由 MenuScene/ExploreScene/CupScene 写入，BattleScene 读取
 struct PendingNpcBattle {
     bool active = false;
@@ -120,6 +127,10 @@ public:
     void cycleFoodStyle();
     const char* getFoodStyleName() const;
 
+    // 对战大厅入口模式
+    LobbyMode getLobbyMode() const { return lobbyMode; }
+    void setLobbyMode(LobbyMode m) { lobbyMode = m; }
+
     // 本地 NPC 对战上下文
     PendingNpcBattle& pendingNpcBattle() { return npcBattle; }
     void clearPendingNpcBattle() { npcBattle.active = false; }
@@ -129,15 +140,25 @@ public:
     NpcBattleResult& lastNpcBattleResult() { return npcResult; }
     void clearLastNpcBattleResult() { npcResult.valid = false; }
 
-    // 杯赛全局数据
+    // 杯赛全局数据与周期状态
+    enum class CupCycleState {
+        IDLE,             // 非报名期
+        REGISTER_OPEN,    // 报名中，可进入杯赛
+        REGISTER_EXPIRED, // 报名结束，玩家未参与
+        IN_PROGRESS,      // 玩家已参赛，正在进行
+    };
+
     uint16_t getCupSeason() const { return cupSeason; }
     void setCupSeason(uint16_t s) { cupSeason = s; }
-    uint32_t getLastCupTime() const { return lastCupTime; }
-    void setLastCupTime(uint32_t t) { lastCupTime = t; }
+    uint32_t getLastCupGameTime() const { return lastCupGameTime; }
+    void setLastCupGameTime(uint32_t t) { lastCupGameTime = t; }
+    CupCycleState getCupCycleState() const { return cupCycleState; }
+    void setCupCycleState(CupCycleState s) { cupCycleState = s; }
 
-    // 杯赛通知
-    bool hasCupPendingNotify() const { return cupPendingNotify; }
-    void setCupPendingNotify(bool v) { cupPendingNotify = v; }
+    // 杯赛周期：7 游戏天一届，1 游戏天报名
+    static constexpr uint64_t GAME_DAY_MS = 24ULL * 60 * 60 * 1000;
+    static constexpr uint64_t CUP_CYCLE_MS = 7 * GAME_DAY_MS;
+    static constexpr uint64_t CUP_REGISTER_MS = 1 * GAME_DAY_MS;
 
     // 当前是否在探索/对战/杯赛等不可进入 Deep Sleep 的场景
     bool isBlockDeepSleepScene() const;
@@ -177,17 +198,14 @@ private:
     uint8_t bowlStyle = 0;
     uint8_t foodStyle = 0;
 
+    LobbyMode lobbyMode = LobbyMode::LOBBY_DEFAULT;
     PendingNpcBattle npcBattle;
     NpcBattleResult npcResult;
 
     // 杯赛全局数据（跨虫持久）
     uint16_t cupSeason = 0;
-    uint32_t lastCupTime = 0;
-    bool cupPendingNotify = false;
-    uint32_t lastCupCheckMs = 0;
-
-    static constexpr uint32_t CUP_INTERVAL_MS = 2ULL * 60 * 60 * 1000; // 2 小时
-    static constexpr uint32_t CUP_CHECK_MS    = 60000;                 // 每 60s 检查一次
+    uint32_t lastCupGameTime = 0; // 上一届杯赛开始时的游戏时间（秒）
+    CupCycleState cupCycleState = CupCycleState::IDLE;
 
     static constexpr uint32_t ACTIVE_FRAME_MS  = 50;    // ~20fps
     static constexpr uint32_t IDLE_FRAME_MS    = 100;   // 10fps
@@ -200,7 +218,7 @@ private:
 
     void processInput();
     void processIMU();
-    void checkCupTrigger(uint32_t realNow);
+    void checkCupCycle();
     uint32_t targetFrameTime() const;
     void resetIdleTimer();
 };

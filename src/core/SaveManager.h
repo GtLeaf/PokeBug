@@ -27,8 +27,8 @@ public:
                       uint8_t& woodStyle, uint8_t& bowlStyle, uint8_t& foodStyle);
 
     // 全局杯赛数据（跨虫持久）
-    bool saveCupGlobal(uint16_t season, uint32_t lastCupTime);
-    bool loadCupGlobal(uint16_t& season, uint32_t& lastCupTime);
+    bool saveCupGlobal(uint16_t season, uint32_t lastCupGameTime, uint8_t state);
+    bool loadCupGlobal(uint16_t& season, uint32_t& lastCupGameTime, uint8_t& state);
     void clearCupGlobal();
 
 private:
@@ -47,6 +47,8 @@ private:
     static constexpr const char* KEY_VER   = "savever";
     static constexpr const char* KEY_CUP_SEASON = "cup_season";
     static constexpr const char* KEY_CUP_TIME   = "last_cup_time";
+    static constexpr const char* KEY_CUP_GAME_TIME = "cup_game_time";
+    static constexpr const char* KEY_CUP_STATE  = "cup_state";
     static constexpr uint8_t SAVE_VERSION = 8;
 
     bool isSaving = false;  // 防并发写入锁
