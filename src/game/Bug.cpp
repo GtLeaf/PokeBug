@@ -430,7 +430,7 @@ void Bug::feed(FoodType type, uint64_t now) {
     siz += st.siz * absSiz * tempSiz * envSiz * sizGrowthMult() * penalty;
     str += st.str * absStr * tempStr * envStr * strGrowthMult() * penalty;
     end += st.end * absEnd * tempEnd * envEnd * endGrowthMult() * penalty;
-    spd += st.spd * absSpd * tempSpd * envSpd * penalty;
+    spd += st.spd * absSpd * tempSpd * envSpd * spdGrowthMult() * penalty;
     spi += st.spi * absSpi * tempSpi * envSpi * spiGrowthMult() * penalty;
 
     // 成虫期额外 MOT 恢复
