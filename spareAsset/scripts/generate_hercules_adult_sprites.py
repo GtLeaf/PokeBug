@@ -33,7 +33,7 @@ SETS = [
 # numbers are based on WALK as the body-size reference; do not make every frame
 # independently fill the canvas, or low/raised poses will look like different
 # sized beetles.
-ADULT_BASE_SCALE = 1.0
+ADULT_BASE_SCALE = 1.2
 
 BASE_POLICY = {
     "WALK": {"max_w": 48, "max_h": 28},

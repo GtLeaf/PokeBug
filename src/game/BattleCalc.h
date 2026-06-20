@@ -23,8 +23,8 @@ public:
         int critRate = (int)spi * 3 + (int)spd * 1;
         if (critRate > 80) critRate = 80;
         outCrit = (random(100) < critRate);
-        float critMult = outCrit ? 1.8f : 1.0f;
-        int dmg = (int)(baseDmg * motMult * critMult) - (int)(end * 0.5f);
+        float critMult = outCrit ? 1.5f : 1.0f;
+        int dmg = (int)(baseDmg * motMult * critMult) - (int)(end * 0.3f);
         if (dmg < 1) dmg = 1;
         return dmg;
     }

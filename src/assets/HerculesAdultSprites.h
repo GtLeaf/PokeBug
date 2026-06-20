@@ -4,8 +4,8 @@
 
 namespace HerculesAdultSprites {
 
-static constexpr uint8_t MAX_FRAME_W = 58;
-static constexpr uint8_t MAX_FRAME_H = 39;
+static constexpr uint8_t MAX_FRAME_W = 70;
+static constexpr uint8_t MAX_FRAME_H = 47;
 
 static constexpr uint16_t PALETTE_KEY = 0xF800;
 

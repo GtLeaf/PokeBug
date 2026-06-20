@@ -660,7 +660,7 @@ void TerrariumScene::updateAdultMovement() {
 
 void TerrariumScene::drawFoodTray() {
     static constexpr int BOWL_X = 14;
-    static constexpr int BOWL_Y = GROUND_Y - BowlAssets::FRAME_H;
+    static constexpr int BOWL_Y = GROUND_Y - BowlAssets::FRAME_H + 3;
 
     uint8_t style = GameEngine::ins().getBowlStyle();
     if (style >= BowlAssets::SPRITE_COUNT) style = 0;
@@ -679,7 +679,7 @@ void TerrariumScene::drawFoodTray() {
         uint16_t foodOffset = pgm_read_word(&FoodAssets::SPRITE_FRAMES[foodStyle].offset);
         uint16_t foodLength = pgm_read_word(&FoodAssets::SPRITE_FRAMES[foodStyle].length);
         PixelRenderer::drawRgb565RleEaten(BOWL_X + (BowlAssets::FRAME_W - FoodAssets::FRAME_W) / 2,
-                                          BOWL_Y + 3,
+                                          BOWL_Y - 1,
                                           FoodAssets::FRAME_W,
                                           FoodAssets::FRAME_H,
                                           FoodAssets::SPRITE_RLE,
