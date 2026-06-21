@@ -35,4 +35,14 @@ public:
         if (loss < 1) loss = 1;
         return loss;
     }
+
+    // 闪避判定：SPD 差每 1 点 5% 闪避率，上限 30%
+    // 返回 true 表示本次攻击被闪避（Miss）
+    static bool tryDodge(uint8_t attackerSpd, uint8_t defenderSpd) {
+        int diff = (int)defenderSpd - (int)attackerSpd;
+        if (diff <= 0) return false;
+        int dodgeRate = diff * 5;
+        if (dodgeRate > 30) dodgeRate = 30;
+        return (random(100) < dodgeRate);
+    }
 };

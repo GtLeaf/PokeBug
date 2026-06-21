@@ -94,8 +94,9 @@ void TerrariumScene::onEnter() {
     slideTargetX = bugX;
     climbTargetX = bugX;
     tiltHighSideIsRight = true;
+    alertUntilMs = 0;
     stateTimer = 0;
-    stateDuration = random(30, 90);
+    setIdleDuration();
 }
 
 void TerrariumScene::onExit() {}
@@ -218,9 +219,10 @@ bool TerrariumScene::onButton(const ButtonEvent& ev) {
                 bugX += dir * 5;
                 if (bugX < MIN_X) bugX = MIN_X;
                 if (bugX > MAX_X) bugX = MAX_X;
+                alertUntilMs = now + random(ALERT_MIN_MS, ALERT_MAX_MS + 1);
                 adultState = AdultState::IDLE;
                 stateTimer = 0;
-                stateDuration = random(30, 90);
+                setIdleDuration();
             }
             Serial.println("[Terrarium] Poked bug");
         } else {
@@ -382,7 +384,8 @@ void TerrariumScene::drawAdult(int x, int y, uint8_t palette) {
         frames = HerculesAdultSprites::EAT_FRAMES;
         data = HerculesAdultSprites::EAT_RLE;
         frameCount = HerculesAdultSprites::EAT_FRAME_COUNT;
-        frameIndex = (stateTimer / eatFrameInterval) % frameCount;
+        uint8_t interval = eatFrameInterval == 0 ? EAT_FRAME_INTERVAL_MIN : eatFrameInterval;
+        frameIndex = (stateTimer / interval) % frameCount;
         flipSprite = !faceRight;
     } else if (adultState == AdultState::TURN) {
         // 转身过渡每次随机取一张中间姿态；同一次转身中保持不变。
@@ -431,9 +434,12 @@ void TerrariumScene::drawAdult(int x, int y, uint8_t palette) {
 bool TerrariumScene::wantsToEat() {
     Bug& bug = GameEngine::ins().getBug();
     if (!bug.hasFoodInTray() || bug.getFoodAmount() == 0) return false;
-    if (bug.getHunger() < 60) return true;
-    // 饱腹时也有小概率去闻闻食物
-    return random(100) < 10;
+    bool alerted = alertUntilMs != 0 && Hal::ins().millis() < alertUntilMs;
+    if (alerted && bug.getHunger() >= 35) return false;
+    if (bug.getHunger() < 45) return true;
+    if (bug.getHunger() < 70) return random(100) < 35;
+    if (bug.getHunger() < 80) return random(100) < (GameEngine::ins().isNight() ? 18 : 8);
+    return false;
 }
 
 void TerrariumScene::startTurn(bool targetFaceRight, bool continueWalking) {
@@ -461,56 +467,70 @@ void TerrariumScene::startWalkTo(int x) {
     }
 }
 
+void TerrariumScene::enterEat() {
+    adultState = AdultState::EAT;
+    stateTimer = 0;
+    stateDuration = random(EAT_DURATION_MIN_FRAMES, EAT_DURATION_MAX_FRAMES + 1);
+    eatFrameInterval = (uint8_t)random(EAT_FRAME_INTERVAL_MIN, EAT_FRAME_INTERVAL_MAX + 1);
+    eatBitesThisSession = 0;
+}
+
+void TerrariumScene::enterRest() {
+    adultState = AdultState::REST;
+    stateTimer = 0;
+    stateDuration = 0;
+    faceRight = random(2) == 0;
+}
+
+void TerrariumScene::setIdleDuration() {
+    bool alerted = alertUntilMs != 0 && Hal::ins().millis() < alertUntilMs;
+    if (alerted) {
+        stateDuration = random(100, 221);
+    } else if (GameEngine::ins().isNight()) {
+        stateDuration = random(50, 151);
+    } else {
+        stateDuration = random(100, 261);
+    }
+}
+
+bool TerrariumScene::wantsToRestOnWood() {
+    Bug& bug = GameEngine::ins().getBug();
+    if (!bug.isWoodPlaced()) return false;
+    if (bug.getHunger() < 45) return false;
+    if (alertUntilMs != 0 && Hal::ins().millis() < alertUntilMs) return false;
+
+    if (GameEngine::ins().isNight()) {
+        return random(100) < 60;
+    }
+    // 白天也可能躲在腐木边，但不要像夜晚那样强制归位。
+    return random(100) < 12;
+}
+
+bool TerrariumScene::wantsToWander() {
+    if (alertUntilMs != 0 && Hal::ins().millis() < alertUntilMs) {
+        return random(100) < 12;
+    }
+    return random(100) < (GameEngine::ins().isNight() ? 65 : 28);
+}
+
 // 成虫状态机：贴地、走走停停、靠近食物进食
 void TerrariumScene::updateAdultMovement() {
     Bug& bug = GameEngine::ins().getBug();
+
     stateTimer++;
 
-    // threaten（威吓）和 REST（夜间休息）期间不主动移动，
-    // 但允许因大角度倾斜而滑落；滑动会唤醒休息中的甲虫。
-    if ((pokeThreatenEndMs != 0 && Hal::ins().millis() < pokeThreatenEndMs) ||
-        adultState == AdultState::REST) {
+    // threaten（威吓）期间不主动移动，但允许因大角度倾斜而滑落。
+    if (pokeThreatenEndMs != 0 && Hal::ins().millis() < pokeThreatenEndMs) {
         if (adultState != AdultState::SLIDE) {
             return;
         }
     }
 
-    // 夜间休息逻辑：成虫 + 腐木已放置 + 夜间 + 非威吓期间 + 清醒冷却结束
-    bool shouldRest = (bug.getStage() == Stage::ADULT) &&
-                      bug.isWoodPlaced() &&
-                      GameEngine::ins().isNight() &&
-                      (pokeThreatenEndMs == 0 || Hal::ins().millis() >= pokeThreatenEndMs) &&
-                      Hal::ins().millis() >= restResumeAllowedMs;
-
-    if (adultState == AdultState::REST) {
-        if (!shouldRest) {
-            adultState = AdultState::IDLE;
-            stateTimer = 0;
-            stateDuration = random(30, 90);
-        }
-    }
-
-    if (shouldRest) {
-        if (adultState != AdultState::REST &&
-            adultState != AdultState::SLIDE &&
-            adultState != AdultState::CLIMB &&
-            adultState != AdultState::TURN) {
-            if (abs(WOOD_REST_X - bugX) <= 2) {
-                // 已走到腐木旁，入睡
-                adultState = AdultState::REST;
-                stateTimer = 0;
-                stateDuration = 0;
-            } else {
-                // 清醒后先走回腐木旁边
-                startWalkTo(WOOD_REST_X);
-            }
-        }
-    }
-
     switch (adultState) {
         case AdultState::IDLE:
-            // 静止时偶尔张望（朝向随机小概率翻转）
-            if (stateTimer > stateDuration / 2 && random(100) < 3) {
+            // 静止后段偶尔张望。这里是每帧概率，20fps 下不能设得太高。
+            if (stateTimer > (stateDuration * 2) / 3 &&
+                random(1000) < IDLE_LOOK_AROUND_CHANCE_PER_1000) {
                 startTurn(!faceRight, false);
                 break;
             }
@@ -518,7 +538,13 @@ void TerrariumScene::updateAdultMovement() {
             if (stateTimer >= stateDuration) {
                 if (wantsToEat()) {
                     startWalkTo(FOOD_X);
-                } else {
+                } else if (Hal::ins().millis() >= restResumeAllowedMs && wantsToRestOnWood()) {
+                    if (abs(WOOD_REST_X - bugX) <= 2) {
+                        enterRest();
+                    } else {
+                        startWalkTo(WOOD_REST_X);
+                    }
+                } else if (wantsToWander()) {
                     // 随机巡逻点，避免连续两次太近
                     int newTarget = random(MIN_X, MAX_X + 1);
                     if (abs(newTarget - bugX) < 30) {
@@ -526,6 +552,9 @@ void TerrariumScene::updateAdultMovement() {
                                                    : random(MIN_X, 100);
                     }
                     startWalkTo(newTarget);
+                } else {
+                    stateTimer = 0;
+                    setIdleDuration();
                 }
             }
             break;
@@ -548,7 +577,7 @@ void TerrariumScene::updateAdultMovement() {
                     stateDuration = 0;
                 } else {
                     adultState = AdultState::IDLE;
-                    stateDuration = random(30, 90);
+                    setIdleDuration();
                 }
             }
             break;
@@ -557,9 +586,10 @@ void TerrariumScene::updateAdultMovement() {
             {
                 int dx = (targetX > bugX) ? 1 : -1;
                 faceRight = (dx > 0);
+                bool walkingToFood = (targetX == FOOD_X);
 
                 // 每 3 帧移动 1 像素，模拟甲虫缓慢爬行；进食心切时走快点
-                uint8_t stepInterval = wantsToEat() ? 2 : 3;
+                uint8_t stepInterval = walkingToFood ? 2 : 3;
                 if (stateTimer % stepInterval == 0) {
                     bugX += dx;
                     if (bugX < MIN_X) bugX = MIN_X;
@@ -568,15 +598,17 @@ void TerrariumScene::updateAdultMovement() {
 
                 // 到达目标
                 if (abs(targetX - bugX) <= 2) {
-                    if (wantsToEat() && targetX == FOOD_X) {
-                        adultState = AdultState::EAT;
-                        stateTimer = 0;
-                        stateDuration = random(180, 420);  // 吃 3-7 秒
-                        eatFrameInterval = (uint8_t)random(20, 41); // 每帧 1~2 秒
+                    if (walkingToFood && bug.hasFoodInTray() && bug.getFoodAmount() > 0) {
+                        enterEat();
+                    } else if (targetX == WOOD_REST_X &&
+                               bug.isWoodPlaced() &&
+                               bug.getHunger() >= 35 &&
+                               (alertUntilMs == 0 || Hal::ins().millis() >= alertUntilMs)) {
+                        enterRest();
                     } else {
                         adultState = AdultState::IDLE;
                         stateTimer = 0;
-                        stateDuration = random(40, 150);
+                        setIdleDuration();
                     }
                 }
             }
@@ -622,7 +654,7 @@ void TerrariumScene::updateAdultMovement() {
                     Serial.println("[Tilt] climb done -> IDLE");
                     adultState = AdultState::IDLE;
                     stateTimer = 0;
-                    stateDuration = random(30, 90);
+                    setIdleDuration();
                 }
             }
             break;
@@ -630,28 +662,37 @@ void TerrariumScene::updateAdultMovement() {
         case AdultState::EAT:
             // 面向食物盘（食物在左侧，所以朝左）
             faceRight = false;
-            // 吃到食物消失、吃饱或超时后离开
+            // 第一口保证吃掉，后续再按饥饿程度和间隔自然继续。
+            if (bug.eatFromTray(GameEngine::ins().getGameNow(), eatBitesThisSession == 0)) {
+                eatBitesThisSession++;
+            }
+            // 吃到食物消失、明显饱足或超时后离开
             if (!bug.hasFoodInTray() || bug.getFoodAmount() == 0 ||
-                bug.getHunger() >= 95 || stateTimer >= stateDuration) {
+                (eatBitesThisSession > 0 && bug.getHunger() >= EAT_CONTINUE_HUNGER) ||
+                stateTimer >= stateDuration) {
                 adultState = AdultState::IDLE;
                 stateTimer = 0;
-                stateDuration = random(30, 90);
+                setIdleDuration();
             }
             break;
 
         case AdultState::REST:
-            // 夜间趴在腐木上休息：缓慢移动到腐木位置
+            // 趴在腐木上休息；只有真正停在腐木旁时才获得腐木成长。
             {
-                int dx = (WOOD_REST_X > bugX) ? 1 : -1;
-                faceRight = (dx > 0);
-                if (stateTimer % 3 == 0 && abs(WOOD_REST_X - bugX) > 2) {
-                    bugX += dx;
-                    if (bugX < MIN_X) bugX = MIN_X;
-                    if (bugX > MAX_X) bugX = MAX_X;
+                bool alerted = alertUntilMs != 0 && Hal::ins().millis() < alertUntilMs;
+                if (!bug.isWoodPlaced() || bug.getHunger() < 35 || alerted) {
+                    adultState = AdultState::IDLE;
+                    stateTimer = 0;
+                    setIdleDuration();
+                    break;
                 }
                 if (abs(WOOD_REST_X - bugX) <= 2) {
-                    // 到达后脸朝左（朝外）
-                    faceRight = false;
+                    bug.recordWoodRest(GameEngine::ins().getGameNow());
+                }
+                if (!GameEngine::ins().isNight() && stateTimer > 180 && random(1000) < 4) {
+                    adultState = AdultState::IDLE;
+                    stateTimer = 0;
+                    setIdleDuration();
                 }
             }
             break;
@@ -886,7 +927,7 @@ void TerrariumScene::updateTilt() {
                 Serial.println("[Tilt] level, stop climb -> IDLE");
                 adultState = AdultState::IDLE;
                 stateTimer = 0;
-                stateDuration = random(30, 90);
+                setIdleDuration();
             }
         }
     }
@@ -904,6 +945,11 @@ void TerrariumScene::onTilt(TiltDir dir, float magnitude) {
 
     if (adultState == AdultState::EAT) {
         Serial.println("[Tilt] ignored: eating");
+        return;
+    }
+
+    if (adultState == AdultState::REST && magnitude <= TILT_SLIDE_THRESHOLD_G) {
+        Serial.println("[Tilt] ignored: resting");
         return;
     }
 
@@ -965,7 +1011,7 @@ void TerrariumScene::onTilt(TiltDir dir, float magnitude) {
 
 // 小角度倾斜：优先向高处缓慢爬行，偶尔原地休息
 void TerrariumScene::startClimbOrIdle() {
-    if (random(100) < 85) {
+    if (random(100) < 45) {
         Serial.printf("[Tilt] start CLIMB -> target=%d\n", climbTargetX);
         adultState = AdultState::CLIMB;
         stateTimer = 0;
@@ -974,7 +1020,7 @@ void TerrariumScene::startClimbOrIdle() {
         Serial.println("[Tilt] stay IDLE at high side");
         adultState = AdultState::IDLE;
         stateTimer = 0;
-        stateDuration = random(40, 100);
+        setIdleDuration();
     }
 }
 

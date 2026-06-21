@@ -111,6 +111,11 @@ public:
     void setWood(uint8_t style);
     float getEnvMultiplier(int attrIndex) const; // 0=SIZ,1=STR,2=END,3=SPD,4=SPI
 
+    // 自主进食：幼虫/蛹期在 Bug::update 中调用；成虫由 TerrariumScene 在 EAT 状态时调用
+    bool eatFromTray(uint64_t now, bool forceBite = false);
+    // 成虫真正趴在腐木上休息时调用；连续休息才获得 END 成长
+    void recordWoodRest(uint64_t now);
+
     // ---------- 战绩/世代 ----------
     uint8_t getWins() const { return wins; }
     uint8_t getLosses() const { return losses; }
@@ -196,6 +201,7 @@ private:
     uint64_t lastShakeTrainTime = 0;
     uint32_t eggShakeDelayAcc = 0;
     uint64_t restStartTime = 0;
+    uint64_t woodRestAcc = 0;
     uint64_t lastPokeTime = 0;
 
     // 戳甲虫愤怒值与 MOT buff
@@ -250,7 +256,6 @@ private:
     void clampAttributes();
     void updateHunger(uint64_t now, uint32_t deltaMs);
     void checkStageTransition(uint64_t now);
-    void eatFromTray(uint64_t now);
     Temperament determineTemperament(uint64_t now);
     void updatePupaSpi(uint64_t now, uint32_t deltaMs);
 

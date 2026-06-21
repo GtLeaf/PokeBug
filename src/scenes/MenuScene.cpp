@@ -668,12 +668,8 @@ void MenuScene::drawFoodLayout() {
         int storageW = canvas.textWidth(storageBuf);
         int textW = (nameW > storageW) ? nameW : storageW;
 
-        // 容器整体居中但保持右侧边距：icon + 间距 + 右侧文字（名字在上，库存在下）
-        int rightW = Hal::DISPLAY_W - RIGHT_X;
-        int contentW = iconW + 5 + textW;
-        int contentX = RIGHT_X + (rightW - contentW) / 2;
-        if (contentX < RIGHT_X + 2) contentX = RIGHT_X + 2;
-        int iconX = contentX;
+        // icon 距离左侧分割线 5px，文字紧跟 icon 右侧
+        int iconX = RIGHT_X + 5;
         int iconY = 18;
         int textX = iconX + iconW + 5;
         int nameY = iconY + 2;

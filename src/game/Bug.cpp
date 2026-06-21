@@ -30,6 +30,7 @@ void Bug::initNew(uint64_t now) {
     lastShakeTrainTime = 0;
     eggShakeDelayAcc = 0;
     restStartTime = 0;
+    woodRestAcc = 0;
     lastPokeTime = 0;
 
     pokeAnger = 0;
@@ -129,18 +130,9 @@ void Bug::update(uint64_t now) {
         }
     }
 
-    // 甲虫自主进食
-    eatFromTray(now);
-
-    // 腐木休息 END 成长
-    if (stage == Stage::ADULT && woodPlaced && hunger >= 50) {
-        if (restStartTime == 0) restStartTime = now;
-        if (now - restStartTime >= 2ULL * 60 * 1000) {
-            end += 0.3f;
-            restStartTime = now;
-        }
-    } else {
-        restStartTime = 0;
+    // 幼虫/蛹期自主进食；成虫由 TerrariumScene 在走到食物盘并进入 EAT 状态时控制进食
+    if (stage != Stage::ADULT) {
+        eatFromTray(now);
     }
 
     // 阶段推进
@@ -456,11 +448,11 @@ void Bug::feed(FoodType type, uint64_t now) {
     clampAttributes();
 }
 
-void Bug::eatFromTray(uint64_t now) {
-    if (foodAmount == 0 || !foodInTray) return;
+bool Bug::eatFromTray(uint64_t now, bool forceBite) {
+    if (foodAmount == 0 || !foodInTray) return false;
 
     static constexpr uint32_t EAT_INTERVAL_MS = 2000;
-    if (now - lastEatTime < EAT_INTERVAL_MS) return;
+    if (!forceBite && now - lastEatTime < EAT_INTERVAL_MS) return false;
 
     bool hungry = false;
     uint8_t eatChance = 0;
@@ -471,10 +463,10 @@ void Bug::eatFromTray(uint64_t now) {
         hungry = hunger < 80;
         eatChance = 70;
     } else {
-        return;
+        return false;
     }
 
-    if (!hungry || random(100) >= eatChance) return;
+    if (!forceBite && (!hungry || random(100) >= eatChance)) return false;
 
     foodAmount--;
     hunger += 6;
@@ -488,6 +480,32 @@ void Bug::eatFromTray(uint64_t now) {
         if (stage == Stage::LARVA) larvaFeeds++;
     }
 
+    clampAttributes();
+    return true;
+}
+
+void Bug::recordWoodRest(uint64_t now) {
+    if (stage != Stage::ADULT || !woodPlaced || hunger < 50) {
+        restStartTime = 0;
+        woodRestAcc = 0;
+        return;
+    }
+
+    if (restStartTime != 0 && now > restStartTime) {
+        uint64_t delta = now - restStartTime;
+        if (delta <= 10000ULL) {
+            woodRestAcc += delta;
+        } else {
+            woodRestAcc = 0;
+        }
+    }
+    restStartTime = now;
+
+    static constexpr uint64_t WOOD_REST_END_GAIN_MS = 2ULL * 60 * 1000;
+    while (woodRestAcc >= WOOD_REST_END_GAIN_MS) {
+        woodRestAcc -= WOOD_REST_END_GAIN_MS;
+        end += 0.3f;
+    }
     clampAttributes();
 }
 
@@ -1019,6 +1037,7 @@ bool Bug::load(const uint8_t* buf, uint16_t len) {
         lastShakeTrainTime = (uint64_t)sd.lastShake * 1000ULL;
         eggShakeDelayAcc = sd.eggShakeDelay * 1000U;
         restStartTime = (uint64_t)sd.restStart * 1000ULL;
+        woodRestAcc = 0;
         lastUpdateTime = (uint64_t)sd.lastUpdate * 1000ULL;
         lastEatTime = (uint64_t)sd.lastEat * 1000ULL;
         larvaFeeds = sd.larvaFeeds;

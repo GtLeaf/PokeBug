@@ -54,8 +54,10 @@ private:
     bool tiltHighSideIsRight = false;  // 高处是否在右侧
     uint32_t stateTimer = 0;      // 当前状态已持续帧数
     uint32_t stateDuration = 0;   // 当前状态目标持续帧数
-    uint8_t eatFrameInterval = 0; // EAT 动画每帧持续帧数（20fps 下 20~40 = 1~2 秒）
+    uint8_t eatFrameInterval = 0; // EAT 动画每帧持续帧数
+    uint8_t eatBitesThisSession = 0;
     uint32_t restResumeAllowedMs = 0; // 允许重新进入夜间休息的时间戳
+    uint32_t alertUntilMs = 0;        // 被戳后的警戒结束时间
 
     static constexpr int GROUND_Y = 125;   // 甲虫贴地时脚所在的 Y 坐标
     static constexpr int FOOD_X = 55;      // 食物盘旁站立位置（中心点）
@@ -65,6 +67,14 @@ private:
     static constexpr int MIN_X = 35;       // 左边界，预留巨体最大缩放半宽
     static constexpr int MAX_X = 165;      // 右边界，避免巨体最大缩放进入右侧状态栏
     static constexpr uint32_t TURN_DURATION_FRAMES = 16;  // 20fps 下约 0.8 秒
+    static constexpr uint32_t EAT_DURATION_MIN_FRAMES = 60;  // 20fps 下约 3 秒
+    static constexpr uint32_t EAT_DURATION_MAX_FRAMES = 140; // 20fps 下约 7 秒
+    static constexpr uint8_t EAT_FRAME_INTERVAL_MIN = 6;     // 20fps 下约 0.3 秒
+    static constexpr uint8_t EAT_FRAME_INTERVAL_MAX = 10;    // 20fps 下约 0.5 秒
+    static constexpr uint8_t EAT_CONTINUE_HUNGER = 80;
+    static constexpr uint16_t IDLE_LOOK_AROUND_CHANCE_PER_1000 = 3;
+    static constexpr uint32_t ALERT_MIN_MS = 8000;
+    static constexpr uint32_t ALERT_MAX_MS = 16000;
 
     // 倾斜交互参数
     static constexpr float TILT_SLIDE_THRESHOLD_G = 1.0f;  // 超过此角度先向低处滑落
@@ -88,8 +98,13 @@ private:
     void updateAdultMovement();
     void startTurn(bool targetFaceRight, bool continueWalking);
     void startWalkTo(int x);
+    void enterEat();
+    void enterRest();
+    void setIdleDuration();
     void startClimbOrIdle();
     bool wantsToEat();
+    bool wantsToRestOnWood();
+    bool wantsToWander();
 
     // 倾斜交互
     void updateTilt();
