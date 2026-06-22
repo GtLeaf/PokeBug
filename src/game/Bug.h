@@ -75,6 +75,11 @@ public:
     float getEnd() const { return end; }
     float getSpd() const { return spd; }
     float getSpi() const { return spi; }
+    uint8_t getSizCap() const { return sizCap(); }
+    uint8_t getStrCap() const { return strCap(); }
+    uint8_t getEndCap() const { return endCap(); }
+    uint8_t getSpdCap() const { return spdCap(); }
+    uint8_t getSpiCap() const { return spiCap(); }
     uint8_t getMot() const { return mot; }
     uint8_t getHunger() const { return hunger; }
     void modHunger(int8_t delta);

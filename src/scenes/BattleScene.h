@@ -1,6 +1,7 @@
 #pragma once
 #include "../core/Scene.h"
 #include "../hardware/BattleLink.h"
+#include "../game/BattleCalc.h"
 
 // 对战场景
 class BattleScene : public Scene {
@@ -27,15 +28,9 @@ private:
     State state = State::CONNECTING;
 
     // 我方/敌方战斗数值
-    struct Combatant {
+    struct Combatant : public BattleCalc::BattleStats {
         int hp = 0;
         int maxHp = 0;
-        uint8_t str = 0;
-        uint8_t siz = 0;
-        uint8_t end = 0;
-        uint8_t spi = 0;
-        uint8_t spd = 0;
-        uint8_t mot = 0;
         uint8_t palette = 0;
     };
     Combatant me;
@@ -47,8 +42,10 @@ private:
     // 本回合计算结果
     int myDmg = 0;
     bool myCrit = false;
+    bool myAttackDodged = false;
     int enemyDmg = 0;
     bool enemyCrit = false;
+    bool enemyAttackDodged = false;
     bool flashThisFrame = false;
 
     // 对战结果

@@ -80,13 +80,13 @@ void InfoScene::renderStatus() {
     canvas.drawFastHLine(marginX, y - 6, Hal::DISPLAY_W - marginX * 2, PixelRenderer::GRAY);
     y += 4;
 
-    struct Attr { const char* name; float val; };
+    struct Attr { const char* name; float val; uint8_t cap; };
     Attr attrs[5] = {
-        {"SIZ", bug.getSiz()},
-        {"STR", bug.getStr()},
-        {"END", bug.getEnd()},
-        {"SPD", bug.getSpd()},
-        {"SPI", bug.getSpi()},
+        {"SIZ", bug.getSiz(), bug.getSizCap()},
+        {"STR", bug.getStr(), bug.getStrCap()},
+        {"END", bug.getEnd(), bug.getEndCap()},
+        {"SPD", bug.getSpd(), bug.getSpdCap()},
+        {"SPI", bug.getSpi(), bug.getSpiCap()},
     };
 
     static constexpr int ATTR_STEP = 16;
@@ -105,7 +105,7 @@ void InfoScene::renderStatus() {
             PixelRenderer::drawPixelText(x, y, attrs[idx].name, PixelRenderer::WHITE, fs);
 
             // 数值靠右
-            snprintf(buf, sizeof(buf), "%d", (int)roundf(attrs[idx].val));
+            snprintf(buf, sizeof(buf), "%d/%d", (int)roundf(attrs[idx].val), attrs[idx].cap);
             canvas.setTextSize(fs);
             int valW = canvas.textWidth(buf);
             int valX = x + colW - valW - (int)(4 * fs);
@@ -116,8 +116,10 @@ void InfoScene::renderStatus() {
             int barX = x + nameW + (int)(6 * fs);
             int barW = valX - barX - (int)(4 * fs);
             if (barW < 10) barW = 10;
+            float ratio = attrs[idx].cap == 0 ? 0.0f : attrs[idx].val / attrs[idx].cap;
+            if (ratio > 1.0f) ratio = 1.0f;
             PixelRenderer::drawProgressBar(barX, y + barYOffset, barW, barH,
-                                           attrs[idx].val / 10.0f,
+                                           ratio,
                                            PixelRenderer::GREEN, PixelRenderer::GRAY);
         }
         y += ATTR_STEP;

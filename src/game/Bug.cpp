@@ -501,10 +501,17 @@ void Bug::recordWoodRest(uint64_t now) {
     }
     restStartTime = now;
 
-    static constexpr uint64_t WOOD_REST_END_GAIN_MS = 2ULL * 60 * 1000;
+    static constexpr uint64_t WOOD_REST_END_GAIN_MS = 4ULL * 60 * 1000;
+    float tempEnd = 1.0f;
+    if (temperament == Temperament::RESILIENT) {
+        tempEnd = 1.10f;
+    } else if (temperament == Temperament::BRUTE) {
+        tempEnd = 0.90f;
+    }
+
     while (woodRestAcc >= WOOD_REST_END_GAIN_MS) {
         woodRestAcc -= WOOD_REST_END_GAIN_MS;
-        end += 0.3f;
+        end += 0.2f * endGrowthMult() * tempEnd;
     }
     clampAttributes();
 }

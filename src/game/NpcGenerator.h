@@ -30,6 +30,8 @@ public:
     }
 
 private:
+    static constexpr uint8_t NPC_STAT_MAX = 24; // 战斗安全上限，不再把基因潜力硬截到 10
+
     static NpcCombatant generate(const Bug& player, const uint8_t weights[4]) {
         // 1. 按权重选档位
         int total = weights[0] + weights[1] + weights[2] + weights[3];
@@ -67,7 +69,7 @@ private:
             float f = playerVal * randomFloat(multMin, multMax);
             int v = (int)roundf(f);
             if (v < 1) v = 1;
-            if (v > 10) v = 10;
+            if (v > NPC_STAT_MAX) v = NPC_STAT_MAX;
             return (uint8_t)v;
         };
 

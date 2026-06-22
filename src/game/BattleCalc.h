@@ -1,48 +1,113 @@
 #pragma once
+#include <Arduino.h>
+#include <cmath>
 #include <cstdint>
 
 // 对战公式计算
 class BattleCalc {
 public:
+    struct BattleStats {
+        uint8_t siz = 0;
+        uint8_t str = 0;
+        uint8_t end = 0;
+        uint8_t spd = 0;
+        uint8_t spi = 0;
+        uint8_t mot = 0;
+    };
+
+    struct AttackResult {
+        uint8_t damage;
+        bool crit;
+        bool dodged;
+    };
+
     // 总 HP
     static int computeHp(uint8_t siz, uint8_t end) {
         return 20 + siz * 3 + end * 2;
     }
 
-    // 先手值：SPD 高者先手；用于每回合开局比较
-    static int computeInitiative(uint8_t spd, uint8_t mot) {
-        return spd * 10 + mot;
+    static int computeHp(const BattleStats& stats) {
+        return computeHp(stats.siz, stats.end);
     }
 
-    // 本回合伤害，outCrit 输出是否暴击
-    static int computeDamage(uint8_t str, uint8_t siz, uint8_t end, uint8_t spi,
-                             uint8_t spd, uint8_t mot, bool& outCrit) {
-        float baseDmg = str * (1.0f + siz / (siz + 5.0f));
-        float motMult = 0.5f + mot / 100.0f;
-        // 暴击率由 SPI 与 SPD 共同决定
-        int critRate = (int)spi * 3 + (int)spd * 1;
-        if (critRate > 80) critRate = 80;
-        outCrit = (random(100) < critRate);
-        float critMult = outCrit ? 1.5f : 1.0f;
-        int dmg = (int)(baseDmg * motMult * critMult) - (int)(end * 0.3f);
-        if (dmg < 1) dmg = 1;
-        return dmg;
+    // 先手值：SPD 高者更容易先手；MOT 与少量节奏随机避免 +1 SPD 永久锁先手。
+    static int computeInitiative(uint8_t spd, uint8_t mot) {
+        return spd * 6 + mot + (int)random(-8, 9);
+    }
+
+    static int computeInitiative(const BattleStats& stats) {
+        return computeInitiative(stats.spd, stats.mot);
+    }
+
+    static AttackResult computeAttack(const BattleStats& attacker, const BattleStats& defender) {
+        return computeAttackRaw(attacker.str, attacker.siz,
+                                attacker.spi, attacker.spd,
+                                defender.end, defender.spi, defender.spd,
+                                attacker.mot);
     }
 
     // 每回合 MOT 自然衰减
     static int computeMotLoss(uint8_t spi) {
-        int loss = 12 - spi / 2;
-        if (loss < 1) loss = 1;
+        int loss = (int)roundf(9.0f - spi / 3.0f);
+        if (loss < 2) loss = 2;
+        if (loss > 9) loss = 9;
         return loss;
     }
 
-    // 闪避判定：SPD 差每 1 点 5% 闪避率，上限 30%
-    // 返回 true 表示本次攻击被闪避（Miss）
-    static bool tryDodge(uint8_t attackerSpd, uint8_t defenderSpd) {
-        int diff = (int)defenderSpd - (int)attackerSpd;
-        if (diff <= 0) return false;
-        int dodgeRate = diff * 5;
-        if (dodgeRate > 30) dodgeRate = 30;
-        return (random(100) < dodgeRate);
+private:
+    // 本次攻击结果：包含伤害、暴击、闪避。闪避时 damage=0。
+    static AttackResult computeAttackRaw(uint8_t attackerStr,
+                                         uint8_t attackerSiz,
+                                         uint8_t attackerSpi,
+                                         uint8_t attackerSpd,
+                                         uint8_t defenderEnd,
+                                         uint8_t defenderSpi,
+                                         uint8_t defenderSpd,
+                                         uint8_t mot) {
+        AttackResult result{1, false, false};
+
+        float dodgeRate = 0.0f;
+        int spdDiff = (int)defenderSpd - (int)attackerSpd;
+        if (spdDiff > 0) dodgeRate += spdDiff * 3.0f;
+        dodgeRate += defenderSpi / 8.0f;
+        dodgeRate = clampFloat(dodgeRate, 0.0f, 22.0f);
+        if (rollPercent(dodgeRate)) {
+            result.damage = 0;
+            result.dodged = true;
+            return result;
+        }
+
+        static constexpr float STR_BASE_POWER = 1.5f;
+        static constexpr float STR_DAMAGE_SLOPE = 0.80f; // 小幅削弱 STR 单点边际收益
+        float sizeBonus = 1.0f + 0.45f * attackerSiz / (attackerSiz + 8.0f);
+        float motMult = 0.75f + mot / 200.0f;
+        float strPower = STR_BASE_POWER + attackerStr * STR_DAMAGE_SLOPE;
+        float raw = strPower * sizeBonus * motMult;
+
+        float critRate = 5.0f + attackerSpi * 2.2f + attackerSpd * 0.5f - defenderSpi * 1.5f;
+        critRate = clampFloat(critRate, 5.0f, 55.0f);
+        result.crit = rollPercent(critRate);
+        float critMult = result.crit ? 1.35f : 1.0f;
+
+        float mitigation = 1.0f - minFloat(0.14f, defenderEnd * 0.0045f);
+        float reduction = defenderEnd * 0.18f;
+        int damage = (int)roundf(raw * critMult * mitigation - reduction);
+        if (damage < 1) damage = 1;
+        if (damage > 255) damage = 255;
+        result.damage = (uint8_t)damage;
+        return result;
+    }
+    static float minFloat(float a, float b) {
+        return a < b ? a : b;
+    }
+
+    static float clampFloat(float value, float minValue, float maxValue) {
+        if (value < minValue) return minValue;
+        if (value > maxValue) return maxValue;
+        return value;
+    }
+
+    static bool rollPercent(float rate) {
+        return random(10000) < (long)(rate * 100.0f);
     }
 };

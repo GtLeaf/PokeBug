@@ -41,7 +41,7 @@ void BattleScene::onEnter() {
         enemy.spd = pending.spd;
         enemy.mot = pending.mot;
         enemy.palette = pending.palette;
-        enemy.maxHp = BattleCalc::computeHp(enemy.siz, enemy.end);
+        enemy.maxHp = BattleCalc::computeHp(enemy);
         enemy.hp = enemy.maxHp;
         state = State::ROUND_START;
         stateStartMs = Hal::ins().millis();
@@ -74,7 +74,7 @@ void BattleScene::initFromBug() {
     me.spd = (uint8_t)roundf(bug.getSpd());
     me.mot = bug.getMot();
     me.palette = bug.getPaletteId();
-    me.maxHp = BattleCalc::computeHp(me.siz, me.end);
+    me.maxHp = BattleCalc::computeHp(me);
     me.hp = me.maxHp;
 
     enemy = me;  // 占位，等待同步后覆盖
@@ -145,7 +145,7 @@ SceneID BattleScene::update() {
                     enemy.spd = sync.spd;
                     enemy.mot = sync.motivation;
                     enemy.palette = sync.palette_id;
-                    enemy.maxHp = BattleCalc::computeHp(enemy.siz, enemy.end);
+                    enemy.maxHp = BattleCalc::computeHp(enemy);
                     enemy.hp = enemy.maxHp;
                     foeSyncReceived = true;
                     Serial.printf("[BattleScene] foe sync received, I am %s\n",
@@ -367,6 +367,8 @@ void BattleScene::startRound() {
     enemyDmg = 0;
     myCrit = false;
     enemyCrit = false;
+    myAttackDodged = false;
+    enemyAttackDodged = false;
     roundSent = false;
     roundComputed = false;
     // 若缓存的从机 ready 属于下一回合则保留，否则丢弃
@@ -382,31 +384,43 @@ battle_round_t BattleScene::computeAuthoritativeRound() {
     round.round_num = (uint8_t)roundNum;
 
     bool hostCrit = false, clientCrit = false;
-    round.host_dmg = (uint8_t)BattleCalc::computeDamage(me.str, me.siz, enemy.end, me.spi, me.spd, me.mot, hostCrit);
+    bool hostDodged = false, clientDodged = false;
+    round.host_dmg = 0;
+    round.client_dmg = 0;
 
-    // 先手判定：SPD*10+MOT 高者先攻；平局随机
-    int hostIni = BattleCalc::computeInitiative(me.spd, me.mot);
-    int clientIni = BattleCalc::computeInitiative(enemy.spd, enemy.mot);
-    bool hostFirst = hostIni > clientIni || (hostIni == clientIni && random(2) == 0);
+    // 先手判定：SPD、MOT 与少量随机节奏共同决定
+    int hostIni = BattleCalc::computeInitiative(me);
+    int clientIni = BattleCalc::computeInitiative(enemy);
+    bool hostFirst = hostIni >= clientIni;
 
     int hostHp = me.hp;
     int clientHp = enemy.hp;
 
     if (hostFirst) {
+        BattleCalc::AttackResult hostAttack = BattleCalc::computeAttack(me, enemy);
+        round.host_dmg = hostAttack.damage;
+        hostCrit = hostAttack.crit;
+        hostDodged = hostAttack.dodged;
         clientHp -= (int)round.host_dmg;
         if (clientHp > 0) {
-            round.client_dmg = (uint8_t)BattleCalc::computeDamage(enemy.str, enemy.siz, me.end, enemy.spi, enemy.spd, enemy.mot, clientCrit);
+            BattleCalc::AttackResult clientAttack = BattleCalc::computeAttack(enemy, me);
+            round.client_dmg = clientAttack.damage;
+            clientCrit = clientAttack.crit;
+            clientDodged = clientAttack.dodged;
             hostHp -= (int)round.client_dmg;
-        } else {
-            round.client_dmg = 0;
         }
     } else {
-        round.client_dmg = (uint8_t)BattleCalc::computeDamage(enemy.str, enemy.siz, me.end, enemy.spi, enemy.spd, enemy.mot, clientCrit);
+        BattleCalc::AttackResult clientAttack = BattleCalc::computeAttack(enemy, me);
+        round.client_dmg = clientAttack.damage;
+        clientCrit = clientAttack.crit;
+        clientDodged = clientAttack.dodged;
         hostHp -= (int)round.client_dmg;
         if (hostHp > 0) {
+            BattleCalc::AttackResult hostAttack = BattleCalc::computeAttack(me, enemy);
+            round.host_dmg = hostAttack.damage;
+            hostCrit = hostAttack.crit;
+            hostDodged = hostAttack.dodged;
             clientHp -= (int)round.host_dmg;
-        } else {
-            round.host_dmg = 0;
         }
     }
 
@@ -424,10 +438,15 @@ battle_round_t BattleScene::computeAuthoritativeRound() {
     round.host_mot = (uint8_t)hostMot;
     round.client_mot = (uint8_t)clientMot;
 
-    round.crits = (hostCrit ? 0x01 : 0x00) | (clientCrit ? 0x02 : 0x00);
+    round.crits = (hostCrit ? 0x01 : 0x00) |
+                  (clientCrit ? 0x02 : 0x00) |
+                  (hostDodged ? 0x04 : 0x00) |
+                  (clientDodged ? 0x08 : 0x00);
 
     myCrit = hostCrit;
     enemyCrit = clientCrit;
+    myAttackDodged = hostDodged;
+    enemyAttackDodged = clientDodged;
     myDmg = round.host_dmg;
     enemyDmg = round.client_dmg;
 
@@ -445,6 +464,8 @@ void BattleScene::applyAuthoritativeRound(const battle_round_t& round) {
         enemyDmg = round.client_dmg;
         myCrit = (round.crits & 0x01) != 0;
         enemyCrit = (round.crits & 0x02) != 0;
+        myAttackDodged = (round.crits & 0x04) != 0;
+        enemyAttackDodged = (round.crits & 0x08) != 0;
     } else {
         me.hp = round.client_hp;
         enemy.hp = round.host_hp;
@@ -454,6 +475,8 @@ void BattleScene::applyAuthoritativeRound(const battle_round_t& round) {
         enemyDmg = round.host_dmg;
         myCrit = (round.crits & 0x02) != 0;
         enemyCrit = (round.crits & 0x01) != 0;
+        myAttackDodged = (round.crits & 0x08) != 0;
+        enemyAttackDodged = (round.crits & 0x04) != 0;
     }
 
     if (enemyDmg > 0) meShakeEndMs = Hal::ins().millis() + SHAKE_MS;
@@ -600,7 +623,11 @@ void BattleScene::drawBattleField() {
         case State::SYNCING: msg = "SYNC"; break;
         case State::CHARGE: msg = "CHARGE! A=boost"; break;
         case State::CLASH: msg = "CLASH!"; break;
-        case State::ROUND_END: msg = myCrit ? "CRIT!" : (enemyCrit ? "OUCH!" : ""); break;
+        case State::ROUND_END:
+            msg = myAttackDodged ? "MISS!" :
+                  (enemyAttackDodged ? "DODGE!" :
+                   (myCrit ? "CRIT!" : (enemyCrit ? "OUCH!" : "")));
+            break;
         default: break;
     }
     PixelRenderer::drawPixelText(80, 100, msg, PixelRenderer::YELLOW, 1);

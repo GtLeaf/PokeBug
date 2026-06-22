@@ -8,6 +8,7 @@
 #include "../assets/FoodAssets.h"
 #include "../assets/WoodAssets.h"
 #include "../assets/BowlAssets.h"
+#include "../assets/MenuAssets.h"
 
 int MenuScene::lastSelected = 0;
 int MenuScene::lastBoxSelected = 0;
@@ -121,6 +122,7 @@ void MenuScene::drawList() {
 
     static constexpr int BOX_W = 56;
     static constexpr int BOX_H = 32;
+    static constexpr int ICON_SLOT_W = 56;
     int boxX = (int)(10 * fs);
 
     for (int k = 0; k < count; k++) {
@@ -134,10 +136,28 @@ void MenuScene::drawList() {
         uint16_t boxColor = (isSelected && cupAvailable) ? PixelRenderer::YELLOW : PixelRenderer::GRAY;
         uint16_t descColor = (isSelected && cupAvailable) ? PixelRenderer::WHITE : PixelRenderer::GRAY;
 
-        // 左侧统一尺寸的 item 色块，选中时以左上角为锚点放大 1.15x
-        int drawBoxW = (int)(BOX_W * relScale);
-        int drawBoxH = (int)(BOX_H * relScale);
-        PixelRenderer::fillRect(boxX, y - drawBoxH / 2, drawBoxW, drawBoxH, boxColor);
+        int leftW = BOX_W;
+        if (mode == Mode::MAIN && i < MenuAssets::MAIN_ICON_COUNT) {
+            if (isSelected) {
+                PixelRenderer::fillRect(boxX - 4, y - BOX_H / 2, 2, BOX_H, PixelRenderer::YELLOW);
+            }
+
+            uint16_t offset = pgm_read_word(&MenuAssets::MAIN_ICON_FRAMES[i].offset);
+            uint16_t length = pgm_read_word(&MenuAssets::MAIN_ICON_FRAMES[i].length);
+            int scaledIconW = (int)(MenuAssets::FRAME_W * relScale);
+            int scaledIconH = (int)(MenuAssets::FRAME_H * relScale);
+            int iconX = boxX + (ICON_SLOT_W - scaledIconW) / 2;
+            int iconY = y - scaledIconH / 2;
+            PixelRenderer::drawRgb565RleScaled(iconX, iconY, MenuAssets::FRAME_W, MenuAssets::FRAME_H,
+                                               MenuAssets::MAIN_ICON_RLE, offset, length, relScale);
+            leftW = ICON_SLOT_W;
+        } else {
+            // 子菜单仍使用统一尺寸色块；主菜单由 MenuAssets 图标承担视觉识别。
+            int drawBoxW = (int)(BOX_W * relScale);
+            int drawBoxH = (int)(BOX_H * relScale);
+            PixelRenderer::fillRect(boxX, y - drawBoxH / 2, drawBoxW, drawBoxH, boxColor);
+            leftW = drawBoxW;
+        }
 
         // 右侧说明文字，与色块垂直中心对齐；未选中时半透明（灰色）
         char label[24];
@@ -145,7 +165,7 @@ void MenuScene::drawList() {
         canvas.setTextSize(fs);
         int tw = canvas.textWidth(desc);
         int th = (int)(8 * fs);
-        int descX = (boxX + drawBoxW + (int)(10 * fs) + Hal::DISPLAY_W) / 2;
+        int descX = (boxX + leftW + (int)(10 * fs) + Hal::DISPLAY_W) / 2;
         int descY = y - th / 2;
         PixelRenderer::drawPixelText(descX - tw / 2, descY, desc, descColor, fs);
     }
