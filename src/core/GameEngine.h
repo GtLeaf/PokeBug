@@ -152,7 +152,7 @@ public:
     uint32_t getExploreDay() const { return exploreDay; }
     bool canExplore() const;
 
-    static constexpr uint8_t EXPLORE_DAILY_LIMIT = 10;
+    static constexpr uint8_t EXPLORE_DAILY_LIMIT = 20;
     void recordExploreFinished();
     void syncExploreClock(bool persist = false);
     uint32_t getCurrentGameDay() const;

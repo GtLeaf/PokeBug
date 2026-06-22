@@ -268,28 +268,32 @@ bool TerrariumScene::onButton(const ButtonEvent& ev) {
 
 void TerrariumScene::drawBackground() {
     if (GameEngine::ins().getMainSceneBg() == GameEngine::BG_BEGINNER) {
-        PixelRenderer::drawRgb565(0, 0,
-                                  MainSceneAssets::BEGINNER_FULL_W,
-                                  MainSceneAssets::BEGINNER_FULL_H,
-                                  MainSceneAssets::BEGINNER_FULL);
+        PixelRenderer::drawIndexed8(0, 0,
+                                    MainSceneAssets::BEGINNER_FULL_W,
+                                    MainSceneAssets::BEGINNER_FULL_H,
+                                    MainSceneAssets::BEGINNER_FULL_INDEX,
+                                    MainSceneAssets::BEGINNER_FULL_PALETTE);
         return;
     }
     if (GameEngine::ins().getMainSceneBg() == GameEngine::BG_CHILD_ROOM) {
-        PixelRenderer::drawRgb565(0, 0,
-                                  MainSceneAssets::CHILD_ROOM_FULL_W,
-                                  MainSceneAssets::CHILD_ROOM_FULL_H,
-                                  MainSceneAssets::CHILD_ROOM_FULL);
+        PixelRenderer::drawIndexed8(0, 0,
+                                    MainSceneAssets::CHILD_ROOM_FULL_W,
+                                    MainSceneAssets::CHILD_ROOM_FULL_H,
+                                    MainSceneAssets::CHILD_ROOM_FULL_INDEX,
+                                    MainSceneAssets::CHILD_ROOM_FULL_PALETTE);
         return;
     }
 
-    PixelRenderer::drawRgb565(0, 0,
-                              MainSceneAssets::MOSS_BG_W,
-                              MainSceneAssets::MOSS_BG_H,
-                              MainSceneAssets::MOSS_BG);
-    PixelRenderer::drawRgb565(0, 120,
-                              MainSceneAssets::MOSS_GROUND_W,
-                              MainSceneAssets::MOSS_GROUND_H,
-                              MainSceneAssets::MOSS_GROUND);
+    PixelRenderer::drawIndexed8(0, 0,
+                                MainSceneAssets::MOSS_BG_W,
+                                MainSceneAssets::MOSS_BG_H,
+                                MainSceneAssets::MOSS_BG_INDEX,
+                                MainSceneAssets::MOSS_BG_PALETTE);
+    PixelRenderer::drawIndexed8(0, 120,
+                                MainSceneAssets::MOSS_GROUND_W,
+                                MainSceneAssets::MOSS_GROUND_H,
+                                MainSceneAssets::MOSS_GROUND_INDEX,
+                                MainSceneAssets::MOSS_GROUND_PALETTE);
 }
 
 void TerrariumScene::drawBug() {
@@ -809,10 +813,11 @@ void TerrariumScene::drawStatusBar() {
 
     // 状态栏背景（Moss 主题）
     if (GameEngine::ins().getMainSceneBg() == GameEngine::BG_MOSS) {
-        PixelRenderer::drawRgb565(200, 0,
-                                  MainSceneAssets::MOSS_STATE_W,
-                                  MainSceneAssets::MOSS_STATE_H,
-                                  MainSceneAssets::MOSS_STATE);
+        PixelRenderer::drawIndexed8(200, 0,
+                                    MainSceneAssets::MOSS_STATE_W,
+                                    MainSceneAssets::MOSS_STATE_H,
+                                    MainSceneAssets::MOSS_STATE_INDEX,
+                                    MainSceneAssets::MOSS_STATE_PALETTE);
     }
 
     // 布局工具

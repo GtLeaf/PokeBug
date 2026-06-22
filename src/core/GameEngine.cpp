@@ -14,6 +14,20 @@ GameEngine& GameEngine::ins() {
     return instance;
 }
 
+namespace {
+uint32_t exploreCycleDayFromMs(uint64_t gameNowMs) {
+    static constexpr uint64_t HOUR_MS = 60ULL * 60 * 1000;
+    uint32_t calendarDay = (uint32_t)(gameNowMs / GameEngine::GAME_DAY_MS);
+    uint8_t hour = (uint8_t)((gameNowMs % GameEngine::GAME_DAY_MS) / HOUR_MS);
+
+    // 探索日从早晨 06:00 开始。午夜到清晨仍属于前一轮夜晚，避免夜探结束后立刻刷新次数。
+    if (hour < 6 && calendarDay > 0) {
+        return calendarDay - 1;
+    }
+    return calendarDay;
+}
+}
+
 void GameEngine::begin() {
     Hal::ins().begin();
 
@@ -71,13 +85,13 @@ void GameEngine::begin() {
 
     uint8_t loadedExploreTod = TIME_MORNING;
     uint8_t loadedExploreCount = 0;
-    uint32_t loadedExploreDay = getCurrentGameDay();
+    uint32_t loadedExploreDay = exploreCycleDayFromMs(gameNow);
     if (SaveManager::ins().loadExploreGlobal(loadedExploreDay, loadedExploreTod, loadedExploreCount)) {
         exploreDay = loadedExploreDay;
         timeOfDay = loadedExploreTod <= TIME_EVENING ? loadedExploreTod : TIME_MORNING;
         exploreCountToday = loadedExploreCount > EXPLORE_DAILY_LIMIT ? EXPLORE_DAILY_LIMIT : loadedExploreCount;
     } else {
-        exploreDay = getCurrentGameDay();
+        exploreDay = exploreCycleDayFromMs(gameNow);
         timeOfDay = naturalExploreTimeOfDay();
         exploreCountToday = 0;
     }
@@ -560,12 +574,12 @@ void GameEngine::saveExploreGlobal() {
 }
 
 void GameEngine::syncExploreClock(bool persist) {
-    uint32_t gameDay = getCurrentGameDay();
+    uint32_t gameDay = exploreCycleDayFromMs(gameNow);
     uint8_t naturalTod = naturalExploreTimeOfDay();
     bool changed = false;
 
     if (gameDay > exploreDay) {
-        // 进入新的游戏日：重置次数，时段按自然时间
+        // 进入新的探索日：重置次数，时段按自然时间
         exploreDay = gameDay;
         exploreCountToday = 0;
         timeOfDay = naturalTod;
@@ -612,8 +626,16 @@ void GameEngine::recordExploreFinished() {
     } else if (timeOfDay == TIME_AFTERNOON) {
         timeOfDay = TIME_EVENING;
     } else {
+        uint64_t msInDay = gameNow % GAME_DAY_MS;
+        if (msInDay != 0) {
+            gameNow += GAME_DAY_MS - msInDay;
+            bug.update(gameNow);
+        }
+        exploreDay = exploreCycleDayFromMs(gameNow);
         timeOfDay = TIME_EVENING;
         exploreCountToday = EXPLORE_DAILY_LIMIT;
+        forceSave();
+        return;
     }
     saveExploreGlobal();
 }

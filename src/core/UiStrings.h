@@ -127,7 +127,6 @@ static constexpr const char* EXPLORE_COMPLETE         = "Explore Complete";
 static constexpr const char* EXPLORE_LEFT             = "Left...";
 static constexpr const char* EXPLORE_TOO_YOUNG_FIGHT  = "Too young to fight.";
 static constexpr const char* EXPLORE_MOT_ZERO         = "MOT = 0";
-static constexpr const char* EXPLORE_COUNT_FMT        = "%d/2";
 static constexpr const char* EXPLORE_PICNIC_CRUMBS    = "Picnic crumbs! Sap +%d";
 static constexpr const char* EXPLORE_SPRINKLER        = "Sprinkler shower! +1";
 static constexpr const char* EXPLORE_MORNING_DEW      = "Morning dew! +2";

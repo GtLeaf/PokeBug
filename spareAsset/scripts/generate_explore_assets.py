@@ -43,11 +43,24 @@ def fit_fullscreen(img):
     return img.resize((FRAME_W, FRAME_H), Image.Resampling.LANCZOS)
 
 
-def encode_rgb565(img):
-    return [rgb565(r, g, b) for r, g, b in img.getdata()]
+def encode_indexed(img):
+    q = img.quantize(colors=256, method=Image.Quantize.MEDIANCUT)
+    palette_raw = q.getpalette()[: 256 * 3]
+    palette = []
+    for i in range(256):
+        base = i * 3
+        palette.append(rgb565(palette_raw[base], palette_raw[base + 1], palette_raw[base + 2]))
+    return list(q.getdata()), palette, q.convert("RGB")
 
 
-def fmt(vals):
+def fmt_u8(vals):
+    return "\n".join(
+        "    " + ", ".join(f"0x{v:02X}" for v in vals[i : i + 16]) + ","
+        for i in range(0, len(vals), 16)
+    )
+
+
+def fmt_u16(vals):
     return "\n".join(
         "    " + ", ".join(f"0x{v:04X}" for v in vals[i : i + 12]) + ","
         for i in range(0, len(vals), 12)
@@ -119,17 +132,30 @@ static constexpr uint8_t PARK_BG_COUNT = {len(park_frames)};
 static constexpr uint8_t RIVERSIDE_BG_COUNT = {len(riverside_frames)};
 static constexpr uint8_t OLD_WOODS_BG_COUNT = {len(old_woods_frames)};
 
-extern const uint16_t PARK_MORNING[] PROGMEM;
-extern const uint16_t PARK_AFTERNOON[] PROGMEM;
-extern const uint16_t PARK_EVENING[] PROGMEM;
-extern const uint16_t BACK_HILL_DAY[] PROGMEM;
-extern const uint16_t RIVERSIDE_DAY[] PROGMEM;
-extern const uint16_t RIVERSIDE_NIGHT[] PROGMEM;
-extern const uint16_t OLD_WOODS_DAY[] PROGMEM;
-extern const uint16_t OLD_WOODS_NIGHT[] PROGMEM;
+struct IndexedImage {{
+    const uint8_t* indices;
+    const uint16_t* palette;
+}};
 
-const uint16_t* parkBackground(uint8_t timeOfDay);
-const uint16_t* background(uint8_t location, uint8_t timeOfDay);
+extern const uint8_t PARK_MORNING_INDEX[] PROGMEM;
+extern const uint16_t PARK_MORNING_PALETTE[] PROGMEM;
+extern const uint8_t PARK_AFTERNOON_INDEX[] PROGMEM;
+extern const uint16_t PARK_AFTERNOON_PALETTE[] PROGMEM;
+extern const uint8_t PARK_EVENING_INDEX[] PROGMEM;
+extern const uint16_t PARK_EVENING_PALETTE[] PROGMEM;
+extern const uint8_t BACK_HILL_DAY_INDEX[] PROGMEM;
+extern const uint16_t BACK_HILL_DAY_PALETTE[] PROGMEM;
+extern const uint8_t RIVERSIDE_DAY_INDEX[] PROGMEM;
+extern const uint16_t RIVERSIDE_DAY_PALETTE[] PROGMEM;
+extern const uint8_t RIVERSIDE_NIGHT_INDEX[] PROGMEM;
+extern const uint16_t RIVERSIDE_NIGHT_PALETTE[] PROGMEM;
+extern const uint8_t OLD_WOODS_DAY_INDEX[] PROGMEM;
+extern const uint16_t OLD_WOODS_DAY_PALETTE[] PROGMEM;
+extern const uint8_t OLD_WOODS_NIGHT_INDEX[] PROGMEM;
+extern const uint16_t OLD_WOODS_NIGHT_PALETTE[] PROGMEM;
+
+IndexedImage parkBackground(uint8_t timeOfDay);
+IndexedImage background(uint8_t location, uint8_t timeOfDay);
 
 }}
 """,
@@ -148,26 +174,36 @@ const uint16_t* background(uint8_t location, uint8_t timeOfDay);
     ]
     cpp = ['#include "ExploreAssets.h"', "", "namespace ExploreAssets {", ""]
     for name, frame in entries:
-        cpp.append(f"const uint16_t {name}[] PROGMEM = {{")
-        cpp.append(fmt(encode_rgb565(frame)))
+        indices, palette, preview = encode_indexed(frame)
+        preview.save(PREVIEWS / f"{name.lower()}_indexed_preview.png")
+        cpp.append(f"const uint8_t {name}_INDEX[] PROGMEM = {{")
+        cpp.append(fmt_u8(indices))
         cpp.append("};")
         cpp.append("")
-    cpp.append("const uint16_t* parkBackground(uint8_t timeOfDay) {")
+        cpp.append(f"const uint16_t {name}_PALETTE[] PROGMEM = {{")
+        cpp.append(fmt_u16(palette))
+        cpp.append("};")
+        cpp.append("")
+    cpp.append("IndexedImage parkBackground(uint8_t timeOfDay) {")
     cpp.append("    switch (timeOfDay) {")
-    cpp.append("        case 1: return PARK_AFTERNOON;")
-    cpp.append("        case 2: return PARK_EVENING;")
+    cpp.append("        case 1: return { PARK_AFTERNOON_INDEX, PARK_AFTERNOON_PALETTE };")
+    cpp.append("        case 2: return { PARK_EVENING_INDEX, PARK_EVENING_PALETTE };")
     cpp.append("        case 0:")
-    cpp.append("        default: return PARK_MORNING;")
+    cpp.append("        default: return { PARK_MORNING_INDEX, PARK_MORNING_PALETTE };")
     cpp.append("    }")
     cpp.append("}")
     cpp.append("")
-    cpp.append("const uint16_t* background(uint8_t location, uint8_t timeOfDay) {")
+    cpp.append("IndexedImage background(uint8_t location, uint8_t timeOfDay) {")
     cpp.append("    switch (location) {")
     cpp.append("        case 0: return parkBackground(timeOfDay);")
-    cpp.append("        case 1: return BACK_HILL_DAY;")
-    cpp.append("        case 2: return timeOfDay == 2 ? RIVERSIDE_NIGHT : RIVERSIDE_DAY;")
-    cpp.append("        case 3: return timeOfDay == 2 ? OLD_WOODS_NIGHT : OLD_WOODS_DAY;")
-    cpp.append("        default: return nullptr;")
+    cpp.append("        case 1: return { BACK_HILL_DAY_INDEX, BACK_HILL_DAY_PALETTE };")
+    cpp.append("        case 2: return timeOfDay == 2")
+    cpp.append("            ? IndexedImage{ RIVERSIDE_NIGHT_INDEX, RIVERSIDE_NIGHT_PALETTE }")
+    cpp.append("            : IndexedImage{ RIVERSIDE_DAY_INDEX, RIVERSIDE_DAY_PALETTE };")
+    cpp.append("        case 3: return timeOfDay == 2")
+    cpp.append("            ? IndexedImage{ OLD_WOODS_NIGHT_INDEX, OLD_WOODS_NIGHT_PALETTE }")
+    cpp.append("            : IndexedImage{ OLD_WOODS_DAY_INDEX, OLD_WOODS_DAY_PALETTE };")
+    cpp.append("        default: return { nullptr, nullptr };")
     cpp.append("    }")
     cpp.append("}")
     cpp.append("")

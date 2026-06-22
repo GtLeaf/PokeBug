@@ -89,6 +89,23 @@ void PixelRenderer::drawRgb565(int x, int y, int w, int h, const uint16_t* data)
     if (canvas && data) canvas->pushImage(x, y, w, h, data);
 }
 
+void PixelRenderer::drawIndexed8(int x, int y, int w, int h,
+                                 const uint8_t* indices,
+                                 const uint16_t* palette) {
+    if (!canvas || !indices || !palette || w <= 0 || h <= 0) return;
+    if (w > 240) return;
+
+    uint16_t line[240];
+    for (int row = 0; row < h; ++row) {
+        int base = row * w;
+        for (int col = 0; col < w; ++col) {
+            uint8_t idx = pgm_read_byte(&indices[base + col]);
+            line[col] = pgm_read_word(&palette[idx]);
+        }
+        canvas->pushImage(x, y + row, w, 1, line);
+    }
+}
+
 void PixelRenderer::drawRgb565Rle(int x, int y, int w, int h,
                                   const uint16_t* data, uint16_t offset,
                                   uint16_t length, bool flipX) {

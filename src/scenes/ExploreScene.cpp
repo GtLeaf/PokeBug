@@ -627,13 +627,14 @@ void ExploreScene::render() {
 
 void ExploreScene::drawSkyAndGround(int shakeX) {
     LGFX_Sprite& canvas = Hal::ins().canvas();
-    const uint16_t* bg = ExploreAssets::background(GameEngine::ins().getExploreLocation(),
-                                                   GameEngine::ins().getTimeOfDay());
-    if (bg) {
-        PixelRenderer::drawRgb565(shakeX, 0,
-                                  ExploreAssets::FRAME_W,
-                                  ExploreAssets::FRAME_H,
-                                  bg);
+    ExploreAssets::IndexedImage bg = ExploreAssets::background(GameEngine::ins().getExploreLocation(),
+                                                               GameEngine::ins().getTimeOfDay());
+    if (bg.indices && bg.palette) {
+        PixelRenderer::drawIndexed8(shakeX, 0,
+                                    ExploreAssets::FRAME_W,
+                                    ExploreAssets::FRAME_H,
+                                    bg.indices,
+                                    bg.palette);
         return;
     }
 
