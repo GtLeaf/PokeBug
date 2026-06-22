@@ -24,6 +24,10 @@ public:
         return generate(player, NpcData::EXPLORER_TIER_WEIGHTS);
     }
 
+    static NpcCombatant generateForExplore(const Bug& player, const uint8_t weights[4]) {
+        return generate(player, weights);
+    }
+
     // 按杯赛档位权重生成一个 NPC
     static NpcCombatant generateForCup(const Bug& player) {
         return generate(player, NpcData::CUP_TIER_WEIGHTS);

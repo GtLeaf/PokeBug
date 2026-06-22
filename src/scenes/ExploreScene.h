@@ -17,19 +17,17 @@ public:
 
 private:
     enum class State {
-        EXPLORING,        // 自由移动，倒计时触发事件
+        EXPLORING,        // 轮次开始，立即触发一个事件
         EVENT_POPUP,      // 普通事件弹窗
         NPC_PROMPT,       // NPC 遭遇：迎战/逃跑
         RELEASE_CONFIRM,  // 放生确认
-        RESULT,           // 事件/NPC 结果展示
+        FINAL_SUMMARY,    // 3 轮完成或提前结束
         RETURNING,        // 返回培养缸
     };
     State state = State::EXPLORING;
 
     // 探索参数
-    static constexpr uint32_t EXPLORE_DURATION_MS = 45000; // 45 秒探索时长
-    static constexpr uint32_t EVENT_INTERVAL_MIN_MS = 5000;
-    static constexpr uint32_t EVENT_INTERVAL_MAX_MS = 10000;
+    static constexpr uint8_t MAX_EXPLORE_ROUNDS = 3;
     static constexpr float TILT_THRESHOLD = 0.35f;
     static constexpr int BUG_Y = 88;
     static constexpr int MIN_X = 20;
@@ -39,10 +37,11 @@ private:
     float bugX = 120.0f;
     bool faceRight = true;
 
-    // 事件计时
-    uint32_t exploreStartMs = 0;
-    uint32_t nextEventMs = 0;
-    uint32_t resultTimeoutMs = 0;
+    // 轮次与收益
+    uint8_t currentRound = 1;
+    int totalSapGain = 0;
+    int totalWoodGain = 0;
+    bool finalRecorded = false;
 
     // 当前事件
     enum class EventType {
@@ -62,15 +61,19 @@ private:
     char npcName[16];
     char npcBugName[16];
     char npcMeetLine[48];
-    bool canFlee = true;
 
     // UI 文本
     char resultLine1[48];
     char resultLine2[48];
 
     // 内部方法
-    void resetEventTimer(uint32_t now);
+    void startNewSession();
+    void restoreSession();
+    void saveSession();
+    void clearSession();
     void triggerEvent(uint32_t now);
+    void advanceRoundOrFinish();
+    void enterFinalSummary(const char* line1, const char* line2 = nullptr);
     void applyEventReward(bool flee = false);
     void startNpcBattle();
     void applyNpcBattleResult(const NpcBattleResult& res);
@@ -82,4 +85,10 @@ private:
     void drawResult();
     void drawBug(int x, int y, bool right, uint8_t palette);
     void drawSkyAndGround();
+
+    static bool sSessionActive;
+    static uint8_t sCurrentRound;
+    static int sTotalSapGain;
+    static int sTotalWoodGain;
+    static bool sFinalRecorded;
 };

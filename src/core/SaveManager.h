@@ -31,6 +31,11 @@ public:
     bool loadCupGlobal(uint16_t& season, uint32_t& lastCupGameTime, uint8_t& state);
     void clearCupGlobal();
 
+    // 全局探索数据（跨虫持久）
+    bool saveExploreGlobal(uint32_t day, uint8_t timeOfDay, uint8_t countToday);
+    bool loadExploreGlobal(uint32_t& day, uint8_t& timeOfDay, uint8_t& countToday);
+    void clearExploreGlobal();
+
 private:
     SaveManager() = default;
 
@@ -49,6 +54,9 @@ private:
     static constexpr const char* KEY_CUP_TIME   = "last_cup_time";
     static constexpr const char* KEY_CUP_GAME_TIME = "cup_game_time";
     static constexpr const char* KEY_CUP_STATE  = "cup_state";
+    static constexpr const char* KEY_EXPLORE_DAY   = "explore_day";
+    static constexpr const char* KEY_EXPLORE_TOD   = "explore_tod";
+    static constexpr const char* KEY_EXPLORE_COUNT = "explore_count";
     static constexpr uint8_t SAVE_VERSION = 8;
 
     bool isSaving = false;  // 防并发写入锁

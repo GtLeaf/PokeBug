@@ -167,6 +167,12 @@ bool LobbyScene::onButton(const ButtonEvent& ev) {
             }
             return true;
         }
+    } else if (state == State::SEARCH_SCANNING) {
+        // 搜索过程中按 B 取消，回到模式选择（默认选中 SEARCH）
+        if (ev.btn == 1) {
+            enterModeSelect(Mode::SEARCH);
+            return true;
+        }
     } else if (state == State::SEARCH_LIST) {
         if (ev.btn == 1) {
             if (roomCount > 0) {
@@ -189,9 +195,9 @@ bool LobbyScene::onButton(const ButtonEvent& ev) {
 // ============================================================
 // 状态切换
 // ============================================================
-void LobbyScene::enterModeSelect() {
+void LobbyScene::enterModeSelect(Mode defaultMode) {
     state = State::MODE_SELECT;
-    selectedMode = Mode::CREATE;  // 默认选中创建
+    selectedMode = defaultMode;
     BattleLink::ins().stopRoom();
     stateStartMs = Hal::ins().millis();
     Serial.println("[Lobby] mode select");

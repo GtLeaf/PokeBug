@@ -34,7 +34,28 @@ void setup() {
         uint64_t gameNow = bug.getLastUpdateTime() + (uint64_t)(600000 * gameSpeed);
         bug.update(gameNow);
 
+        uint32_t exploreDay = (uint32_t)(gameNow / GameEngine::GAME_DAY_MS);
+        uint8_t exploreTod = GameEngine::TIME_MORNING;
+        uint8_t exploreCount = 0;
+        SaveManager::ins().loadExploreGlobal(exploreDay, exploreTod, exploreCount);
+        uint32_t gameDay = (uint32_t)(gameNow / GameEngine::GAME_DAY_MS);
+        uint64_t msInDay = gameNow % GameEngine::GAME_DAY_MS;
+        uint64_t thirdDay = GameEngine::GAME_DAY_MS / 3;
+        uint8_t naturalTod = GameEngine::TIME_MORNING;
+        if (msInDay >= thirdDay * 2) naturalTod = GameEngine::TIME_EVENING;
+        else if (msInDay >= thirdDay) naturalTod = GameEngine::TIME_AFTERNOON;
+        if (gameDay > exploreDay) {
+            exploreDay = gameDay;
+            exploreCount = 0;
+            exploreTod = naturalTod;
+        } else if (gameDay == exploreDay && exploreTod < naturalTod) {
+            exploreTod = naturalTod;
+        }
+        if (exploreTod > GameEngine::TIME_EVENING) exploreTod = GameEngine::TIME_MORNING;
+        if (exploreCount > 2) exploreCount = 2;
+
         SaveManager::ins().save(bug);
+        SaveManager::ins().saveExploreGlobal(exploreDay, exploreTod, exploreCount);
         SaveManager::ins().saveSettings(fontScale, brightness, gameSpeed, idleTimeout,
                                         mainSceneBg, woodStyle, bowlStyle, foodStyle);
         Serial.println("[Boot] Bug updated, re-entering deep sleep");

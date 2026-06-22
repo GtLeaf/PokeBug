@@ -23,6 +23,7 @@ struct PendingNpcBattle {
     uint8_t mot = 50;
     uint8_t hunger = 100;
     uint8_t palette = 0;
+    NpcData::Tier tier = NpcData::Tier::ROOKIE;
     bool legend = false; // 是否传说级（用于特效）
     bool resultSet = false; // 对战结果是否已写入
     bool won = false;       // 对战结果
@@ -127,6 +128,32 @@ public:
     void cycleFoodStyle();
     const char* getFoodStyleName() const;
 
+    enum ExploreLocation : uint8_t {
+        EXPLORE_PARK = 0,
+        EXPLORE_BACK_HILL = 1,
+        EXPLORE_RIVERSIDE = 2,
+        EXPLORE_OLD_WOODS = 3,
+        EXPLORE_LOCATION_COUNT = 4,
+    };
+    uint8_t getExploreLocation() const { return exploreLocation; }
+    void setExploreLocation(uint8_t id);
+    const char* getExploreLocationName() const;
+
+    enum TimeOfDay : uint8_t {
+        TIME_MORNING = 0,
+        TIME_AFTERNOON = 1,
+        TIME_EVENING = 2,
+    };
+    uint8_t getTimeOfDay() const { return timeOfDay; }
+    const char* getTimeOfDayName() const;
+    const char* getTimeOfDayShortName() const;
+    uint8_t getExploreCountToday() const { return exploreCountToday; }
+    uint32_t getExploreDay() const { return exploreDay; }
+    bool canExplore() const;
+    void recordExploreFinished();
+    void syncExploreClock(bool persist = false);
+    uint32_t getCurrentGameDay() const;
+
     // 对战大厅入口模式
     LobbyMode getLobbyMode() const { return lobbyMode; }
     void setLobbyMode(LobbyMode m) { lobbyMode = m; }
@@ -197,6 +224,10 @@ private:
     uint8_t woodStyle = 0;
     uint8_t bowlStyle = 0;
     uint8_t foodStyle = 0;
+    uint8_t exploreLocation = EXPLORE_PARK;
+    uint8_t timeOfDay = TIME_MORNING;
+    uint8_t exploreCountToday = 0;
+    uint32_t exploreDay = 0;
 
     LobbyMode lobbyMode = LobbyMode::LOBBY_DEFAULT;
     PendingNpcBattle npcBattle;
@@ -219,6 +250,8 @@ private:
     void processInput();
     void processIMU();
     void checkCupCycle();
+    uint8_t naturalExploreTimeOfDay() const;
+    void saveExploreGlobal();
     uint32_t targetFrameTime() const;
     void resetIdleTimer();
 };

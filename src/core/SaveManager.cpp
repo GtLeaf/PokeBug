@@ -115,6 +115,39 @@ void SaveManager::clearCupGlobal() {
     }
 }
 
+bool SaveManager::saveExploreGlobal(uint32_t day, uint8_t timeOfDay, uint8_t countToday) {
+    Preferences prefs;
+    if (!prefs.begin(NAMESPACE, false)) return false;
+    prefs.putUInt(KEY_EXPLORE_DAY, day);
+    prefs.putUChar(KEY_EXPLORE_TOD, timeOfDay);
+    prefs.putUChar(KEY_EXPLORE_COUNT, countToday);
+    prefs.end();
+    return true;
+}
+
+bool SaveManager::loadExploreGlobal(uint32_t& day, uint8_t& timeOfDay, uint8_t& countToday) {
+    Preferences prefs;
+    if (!prefs.begin(NAMESPACE, true)) return false;
+    bool ok = prefs.isKey(KEY_EXPLORE_DAY) ||
+              prefs.isKey(KEY_EXPLORE_TOD) ||
+              prefs.isKey(KEY_EXPLORE_COUNT);
+    day = prefs.getUInt(KEY_EXPLORE_DAY, 0);
+    timeOfDay = prefs.getUChar(KEY_EXPLORE_TOD, 0);
+    countToday = prefs.getUChar(KEY_EXPLORE_COUNT, 0);
+    prefs.end();
+    return ok;
+}
+
+void SaveManager::clearExploreGlobal() {
+    Preferences prefs;
+    if (prefs.begin(NAMESPACE, false)) {
+        prefs.remove(KEY_EXPLORE_DAY);
+        prefs.remove(KEY_EXPLORE_TOD);
+        prefs.remove(KEY_EXPLORE_COUNT);
+        prefs.end();
+    }
+}
+
 bool SaveManager::hasSave() const {
     Preferences prefs;
     if (!prefs.begin(NAMESPACE, true)) return false;

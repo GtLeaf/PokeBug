@@ -84,6 +84,16 @@ void Bug::modHunger(int8_t delta) {
     hunger = (uint8_t)h;
 }
 
+void Bug::addTrainingBonus(float sizDelta, float strDelta, float endDelta,
+                           float spdDelta, float spiDelta) {
+    siz += sizDelta;
+    str += strDelta;
+    end += endDelta;
+    spd += spdDelta;
+    spi += spiDelta;
+    clampAttributes();
+}
+
 void Bug::clampAttributes() {
     if (siz < 1.0f) siz = 1.0f;
     if (siz > sizCap()) siz = sizCap();

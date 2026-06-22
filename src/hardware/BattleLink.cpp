@@ -42,6 +42,7 @@ bool BattleLink::begin() {
 
     initialized = true;
     sendBusy = false;
+    currentSendTracked = false;
     sendState = SendState::IDLE;
     Serial.println("[BattleLink] initialized");
     return true;
@@ -58,6 +59,7 @@ void BattleLink::end() {
     WiFi.mode(WIFI_OFF);
     initialized = false;
     sendBusy = false;
+    currentSendTracked = false;
     sendState = SendState::IDLE;
     battlePeerSet = false;
 }
@@ -261,10 +263,27 @@ bool BattleLink::sendInternal(const uint8_t mac[6], const uint8_t* data, uint8_t
     if (!initialized || sendBusy) return false;
     ensureUnicastPeer(mac);
     sendBusy = true;
+    currentSendTracked = true;
     esp_err_t err = esp_now_send(mac, data, len);
     if (err != ESP_OK) {
         sendBusy = false;
+        currentSendTracked = false;
         Serial.printf("[BattleLink] send failed, err=%d\n", err);
+        return false;
+    }
+    return true;
+}
+
+bool BattleLink::sendAckPacket(const uint8_t mac[6], uint8_t ackedType) {
+    if (!initialized || sendBusy) return false;
+    ensureUnicastPeer(mac);
+    ack_msg_t ack = { MSG_ACK, ackedType };
+    sendBusy = true;
+    currentSendTracked = false;
+    esp_err_t err = esp_now_send(mac, (uint8_t*)&ack, sizeof(ack));
+    if (err != ESP_OK) {
+        sendBusy = false;
+        Serial.printf("[BattleLink] ack send failed, err=%d\n", err);
         return false;
     }
     return true;
@@ -331,10 +350,14 @@ void BattleLink::onSentStatic(const uint8_t* mac, esp_now_send_status_t status) 
 }
 
 void BattleLink::onSent(const uint8_t* mac, esp_now_send_status_t status) {
+    bool tracked = currentSendTracked;
     sendBusy = false;
+    currentSendTracked = false;
     Serial.printf("[BattleLink] sent to %02X:%02X:%02X:%02X:%02X:%02X status=%s\n",
                   mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
                   status == ESP_NOW_SEND_SUCCESS ? "OK" : "FAIL");
+
+    if (!tracked) return;
 
     if (status != ESP_NOW_SEND_SUCCESS && sendState == SendState::SENDING) {
         sendCtx.retryCount++;
@@ -443,8 +466,7 @@ void BattleLink::handleJoinAck(const uint8_t* mac, const join_ack_t& ack) {
 }
 
 void BattleLink::handleReady(const uint8_t* mac, const battle_ready_t& ready) {
-    (void)mac;
-    if (!battlePeerSet) return;
+    if (!isBattlePeerMac(mac)) return;
     pendingReady = true;
     pendingReadyData = ready;
     queueAck(mac, MSG_BATTLE_READY);
@@ -452,8 +474,7 @@ void BattleLink::handleReady(const uint8_t* mac, const battle_ready_t& ready) {
 }
 
 void BattleLink::handleSync(const uint8_t* mac, const battle_sync_t& sync) {
-    (void)mac;
-    if (!battlePeerSet) return;
+    if (!isBattlePeerMac(mac)) return;
     pendingSync = true;
     pendingSyncData = sync;
     queueAck(mac, MSG_BATTLE_SYNC);
@@ -462,8 +483,7 @@ void BattleLink::handleSync(const uint8_t* mac, const battle_sync_t& sync) {
 }
 
 void BattleLink::handleRound(const uint8_t* mac, const battle_round_t& round) {
-    (void)mac;
-    if (!battlePeerSet) return;
+    if (!isBattlePeerMac(mac)) return;
     pendingRound = true;
     pendingRoundData = round;
     queueAck(mac, MSG_BATTLE_ROUND);
@@ -472,8 +492,7 @@ void BattleLink::handleRound(const uint8_t* mac, const battle_round_t& round) {
 }
 
 void BattleLink::handleResult(const uint8_t* mac, const battle_result_t& result) {
-    (void)mac;
-    if (!battlePeerSet) return;
+    if (!isBattlePeerMac(mac)) return;
     pendingResult = true;
     pendingResultWin = (result.win != 0);
     queueAck(mac, MSG_BATTLE_RESULT);
@@ -481,7 +500,7 @@ void BattleLink::handleResult(const uint8_t* mac, const battle_result_t& result)
 }
 
 void BattleLink::handleAck(const uint8_t* mac, const ack_msg_t& ack) {
-    (void)mac;
+    if (!isBattlePeerMac(mac)) return;
     if (sendState != SendState::SENDING) return;
     if (ack.acked_type == sendCtx.buf[0]) {
         sendCtx.ackReceived = true;
@@ -537,9 +556,9 @@ void BattleLink::update() {
 
     // 发送排队 ACK
     if (pendingAck && !sendBusy) {
-        ack_msg_t ack = { MSG_ACK, pendingAckType };
-        sendInternal(pendingAckMac, (uint8_t*)&ack, sizeof(ack));
-        pendingAck = false;
+        if (sendAckPacket(pendingAckMac, pendingAckType)) {
+            pendingAck = false;
+        }
     }
 }
 
@@ -590,4 +609,8 @@ void BattleLink::queueAck(const uint8_t mac[6], uint8_t ackedType) {
     memcpy(pendingAckMac, mac, 6);
     pendingAckType = ackedType;
     Serial.printf("[BattleLink] ack queued for type=%d\n", ackedType);
+}
+
+bool BattleLink::isBattlePeerMac(const uint8_t mac[6]) const {
+    return battlePeerSet && memcmp(mac, battlePeerMac, 6) == 0;
 }

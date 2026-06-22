@@ -167,6 +167,7 @@ private:
 
     bool initialized = false;
     bool sendBusy = false;
+    bool currentSendTracked = false;
 
     // 房间阶段状态
     enum class RoomState { IDLE, HOSTING, SEARCHING };
@@ -217,6 +218,8 @@ private:
     bool ensureBroadcastPeer();
     bool sendInternal(const uint8_t mac[6], const uint8_t* data, uint8_t len);
     bool sendLobbyPacket(const uint8_t mac[6], const uint8_t* data, uint8_t len);
+    bool sendAckPacket(const uint8_t mac[6], uint8_t ackedType);
+    bool isBattlePeerMac(const uint8_t mac[6]) const;
 
     void addOrUpdateRoom(const uint8_t* mac, uint8_t roomId);
     void expireRooms();

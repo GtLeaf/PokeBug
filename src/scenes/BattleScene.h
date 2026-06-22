@@ -101,4 +101,5 @@ private:
     static constexpr uint32_t SYNC_TIMEOUT_MS = 5000;
     static constexpr uint32_t ROUND_TIMEOUT_MS = 5000;
     static constexpr uint32_t RESULT_TIMEOUT_MS = 5000;
+    static constexpr uint8_t MAX_ROUNDS = 30;
 };

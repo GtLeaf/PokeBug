@@ -69,6 +69,22 @@ void GameEngine::begin() {
     Serial.printf("[Engine] Cup global loaded: season=%u lastGameTime=%u state=%u gameNow=%llu\n",
                   cupSeason, lastCupGameTime, cupStateRaw, gameNow);
 
+    uint8_t loadedExploreTod = TIME_MORNING;
+    uint8_t loadedExploreCount = 0;
+    uint32_t loadedExploreDay = getCurrentGameDay();
+    if (SaveManager::ins().loadExploreGlobal(loadedExploreDay, loadedExploreTod, loadedExploreCount)) {
+        exploreDay = loadedExploreDay;
+        timeOfDay = loadedExploreTod <= TIME_EVENING ? loadedExploreTod : TIME_MORNING;
+        exploreCountToday = loadedExploreCount > 2 ? 2 : loadedExploreCount;
+    } else {
+        exploreDay = getCurrentGameDay();
+        timeOfDay = naturalExploreTimeOfDay();
+        exploreCountToday = 0;
+    }
+    syncExploreClock(false);
+    Serial.printf("[Engine] Explore global loaded: day=%u tod=%u count=%u\n",
+                  exploreDay, timeOfDay, exploreCountToday);
+
     // 首次迁移或新存档：用当前游戏时间作为上一届起点，避免旧真实时间秒被误用
     if (lastCupGameTime == 0 || (uint64_t)lastCupGameTime * 1000ULL > gameNow) {
         lastCupGameTime = (uint32_t)(gameNow / 1000ULL);
@@ -146,6 +162,7 @@ void GameEngine::run() {
     uint32_t virtualElapsed = (uint32_t)(realElapsed * gameSpeed);
     gameNow += virtualElapsed;
     bug.update(gameNow);
+    syncExploreClock(true);
 
     // 更新场景逻辑
     if (curScene) {
@@ -361,6 +378,7 @@ uint32_t GameEngine::targetFrameTime() const {
 
 void GameEngine::forceSave() {
     SaveManager::ins().save(bug);
+    saveExploreGlobal();
 }
 
 void GameEngine::resetIdleTimer() {
@@ -474,6 +492,110 @@ const char* GameEngine::getFoodStyleName() const {
     }
 }
 
+void GameEngine::setExploreLocation(uint8_t id) {
+    if (id >= EXPLORE_LOCATION_COUNT) id = EXPLORE_PARK;
+    exploreLocation = id;
+}
+
+const char* GameEngine::getExploreLocationName() const {
+    switch (exploreLocation) {
+        case EXPLORE_BACK_HILL: return "Back Hill";
+        case EXPLORE_RIVERSIDE: return "Riverside";
+        case EXPLORE_OLD_WOODS: return "Old Woods";
+        case EXPLORE_PARK:
+        default:
+            return "Park";
+    }
+}
+
+const char* GameEngine::getTimeOfDayName() const {
+    switch (timeOfDay) {
+        case TIME_AFTERNOON: return "Afternoon";
+        case TIME_EVENING: return "Evening";
+        case TIME_MORNING:
+        default:
+            return "Morning";
+    }
+}
+
+const char* GameEngine::getTimeOfDayShortName() const {
+    switch (timeOfDay) {
+        case TIME_AFTERNOON: return "AFT";
+        case TIME_EVENING: return "EVE";
+        case TIME_MORNING:
+        default:
+            return "MOR";
+    }
+}
+
+uint32_t GameEngine::getCurrentGameDay() const {
+    return (uint32_t)(gameNow / GAME_DAY_MS);
+}
+
+uint8_t GameEngine::naturalExploreTimeOfDay() const {
+    uint64_t msInDay = gameNow % GAME_DAY_MS;
+    uint64_t third = GAME_DAY_MS / 3;
+    if (msInDay < third) return TIME_MORNING;
+    if (msInDay < third * 2) return TIME_AFTERNOON;
+    return TIME_EVENING;
+}
+
+void GameEngine::saveExploreGlobal() {
+    SaveManager::ins().saveExploreGlobal(exploreDay, timeOfDay, exploreCountToday);
+}
+
+void GameEngine::syncExploreClock(bool persist) {
+    uint32_t gameDay = getCurrentGameDay();
+    uint8_t naturalTod = naturalExploreTimeOfDay();
+    bool changed = false;
+
+    if (gameDay > exploreDay) {
+        exploreDay = gameDay;
+        exploreCountToday = 0;
+        timeOfDay = naturalTod;
+        changed = true;
+    } else if (gameDay == exploreDay && timeOfDay < naturalTod) {
+        timeOfDay = naturalTod;
+        changed = true;
+    }
+
+    if (timeOfDay > TIME_EVENING) {
+        timeOfDay = TIME_MORNING;
+        changed = true;
+    }
+    if (exploreCountToday > 2) {
+        exploreCountToday = 2;
+        changed = true;
+    }
+
+    if (changed && persist) {
+        saveExploreGlobal();
+    }
+}
+
+bool GameEngine::canExplore() const {
+    if (bug.getStage() != Stage::ADULT) return false;
+    if (bug.isDead()) return false;
+    if (bug.getHunger() < 30) return false;
+    if (bug.getMot() < 50) return false;
+    return exploreCountToday < 2;
+}
+
+void GameEngine::recordExploreFinished() {
+    if (exploreCountToday < 2) exploreCountToday++;
+
+    if (timeOfDay == TIME_MORNING) {
+        timeOfDay = TIME_AFTERNOON;
+    } else if (timeOfDay == TIME_AFTERNOON) {
+        timeOfDay = TIME_EVENING;
+    } else {
+        timeOfDay = TIME_MORNING;
+        exploreDay++;
+        exploreCountToday = 0;
+    }
+    saveExploreGlobal();
+}
+
 uint32_t GameEngine::getIdleTimeoutMs() const {
     // 0 = never
     static const uint32_t TIMEOUT_MS[5] = { 30000, 60000, 120000, 300000, 0 };
@@ -490,6 +612,7 @@ void GameEngine::setPendingNpcBattle(const NpcCombatant& npc, SceneID returnScen
     npcBattle.spi = npc.spi;
     npcBattle.mot = npc.mot;
     npcBattle.palette = npc.palette;
+    npcBattle.tier = npc.tier;
     npcBattle.legend = legend;
     npcBattle.fromExplore = fromExplore;
     npcBattle.fromCup = fromCup;

@@ -20,6 +20,7 @@ private:
         BOWL,
         FOOD,
         FIGHT,
+        EXPLORE,
     };
 
     Mode mode = Mode::MAIN;
@@ -37,17 +38,20 @@ private:
     static int lastBowlSelected;
     static int lastFoodSelected;
     static int lastFightSelected;
+    static int lastExploreSelected;
     static constexpr int MAIN_ITEM_COUNT = 7;
     static constexpr int BOX_ITEM_COUNT = 4;
     static constexpr int WOOD_ITEM_COUNT = 6; // 5 种风格 + Back
     static constexpr int BOWL_ITEM_COUNT = 4; // 3 种风格 + Back
     static constexpr int FOOD_ITEM_COUNT = 7;
     static constexpr int FIGHT_ITEM_COUNT = 4;
+    static constexpr int EXPLORE_ITEM_COUNT = 5; // 4 locations + Back
     static constexpr uint32_t FOOD_CONFIRM_MS = 250;
 
     void drawBattery();
     void drawList();
     void drawFightList();
+    void drawExploreList();
     void drawFoodLayout();
     void drawWoodLayout();
     void drawBowlLayout();
@@ -109,5 +113,13 @@ private:
         FIGHT_CREATE,
         FIGHT_SEARCH,
         FIGHT_BACK,
+    };
+
+    enum ExploreItem {
+        LOCATION_PARK = 0,
+        LOCATION_BACK_HILL,
+        LOCATION_RIVERSIDE,
+        LOCATION_OLD_WOODS,
+        LOCATION_BACK,
     };
 };

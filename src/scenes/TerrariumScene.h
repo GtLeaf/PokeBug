@@ -2,6 +2,7 @@
 #include "../core/Scene.h"
 #include "../hardware/PixelRenderer.h"
 #include "../game/Bug.h"
+#include "../game/BugMind.h"
 
 // 成虫行为状态
 enum class AdultState {
@@ -58,6 +59,8 @@ private:
     uint8_t eatBitesThisSession = 0;
     uint32_t restResumeAllowedMs = 0; // 允许重新进入夜间休息的时间戳
     uint32_t alertUntilMs = 0;        // 被戳后的警戒结束时间
+    uint32_t lastShakeNotifyMs = 0;   // 上次 shake 通知心智的时间
+    BugMind mind;
 
     static constexpr int GROUND_Y = 125;   // 甲虫贴地时脚所在的 Y 坐标
     static constexpr int FOOD_X = 55;      // 食物盘旁站立位置（中心点）

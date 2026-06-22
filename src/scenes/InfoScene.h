@@ -14,11 +14,12 @@ public:
 
 private:
     static const char* STAGE_NAMES[5];
-    static constexpr int PAGE_COUNT = 2;
+    static constexpr int PAGE_COUNT = 3;
 
     int page = 0;
 
     void renderPageIndicator();
     void renderStatus();
+    void renderAttributes();
     void renderRecord();
 };

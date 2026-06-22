@@ -95,6 +95,7 @@ void TerrariumScene::onEnter() {
     climbTargetX = bugX;
     tiltHighSideIsRight = true;
     alertUntilMs = 0;
+    mind.resetActivityTimer(Hal::ins().millis());
     stateTimer = 0;
     setIdleDuration();
 }
@@ -103,6 +104,16 @@ void TerrariumScene::onExit() {}
 
 SceneID TerrariumScene::update() {
     animFrame++;
+
+    Bug& bug = GameEngine::ins().getBug();
+
+    // 更新甲虫心智（成虫期且存活）
+    if (bug.getStage() == Stage::ADULT && !bug.isDead()) {
+        mind.update(bug.getHunger(), bug.getMot(),
+                    GameEngine::ins().isNight(), bug.isWoodPlaced(),
+                    bug.hasFoodInTray() && bug.getFoodAmount() > 0,
+                    Hal::ins().millis());
+    }
 
     // 死亡后检测长按 A+B 3 秒重置
     Bug& bug = GameEngine::ins().getBug();
@@ -132,6 +143,18 @@ SceneID TerrariumScene::update() {
     }
     if (pokeThreatenEndMs != 0 && Hal::ins().millis() > pokeThreatenEndMs) {
         pokeThreatenEndMs = 0;
+    }
+
+    // shake 事件通知心智（GameEngine::processIMU() 已处理 bug.onShake，这里只做情绪反馈）
+    if (bug.getStage() == Stage::ADULT && !bug.isDead()) {
+        float mag = Hal::ins().getAccelMagnitude();
+        if (mag > 2.0f) {
+            uint32_t now = Hal::ins().millis();
+            if (now - lastShakeNotifyMs > 500) {
+                mind.onShaken(now);
+                lastShakeNotifyMs = now;
+            }
+        }
     }
 
     // 成虫使用状态机自然移动：贴地、走走停停、有食物会靠近吃
@@ -192,6 +215,7 @@ bool TerrariumScene::onButton(const ButtonEvent& ev) {
         bool ok = bug.poke(gameNow);
         if (ok) {
             uint32_t now = Hal::ins().millis();
+            mind.onPoked(now);
             // 若已在 threaten 持续阶段（已播完动作、正 hold 最后一帧），只重置持续时间，
             // 不要从第 0 帧重新播放。
             bool inThreatenHold = (pokeThreatenEndMs != 0) &&
@@ -432,14 +456,7 @@ void TerrariumScene::drawAdult(int x, int y, uint8_t palette) {
 
 // 判断成虫是否想去进食：饥饿或纯粹嘴馋
 bool TerrariumScene::wantsToEat() {
-    Bug& bug = GameEngine::ins().getBug();
-    if (!bug.hasFoodInTray() || bug.getFoodAmount() == 0) return false;
-    bool alerted = alertUntilMs != 0 && Hal::ins().millis() < alertUntilMs;
-    if (alerted && bug.getHunger() >= 35) return false;
-    if (bug.getHunger() < 45) return true;
-    if (bug.getHunger() < 70) return random(100) < 35;
-    if (bug.getHunger() < 80) return random(100) < (GameEngine::ins().isNight() ? 18 : 8);
-    return false;
+    return mind.isDesiring(Desire::EAT);
 }
 
 void TerrariumScene::startTurn(bool targetFaceRight, bool continueWalking) {
@@ -496,21 +513,12 @@ void TerrariumScene::setIdleDuration() {
 bool TerrariumScene::wantsToRestOnWood() {
     Bug& bug = GameEngine::ins().getBug();
     if (!bug.isWoodPlaced()) return false;
-    if (bug.getHunger() < 45) return false;
-    if (alertUntilMs != 0 && Hal::ins().millis() < alertUntilMs) return false;
-
-    if (GameEngine::ins().isNight()) {
-        return random(100) < 60;
-    }
-    // 白天也可能躲在腐木边，但不要像夜晚那样强制归位。
-    return random(100) < 12;
+    if (bug.getHunger() < 35) return false;
+    return mind.isDesiring(Desire::REST);
 }
 
 bool TerrariumScene::wantsToWander() {
-    if (alertUntilMs != 0 && Hal::ins().millis() < alertUntilMs) {
-        return random(100) < 12;
-    }
-    return random(100) < (GameEngine::ins().isNight() ? 65 : 28);
+    return mind.isDesiring(Desire::WANDER);
 }
 
 // 成虫状态机：贴地、走走停停、靠近食物进食
@@ -534,28 +542,53 @@ void TerrariumScene::updateAdultMovement() {
                 startTurn(!faceRight, false);
                 break;
             }
-            // 静止结束后决定下一步
+            // 静止结束后由 AI 心智决定下一步
             if (stateTimer >= stateDuration) {
-                if (wantsToEat()) {
-                    startWalkTo(FOOD_X);
-                } else if (Hal::ins().millis() >= restResumeAllowedMs && wantsToRestOnWood()) {
-                    if (abs(WOOD_REST_X - bugX) <= 2) {
-                        enterRest();
-                    } else {
-                        startWalkTo(WOOD_REST_X);
-                    }
-                } else if (wantsToWander()) {
-                    // 随机巡逻点，避免连续两次太近
-                    int newTarget = random(MIN_X, MAX_X + 1);
-                    if (abs(newTarget - bugX) < 30) {
-                        newTarget = (bugX < 120) ? random(140, MAX_X + 1)
-                                                   : random(MIN_X, 100);
-                    }
-                    startWalkTo(newTarget);
-                } else {
-                    stateTimer = 0;
-                    setIdleDuration();
+                Desire d = mind.topDesire();
+                static uint32_t lastVoiceLog = 0;
+                if (Hal::ins().millis() - lastVoiceLog > 5000) {
+                    Serial.printf("[Mind] %s | %s | \"%s\"\n",
+                                  mind.desireName(), mind.moodName(), mind.innerVoice());
+                    lastVoiceLog = Hal::ins().millis();
                 }
+                switch (d) {
+                    case Desire::EAT:
+                        if (bug.hasFoodInTray() && bug.getFoodAmount() > 0) {
+                            startWalkTo(FOOD_X);
+                        } else {
+                            stateTimer = 0;
+                            setIdleDuration();
+                        }
+                        break;
+                    case Desire::REST:
+                        if (bug.isWoodPlaced() && Hal::ins().millis() >= restResumeAllowedMs) {
+                            if (abs(WOOD_REST_X - bugX) <= 2) {
+                                enterRest();
+                            } else {
+                                startWalkTo(WOOD_REST_X);
+                            }
+                        } else {
+                            stateTimer = 0;
+                            setIdleDuration();
+                        }
+                        break;
+                    case Desire::WANDER:
+                    case Desire::STARE:
+                    default: {
+                        int newTarget = random(MIN_X, MAX_X + 1);
+                        if (abs(newTarget - bugX) < 30) {
+                            newTarget = (bugX < 120) ? random(140, MAX_X + 1)
+                                                       : random(MIN_X, 100);
+                        }
+                        startWalkTo(newTarget);
+                        break;
+                    }
+                    case Desire::HIDE:
+                        stateTimer = 0;
+                        setIdleDuration();
+                        break;
+                }
+                mind.resetActivityTimer(Hal::ins().millis());
             }
             break;
 
@@ -589,7 +622,7 @@ void TerrariumScene::updateAdultMovement() {
                 bool walkingToFood = (targetX == FOOD_X);
 
                 // 每 3 帧移动 1 像素，模拟甲虫缓慢爬行；进食心切时走快点
-                uint8_t stepInterval = walkingToFood ? 2 : 3;
+                uint8_t stepInterval = (walkingToFood && mind.isDesiring(Desire::EAT)) ? 2 : 3;
                 if (stateTimer % stepInterval == 0) {
                     bugX += dx;
                     if (bugX < MIN_X) bugX = MIN_X;
@@ -598,12 +631,9 @@ void TerrariumScene::updateAdultMovement() {
 
                 // 到达目标
                 if (abs(targetX - bugX) <= 2) {
-                    if (walkingToFood && bug.hasFoodInTray() && bug.getFoodAmount() > 0) {
+                    if (targetX == FOOD_X && bug.hasFoodInTray() && bug.getFoodAmount() > 0) {
                         enterEat();
-                    } else if (targetX == WOOD_REST_X &&
-                               bug.isWoodPlaced() &&
-                               bug.getHunger() >= 35 &&
-                               (alertUntilMs == 0 || Hal::ins().millis() >= alertUntilMs)) {
+                    } else if (targetX == WOOD_REST_X && bug.isWoodPlaced()) {
                         enterRest();
                     } else {
                         adultState = AdultState::IDLE;
@@ -670,6 +700,7 @@ void TerrariumScene::updateAdultMovement() {
             if (!bug.hasFoodInTray() || bug.getFoodAmount() == 0 ||
                 (eatBitesThisSession > 0 && bug.getHunger() >= EAT_CONTINUE_HUNGER) ||
                 stateTimer >= stateDuration) {
+                mind.onAte(Hal::ins().millis());
                 adultState = AdultState::IDLE;
                 stateTimer = 0;
                 setIdleDuration();
@@ -759,26 +790,6 @@ void TerrariumScene::drawStatusBar() {
                                   MainSceneAssets::MOSS_STATE);
     }
 
-    uint64_t gameNow = GameEngine::ins().getGameNow();
-
-    // ---- 模拟环境（基于虚拟时间，后续与天气系统联动） ----
-    float dayPhase = (gameNow % (24ULL * 60 * 60 * 1000)) / (24.0f * 60 * 60 * 1000);
-    uint32_t virtualHour = (uint32_t)(gameNow / (60ULL * 60 * 1000));
-    int tempNoise = (int)((virtualHour * 7) % 5) - 2;   // -2 ~ +2
-    int humNoise  = (int)((virtualHour * 13) % 7) - 3;  // -3 ~ +3
-
-    int temp = 25 + (int)(3.0f * sin(dayPhase * 2.0f * 3.1415926535f)) + tempNoise;
-    if (temp < 18) temp = 18; else if (temp > 32) temp = 32;
-
-    int hum = 58 - (int)(10.0f * sin(dayPhase * 2.0f * 3.1415926535f)) + humNoise;
-    if (hum < 30) hum = 30; else if (hum > 85) hum = 85;
-
-    // 虚拟时间（与游戏速度同步）
-    uint32_t totalMinutes = (uint32_t)(gameNow / (60ULL * 1000));
-    uint32_t day = totalMinutes / (24 * 60) + 1;
-    uint32_t hour = (totalMinutes % (24 * 60)) / 60;
-    uint32_t minute = totalMinutes % 60;
-
     // 布局工具
     static constexpr int BAR_X = 200;
     static constexpr int BAR_W = 40;
@@ -795,7 +806,7 @@ void TerrariumScene::drawStatusBar() {
     };
 
     // 布局：简约疏朗，每个区块之间留出空白，无分隔线
-    // 135px 高度均匀分布：阶段(8) 空(14) 饥饿(22) 空(14) MOT(38) 空(14) 温度(54) 湿度(68) 空(14) 时间(84)
+    // 135px 高度均匀分布：阶段(8) 空(14) 饥饿(22) 空(14) MOT(38)
 
     // ---- 1. 阶段图标 ----
     const char* stageName = "?";
@@ -844,20 +855,62 @@ void TerrariumScene::drawStatusBar() {
         }
     }
 
-    // ---- 4. 温湿度（拉开间距） ----
-    char buf[8];
-    PixelRenderer::fillRect(BAR_X + 4, 54, 4, 4, PixelRenderer::YELLOW);
-    snprintf(buf, sizeof(buf), "%d\u00b0", temp);
-    PixelRenderer::drawPixelText(BAR_X + 10, 52, buf, PixelRenderer::WHITE, 1);
+    // ---- 4. 天气图标 + 探索时段 ----
+    // 12x12 天气图标（仅表示天气，不随时段变化）
+    static const uint16_t WEATHER_SUN[12] = {
+        0b001000100100,  // ..#...#...
+        0b001000100100,  // ..#...#...
+        0b011101110100,  // .###.###..
+        0b001000100100,  // ..#...#...
+        0b111111111100,  // ##########
+        0b110111011100,  // ##.###.###
+        0b111111111100,  // ##########
+        0b110111011100,  // ##.###.###
+        0b111111111100,  // ##########
+        0b001000100100,  // ..#...#...
+        0b011101110100,  // .###.###..
+        0b001000100100,  // ..#...#...
+    };
+    static const uint16_t WEATHER_CLOUD[12] = {
+        0b000000000000,  // ...........
+        0b000000000000,  // ...........
+        0b000111110000,  // ...#####...
+        0b001111111000,  // ..#######..
+        0b011111111100,  // .#########.
+        0b111000111100,  // ###...####.
+        0b111111111100,  // ##########.
+        0b011111111100,  // .#########.
+        0b001111111000,  // ..#######..
+        0b000111110000,  // ...#####...
+        0b000000000000,  // ...........
+        0b000000000000,  // ...........
+    };
 
-    PixelRenderer::fillRect(BAR_X + 4, 68, 4, 4, PixelRenderer::BLUE);
-    snprintf(buf, sizeof(buf), "%d%%", hum);
-    PixelRenderer::drawPixelText(BAR_X + 10, 66, buf, PixelRenderer::WHITE, 1);
+    uint32_t gameDay = GameEngine::ins().getCurrentGameDay();
+    bool cloudy = (gameDay % 3 == 0);
+    const uint16_t* icon = cloudy ? WEATHER_CLOUD : WEATHER_SUN;
+    uint16_t iconColor = cloudy ? PixelRenderer::WHITE : PixelRenderer::YELLOW;
 
-    // ---- 5. 虚拟时间 ----
-    char timeBuf[8];
-    snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", hour, minute);
-    centerText(timeBuf, 84, PixelRenderer::WHITE);
+    static constexpr int ICON_W = 12;
+    static constexpr int ICON_H = 12;
+    static constexpr int ICON_GAP = 4;
+    int iconX = BAR_X + (BAR_W - ICON_W) / 2;
+    int iconY = 100 - ICON_H - ICON_GAP;
+
+    for (int row = 0; row < ICON_H; row++) {
+        uint16_t mask = icon[row];
+        for (int col = 0; col < ICON_W; col++) {
+            if (mask & (1 << (ICON_W - 1 - col))) {
+                PixelRenderer::fillRect(iconX + col, iconY + row, 1, 1, iconColor);
+            }
+        }
+    }
+
+    const char* todName = GameEngine::ins().getTimeOfDayShortName();
+    canvas.setTextSize(fs);
+    int tw = canvas.textWidth(todName);
+    int textX = BAR_X + (BAR_W - tw) / 2;
+    PixelRenderer::drawPixelText(textX, 100, todName, PixelRenderer::CREAM, fs);
 }
 
 void TerrariumScene::drawDeathScreen() {
@@ -938,6 +991,7 @@ void TerrariumScene::updateTilt() {
 // - 大角度：先向低处滑落一小段，再转身朝高处爬行
 // dir 表示低处方向（设备哪一侧向下）
 void TerrariumScene::onTilt(TiltDir dir, float magnitude) {
+    mind.onTilted(Hal::ins().millis());
     const char* lowSideStr  = (dir == TiltDir::LEFT) ? "LEFT" : "RIGHT";
     const char* highSideStr = (dir == TiltDir::LEFT) ? "RIGHT" : "LEFT";
     Serial.printf("[Tilt] onTilt low=%s high=%s mag=%.2f adultState=%d bugX=%d\n",

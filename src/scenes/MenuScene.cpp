@@ -16,6 +16,7 @@ int MenuScene::lastWoodSelected = 0;
 int MenuScene::lastBowlSelected = 0;
 int MenuScene::lastFoodSelected = 0;
 int MenuScene::lastFightSelected = 0;
+int MenuScene::lastExploreSelected = 0;
 
 void MenuScene::onEnter() {
     mode = Mode::MAIN;
@@ -39,6 +40,8 @@ void MenuScene::onExit() {
         lastBoxSelected = selected;
     } else if (mode == Mode::FIGHT) {
         lastFightSelected = selected;
+    } else if (mode == Mode::EXPLORE) {
+        lastExploreSelected = selected;
     } else {
         lastSelected = selected;
     }
@@ -63,6 +66,8 @@ void MenuScene::render() {
         drawBowlLayout();
     } else if (mode == Mode::FIGHT) {
         drawFightList();
+    } else if (mode == Mode::EXPLORE) {
+        drawExploreList();
     } else {
         drawList();
     }
@@ -123,7 +128,7 @@ void MenuScene::drawList() {
     static constexpr int BOX_W = 56;
     static constexpr int BOX_H = 32;
     static constexpr int ICON_SLOT_W = 56;
-    int boxX = (int)(10 * fs);
+    int boxX = (int)(10 * fs) + 10;
 
     for (int k = 0; k < count; k++) {
         int i = order[k];
@@ -165,7 +170,7 @@ void MenuScene::drawList() {
         canvas.setTextSize(fs);
         int tw = canvas.textWidth(desc);
         int th = (int)(8 * fs);
-        int descX = (boxX + leftW + (int)(10 * fs) + Hal::DISPLAY_W) / 2;
+        int descX = (boxX + leftW + (int)(10 * fs) + Hal::DISPLAY_W) / 2 - 10;
         int descY = y - th / 2;
         PixelRenderer::drawPixelText(descX - tw / 2, descY, desc, descColor, fs);
     }
@@ -208,6 +213,46 @@ void MenuScene::drawFightList() {
     }
 }
 
+void MenuScene::drawExploreList() {
+    float fs = PixelRenderer::getContentFontScale();
+    int rowStep = (int)(14 * fs);
+    int startY = 8;
+    int sepGap = (int)(4 * fs);
+    bool exploreAvailable = GameEngine::ins().canExplore();
+
+    for (int i = 0; i < EXPLORE_ITEM_COUNT; i++) {
+        int y = startY + i * rowStep;
+        bool isBack = (i == LOCATION_BACK);
+        uint16_t color = PixelRenderer::WHITE;
+        if (!isBack && !exploreAvailable) color = PixelRenderer::GRAY;
+        if (i == selected) color = (!isBack && !exploreAvailable) ? PixelRenderer::rgb565(180, 180, 0)
+                                                                  : PixelRenderer::YELLOW;
+
+        if (i == selected) {
+            PixelRenderer::fillRect(4, y, 4, (int)(8 * fs),
+                                    (!isBack && !exploreAvailable) ? PixelRenderer::GRAY : PixelRenderer::YELLOW);
+        }
+
+        char label[24];
+        const char* baseLabel = itemLabel(i, label, sizeof(label));
+        char row[32];
+        if (!isBack) {
+            const char* tag = "Safe";
+            if (i == LOCATION_BACK_HILL) tag = "Wood";
+            else if (i == LOCATION_RIVERSIDE) tag = "Rare";
+            else if (i == LOCATION_OLD_WOODS) tag = "Danger";
+            snprintf(row, sizeof(row), "%s %s %s", baseLabel, GameEngine::ins().getTimeOfDayShortName(), tag);
+            PixelRenderer::drawPixelText(14, y, row, color, fs);
+        } else {
+            PixelRenderer::drawPixelText(14, y, baseLabel, color, fs);
+        }
+
+        if (!isBack) {
+            PixelRenderer::fillRect(4, y + rowStep - sepGap, Hal::DISPLAY_W - 8, 1, PixelRenderer::GRAY);
+        }
+    }
+}
+
 bool MenuScene::onButton(const ButtonEvent& ev) {
     // Toast 激活时任意按键关闭弹窗
     if (toastMsg && Hal::ins().millis() < toastEndMs) {
@@ -234,6 +279,8 @@ bool MenuScene::onButton(const ButtonEvent& ev) {
             } else if (mode == Mode::BOX) {
                 enterMode(Mode::MAIN);
             } else if (mode == Mode::FIGHT) {
+                enterMode(Mode::MAIN);
+            } else if (mode == Mode::EXPLORE) {
                 enterMode(Mode::MAIN);
             } else {
                 nextScene = SCENE_TERRARIUM;
@@ -362,6 +409,32 @@ void MenuScene::executeSelection() {
         return;
     }
 
+    if (mode == Mode::EXPLORE) {
+        if (selected == LOCATION_BACK) {
+            enterMode(Mode::MAIN);
+            return;
+        }
+
+        if (selected >= 0 && selected < EXPLORE_ITEM_COUNT - 1) {
+            if (bug.getStage() != Stage::ADULT) {
+                showToast(UiStrings::EXPLORE_NEED_ADULT);
+            } else if (bug.isDead()) {
+                showToast(UiStrings::EXPLORE_BEETLE_DIED);
+            } else if (bug.getHunger() < 30) {
+                showToast(UiStrings::EXPLORE_NEED_HUNGER);
+            } else if (bug.getMot() < 50) {
+                showToast(UiStrings::EXPLORE_MOT_LOW);
+            } else if (GameEngine::ins().getExploreCountToday() >= 2) {
+                showToast(UiStrings::EXPLORE_DAILY_LIMIT);
+            } else {
+                GameEngine::ins().setExploreLocation((uint8_t)selected);
+                Serial.printf("[Menu] Explore location: %s\n", GameEngine::ins().getExploreLocationName());
+                nextScene = SCENE_EXPLORE;
+            }
+        }
+        return;
+    }
+
     switch (selected) {
         case FEED:
             enterMode(Mode::FOOD);
@@ -373,16 +446,7 @@ void MenuScene::executeSelection() {
             enterMode(Mode::FIGHT);
             break;
         case EXPLORE: {
-            Bug& bug = GameEngine::ins().getBug();
-            if (bug.getStage() != Stage::ADULT || bug.isDead()) {
-                // 仅成虫可探索
-                nextScene = SCENE_MENU;
-            } else if (bug.getHunger() < 30) {
-                // 饥饿度不足
-                nextScene = SCENE_MENU;
-            } else {
-                nextScene = SCENE_EXPLORE;
-            }
+            enterMode(Mode::EXPLORE);
             break;
         }
         case SETTINGS:
@@ -403,6 +467,7 @@ void MenuScene::enterMode(Mode nextMode) {
     else if (mode == Mode::WOOD) lastWoodSelected = selected;
     else if (mode == Mode::BOX) lastBoxSelected = selected;
     else if (mode == Mode::FIGHT) lastFightSelected = selected;
+    else if (mode == Mode::EXPLORE) lastExploreSelected = selected;
     else lastSelected = selected;
 
     mode = nextMode;
@@ -425,6 +490,10 @@ void MenuScene::enterMode(Mode nextMode) {
     }
     else if (mode == Mode::BOX) selected = lastBoxSelected;
     else if (mode == Mode::FIGHT) selected = lastFightSelected;
+    else if (mode == Mode::EXPLORE) {
+        selected = lastExploreSelected;
+        if (selected >= EXPLORE_ITEM_COUNT - 1) selected = 0;
+    }
     else selected = lastSelected;
     int count = itemCount();
     if (selected >= count) selected = 0;
@@ -437,6 +506,7 @@ int MenuScene::itemCount() const {
     if (mode == Mode::WOOD) return WOOD_ITEM_COUNT;
     if (mode == Mode::BOX) return BOX_ITEM_COUNT;
     if (mode == Mode::FIGHT) return FIGHT_ITEM_COUNT;
+    if (mode == Mode::EXPLORE) return EXPLORE_ITEM_COUNT;
     return MAIN_ITEM_COUNT;
 }
 
@@ -484,6 +554,17 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
             case FIGHT_CREATE: return UiStrings::MENU_FIGHT_CREATE;
             case FIGHT_SEARCH: return UiStrings::MENU_FIGHT_SEARCH;
             case FIGHT_BACK:
+            default: return UiStrings::BACK;
+        }
+    }
+
+    if (mode == Mode::EXPLORE) {
+        switch (index) {
+            case LOCATION_PARK: return "Park";
+            case LOCATION_BACK_HILL: return "Back Hill";
+            case LOCATION_RIVERSIDE: return "Riverside";
+            case LOCATION_OLD_WOODS: return "Old Woods";
+            case LOCATION_BACK:
             default: return UiStrings::BACK;
         }
     }

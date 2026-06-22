@@ -8,6 +8,22 @@
 
 const char* InfoScene::STAGE_NAMES[5] = { "Egg", "Larva", "Pupa", "Juvenile", "Adult" };
 
+namespace {
+
+uint16_t temperamentColor(Temperament temperament) {
+    switch (temperament) {
+        case Temperament::BRUTE:     return 0xF800; // 深红
+        case Temperament::SWIFT:     return 0x6B7D; // 灰蓝
+        case Temperament::GIANT:     return 0xFD20; // 橙褐
+        case Temperament::RESILIENT: return 0xFE00; // 金色
+        case Temperament::BALANCED:  return 0xFFFF; // 白/浅灰
+        case Temperament::SPIRIT:    return 0x07E0; // 青绿
+    }
+    return PixelRenderer::WHITE;
+}
+
+}
+
 void InfoScene::onEnter() {
     page = 0;
 }
@@ -20,22 +36,34 @@ SceneID InfoScene::update() {
 
 void InfoScene::render() {
     LGFX_Sprite& canvas = Hal::ins().canvas();
-    Bug& bug = GameEngine::ins().getBug();
 
     canvas.fillRect(0, 0, Hal::DISPLAY_W, Hal::DISPLAY_H, PixelRenderer::BLACK);
 
     // 标题栏
     canvas.fillRect(0, 0, Hal::DISPLAY_W, 20, PixelRenderer::rgb565(25, 25, 40));
     float fs = PixelRenderer::getContentFontScale();
-    const char* titles[PAGE_COUNT] = { UiStrings::INFO_TITLE, UiStrings::RECORD_TITLE };
+    const char* titles[PAGE_COUNT] = {
+        UiStrings::INFO_TITLE,
+        UiStrings::ATTR_TITLE,
+        UiStrings::RECORD_TITLE,
+    };
     PixelRenderer::drawPixelText(4, 4, titles[page], PixelRenderer::CYAN, fs);
-    PixelRenderer::drawPixelText(140, 4, UiStrings::INFO_NAV, PixelRenderer::GRAY, fs);
+    canvas.setTextSize(fs);
+    const char* nav = UiStrings::INFO_NAV;
+    int titleW = canvas.textWidth(titles[page]);
+    int navW = canvas.textWidth(nav);
+    if (titleW + navW + 14 > Hal::DISPLAY_W) {
+        nav = UiStrings::INFO_NAV_SHORT;
+        navW = canvas.textWidth(nav);
+    }
+    PixelRenderer::drawPixelText(Hal::DISPLAY_W - navW - 4, 4, nav, PixelRenderer::GRAY, fs);
 
     renderPageIndicator();
 
     switch (page) {
         case 0: renderStatus(); break;
-        case 1: renderRecord(); break;
+        case 1: renderAttributes(); break;
+        case 2: renderRecord(); break;
     }
 }
 
@@ -65,20 +93,52 @@ void InfoScene::renderStatus() {
     int marginX = (int)(10 * fs);
     // 顶部留白，避免贴标题栏太近
     int y = 20 + (int)(3 * fs);
-    static constexpr int STEP = 24;
+    int rowStep = (int)(12 * fs);
+    if (rowStep < 18) rowStep = 18;
+    if (rowStep > 21) rowStep = 21;
 
-    // Gen、Stage、气质合并到一行，节约纵向空间
-    snprintf(buf, sizeof(buf), "%s:%d %s %s",
-             UiStrings::GEN,
-             bug.getGeneration(),
-             STAGE_NAMES[(int)bug.getStage()],
-             bug.getTemperamentName());
+    snprintf(buf, sizeof(buf), "%s: %d", UiStrings::GEN, bug.getGeneration());
     PixelRenderer::drawPixelText(marginX, y, buf, PixelRenderer::WHITE, fs);
-    y += STEP;
+    y += rowStep;
 
-    // 分隔线，让上下区域不紧贴
-    canvas.drawFastHLine(marginX, y - 6, Hal::DISPLAY_W - marginX * 2, PixelRenderer::GRAY);
-    y += 4;
+    snprintf(buf, sizeof(buf), "Stage: %s", STAGE_NAMES[(int)bug.getStage()]);
+    PixelRenderer::drawPixelText(marginX, y, buf, PixelRenderer::WHITE, fs);
+    y += rowStep;
+
+    snprintf(buf, sizeof(buf), "%s: ", UiStrings::TYPE);
+    PixelRenderer::drawPixelText(marginX, y, buf, PixelRenderer::WHITE, fs);
+    canvas.setTextSize(fs);
+    int typeLabelW = canvas.textWidth(buf);
+    PixelRenderer::drawPixelText(marginX + typeLabelW, y, bug.getTemperamentName(),
+                                 temperamentColor(bug.getTemperament()), fs);
+    y += rowStep;
+
+    canvas.drawFastHLine(marginX, y - (int)(4 * fs), Hal::DISPLAY_W - marginX * 2 - 12, PixelRenderer::GRAY);
+    y += (int)(4 * fs);
+
+    snprintf(buf, sizeof(buf), "%s: %d", UiStrings::MOT, bug.getMot());
+    PixelRenderer::drawPixelText(marginX, y, buf, PixelRenderer::WHITE, fs);
+    y += rowStep;
+
+    snprintf(buf, sizeof(buf), "%s: %d  %s: %d",
+             UiStrings::HUN, bug.getHunger(),
+             UiStrings::DROP, bug.getFoodCount(FoodType::DROP));
+    PixelRenderer::drawPixelText(marginX, y, buf, PixelRenderer::WHITE, fs);
+}
+
+void InfoScene::renderAttributes() {
+    LGFX_Sprite& canvas = Hal::ins().canvas();
+    Bug& bug = GameEngine::ins().getBug();
+    char buf[16];
+
+    float fs = PixelRenderer::getContentFontScale();
+    int marginX = (int)(10 * fs);
+    int y = 20 + (int)(5 * fs);
+    int rowStep = (int)(12 * fs);
+    if (rowStep < 18) rowStep = 18;
+    if (rowStep > 21) rowStep = 21;
+    int barH = (int)(4 * fs);
+    if (barH < 3) barH = 3;
 
     struct Attr { const char* name; float val; uint8_t cap; };
     Attr attrs[5] = {
@@ -89,48 +149,28 @@ void InfoScene::renderStatus() {
         {"SPI", bug.getSpi(), bug.getSpiCap()},
     };
 
-    static constexpr int ATTR_STEP = 16;
-    int colW = (Hal::DISPLAY_W - marginX * 2) / 2;
-    int barH = (int)(4 * fs);
-    if (barH < 3) barH = 3;
-    int barYOffset = (ATTR_STEP - barH) / 2;
+    canvas.setTextSize(fs);
+    int valueRight = Hal::DISPLAY_W - (int)(20 * fs);
+    int valueColW = canvas.textWidth("99");
+    int barX = marginX + (int)(32 * fs);
+    int barRight = valueRight - valueColW - (int)(8 * fs);
+    int barW = barRight - barX;
+    if (barW < 40) barW = 40;
 
-    for (int row = 0; row < 3; row++) {
-        for (int col = 0; col < 2; col++) {
-            int idx = row * 2 + col;
-            if (idx >= 5) break;
-            int x = marginX + col * colW;
+    for (int i = 0; i < 5; i++) {
+        PixelRenderer::drawPixelText(marginX, y, attrs[i].name, PixelRenderer::WHITE, fs);
 
-            // 属性名
-            PixelRenderer::drawPixelText(x, y, attrs[idx].name, PixelRenderer::WHITE, fs);
+        float ratio = attrs[i].cap == 0 ? 0.0f : attrs[i].val / attrs[i].cap;
+        if (ratio > 1.0f) ratio = 1.0f;
+        PixelRenderer::drawProgressBar(barX, y + (rowStep - barH) / 2, barW, barH,
+                                       ratio,
+                                       PixelRenderer::GREEN, PixelRenderer::GRAY);
 
-            // 数值靠右
-            snprintf(buf, sizeof(buf), "%d/%d", (int)roundf(attrs[idx].val), attrs[idx].cap);
-            canvas.setTextSize(fs);
-            int valW = canvas.textWidth(buf);
-            int valX = x + colW - valW - (int)(4 * fs);
-            PixelRenderer::drawPixelText(valX, y, buf, PixelRenderer::WHITE, fs);
-
-            // 进度条：在属性名和数值之间
-            int nameW = canvas.textWidth(attrs[idx].name);
-            int barX = x + nameW + (int)(6 * fs);
-            int barW = valX - barX - (int)(4 * fs);
-            if (barW < 10) barW = 10;
-            float ratio = attrs[idx].cap == 0 ? 0.0f : attrs[idx].val / attrs[idx].cap;
-            if (ratio > 1.0f) ratio = 1.0f;
-            PixelRenderer::drawProgressBar(barX, y + barYOffset, barW, barH,
-                                           ratio,
-                                           PixelRenderer::GREEN, PixelRenderer::GRAY);
-        }
-        y += ATTR_STEP;
+        snprintf(buf, sizeof(buf), "%d", (int)roundf(attrs[i].val));
+        int valW = canvas.textWidth(buf);
+        PixelRenderer::drawPixelText(valueRight - valW, y, buf, PixelRenderer::WHITE, fs);
+        y += rowStep;
     }
-
-    // MOT / HUN / Drop 合并到底部一行小字
-    y += 6;
-    snprintf(buf, sizeof(buf), "%s:%d %s:%d",
-             UiStrings::MOT, bug.getMot(),
-             UiStrings::HUN, bug.getHunger());
-    PixelRenderer::drawPixelText(marginX, y, buf, PixelRenderer::WHITE, fs);
 }
 
 void InfoScene::renderRecord() {
@@ -138,28 +178,26 @@ void InfoScene::renderRecord() {
     char buf[48];
 
     float fs = PixelRenderer::getContentFontScale();
-    int marginX = (int)(10 * fs);
-    int labelX = (int)(55 * fs);
+    int labelX = (int)(48 * fs);
     // 紧贴标题栏底部，避免顶部留空过多
-    int y = 20 + (int)(3 * fs);
-    static constexpr int STEP = 18;
+    int y = 20 + (int)(8 * fs);
+    int step = (int)(12 * fs);
+    if (step < 18) step = 18;
+    if (step > 22) step = 22;
 
     int total = (int)bug.getWins() + (int)bug.getLosses();
 
-    PixelRenderer::drawPixelText(marginX, y, UiStrings::RECORD_TITLE, PixelRenderer::YELLOW, fs);
-    y += STEP;
-
     snprintf(buf, sizeof(buf), "%s:  %d", UiStrings::TOTAL, total);
     PixelRenderer::drawPixelText(labelX, y, buf, PixelRenderer::WHITE, fs);
-    y += STEP;
+    y += step;
 
     snprintf(buf, sizeof(buf), "%s:   %d", UiStrings::WINS, bug.getWins());
     PixelRenderer::drawPixelText(labelX, y, buf, PixelRenderer::GREEN, fs);
-    y += STEP;
+    y += step;
 
     snprintf(buf, sizeof(buf), "%s: %d", UiStrings::LOSSES, bug.getLosses());
     PixelRenderer::drawPixelText(labelX, y, buf, PixelRenderer::RED, fs);
-    y += STEP;
+    y += step;
 
     if (total > 0) {
         int rate = (bug.getWins() * 100) / total;

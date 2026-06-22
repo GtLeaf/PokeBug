@@ -283,12 +283,11 @@ SceneID BattleScene::update() {
 
         case State::ROUND_END: {
             if (Hal::ins().millis() - stateStartMs >= ROUND_END_MS) {
-                // 改为持续到一方 HP 归零，不再强制 3 回合结束
-                if (me.hp <= 0 || enemy.hp <= 0) {
+                if (me.hp <= 0 || enemy.hp <= 0 || roundNum >= MAX_ROUNDS) {
                     state = State::RESULT;
                     resultSent = false;
-                    Serial.printf("[BattleScene] round end -> result (me.hp=%d enemy.hp=%d)\n",
-                                  me.hp, enemy.hp);
+                    Serial.printf("[BattleScene] round end -> result (round=%d me.hp=%d enemy.hp=%d)\n",
+                                  roundNum, me.hp, enemy.hp);
                 } else {
                     roundNum++;
                     startRound();
@@ -523,8 +522,7 @@ void BattleScene::applyBattleResult() {
         res.won = localWin;
         res.fromExplore = pending.fromExplore;
         res.fromCup = pending.fromCup;
-        // tier 需要从 pending 或 enemy 推断；PendingNpcBattle 没有 tier，用 legend 近似
-        res.tier = legendNpc ? NpcData::Tier::LEGEND : NpcData::Tier::ROOKIE;
+        res.tier = pending.tier;
         res.legend = legendNpc;
     }
     Serial.printf("[BattleScene] battle end, localWin=%d\n", localWin);

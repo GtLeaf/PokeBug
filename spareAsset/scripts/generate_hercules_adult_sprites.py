@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import re
 from collections import deque
 from pathlib import Path
 
@@ -14,13 +15,18 @@ EXTRACTED = SPARE / "extracted/beetle/hercules/adult"
 PREVIEWS = SPARE / "previews/beetle/hercules/adult"
 GENERATED = SPARE / "generated/src_assets"
 
-SETS = [
-    ("WALK", "walk.png"),
-    ("EAT", "eat.png"),
-    ("TURN", "turn.png"),
-    ("THREATEN", "threaten.png"),
-    ("RESET", "reset.png"),
+ACTION_SOURCES = [
+    # kind="frames_dir" reads one PNG per frame from spareAsset/extracted.
+    # To switch WALK back to the original sheet, change this entry to:
+    # {"name": "WALK", "kind": "sheet", "file": "walk.png"}
+    {"name": "WALK", "kind": "frames_dir", "dir": EXTRACTED / "walk"},
+    {"name": "EAT", "kind": "sheet", "file": "eat.png"},
+    {"name": "TURN", "kind": "sheet", "file": "turn.png"},
+    {"name": "THREATEN", "kind": "sheet", "file": "threaten.png"},
+    {"name": "RESET", "kind": "sheet", "file": "reset.png"},
 ]
+
+ACTION_NAMES = [source["name"] for source in ACTION_SOURCES]
 
 # Size policy.
 #
@@ -152,6 +158,33 @@ def components(path):
     return im, classes, comps
 
 
+def natural_key(path):
+    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", path.name)]
+
+
+def image_data(img):
+    getter = getattr(img, "get_flattened_data", None)
+    return getter() if getter else img.getdata()
+
+
+def visible_bbox(mask):
+    minx = miny = None
+    maxx = maxy = 0
+    for y, row in enumerate(mask):
+        for x, visible in enumerate(row):
+            if not visible:
+                continue
+            if minx is None:
+                minx = maxx = x
+                miny = maxy = y
+            else:
+                minx = min(minx, x)
+                miny = min(miny, y)
+                maxx = max(maxx, x)
+                maxy = max(maxy, y)
+    return None if minx is None else (minx, miny, maxx + 1, maxy + 1)
+
+
 def trim_alpha(im):
     bbox = im.getbbox()
     return im.crop(bbox) if bbox else Image.new("RGBA", (1, 1), (0, 0, 0, 0))
@@ -171,38 +204,71 @@ def apply_palette_key(img, class_img):
     return keyed
 
 
-def make_frames(name, filename):
-    im, classes, comps = components(SRC / filename)
+def build_frame(name, frame_index, raw_crop, raw_classes, source_label):
     policy = POLICY[name]
+    bbox = raw_crop.getbbox()
+    crop = raw_crop.crop(bbox) if bbox else Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+    class_crop = raw_classes.crop(bbox) if bbox else Image.new("L", (1, 1), CLASS_NONE)
+    scale = min(policy["max_w"] / crop.width, policy["max_h"] / crop.height)
+    resized = crop.resize(
+        (max(1, round(crop.width * scale)), max(1, round(crop.height * scale))),
+        Image.Resampling.LANCZOS,
+    )
+    resized_classes = class_crop.resize(resized.size, Image.Resampling.NEAREST)
+    bbox = resized.getbbox()
+    resized = resized.crop(bbox) if bbox else resized
+    resized_classes = resized_classes.crop(bbox) if bbox else resized_classes
+    keyed = apply_palette_key(resized, resized_classes)
+    keyed.save(EXTRACTED / f"{name.lower()}_{frame_index}.png")
+    palette_pixels = sum(1 for v in image_data(resized_classes) if v == CLASS_PALETTE)
+    print(
+        f"{name.lower()}_{frame_index}: {source_label} {crop.width}x{crop.height} -> "
+        f"{keyed.width}x{keyed.height} palette_pixels={palette_pixels}"
+    )
+    return keyed
+
+
+def make_frames_from_sheet(name, filename):
+    im, classes, comps = components(SRC / filename)
     frames = []
     for i, (x1, y1, x2, y2) in enumerate(comps):
         raw_crop = im.crop((x1, y1, x2, y2))
         raw_classes = classes.crop((x1, y1, x2, y2))
-        bbox = raw_crop.getbbox()
-        crop = raw_crop.crop(bbox) if bbox else Image.new("RGBA", (1, 1), (0, 0, 0, 0))
-        class_crop = raw_classes.crop(bbox) if bbox else Image.new("L", (1, 1), CLASS_NONE)
-        scale = min(policy["max_w"] / crop.width, policy["max_h"] / crop.height)
-        resized = crop.resize(
-            (max(1, round(crop.width * scale)), max(1, round(crop.height * scale))),
-            Image.Resampling.LANCZOS,
-        )
-        resized_classes = class_crop.resize(resized.size, Image.Resampling.NEAREST)
-        bbox = resized.getbbox()
-        resized = resized.crop(bbox) if bbox else resized
-        resized_classes = resized_classes.crop(bbox) if bbox else resized_classes
-        keyed = apply_palette_key(resized, resized_classes)
-        frames.append(keyed)
-        keyed.save(EXTRACTED / f"{name.lower()}_{i}.png")
-        palette_pixels = sum(1 for v in resized_classes.getdata() if v == CLASS_PALETTE)
-        print(
-            f"{name.lower()}_{i}: {crop.width}x{crop.height} -> "
-            f"{keyed.width}x{keyed.height} palette_pixels={palette_pixels}"
-        )
+        frames.append(build_frame(name, i, raw_crop, raw_classes, filename))
     return frames
 
 
+def make_frames_from_dir(name, frames_dir):
+    files = sorted(frames_dir.glob("*.png"), key=natural_key)
+    if not files:
+        raise FileNotFoundError(f"No PNG frames found in {frames_dir}")
+
+    frames = []
+    for i, path in enumerate(files):
+        im, mask, classes = transparentized(path)
+        bbox = visible_bbox(mask)
+        if bbox:
+            raw_crop = im.crop(bbox)
+            raw_classes = classes.crop(bbox)
+        else:
+            raw_crop = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+            raw_classes = Image.new("L", (1, 1), CLASS_NONE)
+        frames.append(build_frame(name, i, raw_crop, raw_classes, path.name))
+    return frames
+
+
+def make_frames(source):
+    name = source["name"]
+    kind = source["kind"]
+    if kind == "sheet":
+        return make_frames_from_sheet(name, source["file"])
+    if kind == "frames_dir":
+        return make_frames_from_dir(name, source["dir"])
+    raise ValueError(f"Unsupported action source kind: {kind}")
+
+
 def encode(img):
-    pixels = list(img.getdata())
+    pixels = list(image_data(img))
     out = []
     i = 0
     while i < len(pixels):
@@ -240,7 +306,7 @@ def write_preview(all_sets):
     cell_h = max(56, max_h + 17)
     ground_y = cell_h - 12
     rows = []
-    for name, _ in SETS:
+    for name in ACTION_NAMES:
         row = Image.new("RGBA", (cell_w * max(len(all_sets[name]), 1), cell_h), (0, 0, 0, 0))
         d = ImageDraw.Draw(row)
         d.line((0, ground_y, row.width, ground_y), fill=(255, 0, 0, 180), width=1)
@@ -305,7 +371,7 @@ extern const uint16_t RESET_RLE[] PROGMEM;
     )
 
     cpp = ['#include "HerculesAdultSprites.h"', "", "namespace HerculesAdultSprites {", ""]
-    for name, _ in SETS:
+    for name in ACTION_NAMES:
         data = []
         metas = []
         for fr in all_sets[name]:
@@ -333,7 +399,7 @@ def main():
     GENERATED.mkdir(parents=True, exist_ok=True)
     print(f"ADULT_BASE_SCALE={ADULT_BASE_SCALE:.2f}")
     print(f"POLICY={POLICY}")
-    all_sets = {name: make_frames(name, filename) for name, filename in SETS}
+    all_sets = {source["name"]: make_frames(source) for source in ACTION_SOURCES}
     write_preview(all_sets)
     write_outputs(all_sets)
     (GENERATED / OUT_H.name).write_text(OUT_H.read_text(encoding="utf-8"), encoding="utf-8")

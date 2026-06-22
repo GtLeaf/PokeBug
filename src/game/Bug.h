@@ -81,8 +81,11 @@ public:
     uint8_t getSpdCap() const { return spdCap(); }
     uint8_t getSpiCap() const { return spiCap(); }
     uint8_t getMot() const { return mot; }
+    void setMot(uint8_t value) { mot = value > 100 ? 100 : value; }
     uint8_t getHunger() const { return hunger; }
     void modHunger(int8_t delta);
+    void addTrainingBonus(float sizDelta, float strDelta, float endDelta,
+                          float spdDelta, float spiDelta);
 
     // ---------- 基因与外观 ----------
     uint8_t getGeneVIG() const { return geneVIG; }

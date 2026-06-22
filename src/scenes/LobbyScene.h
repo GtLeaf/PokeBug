@@ -39,7 +39,7 @@ private:
     uint8_t roomCount = 0;           // 上次扫描到的房间数
     const char* messageText = nullptr; // MESSAGE 状态要显示的文本
 
-    void enterModeSelect();
+    void enterModeSelect(Mode defaultMode = Mode::CREATE);
     void enterHostWaiting();
     void enterSearchScanning();
     void enterSearchList();
