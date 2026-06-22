@@ -18,15 +18,14 @@ void BugMind::computeDesires(uint8_t hunger, uint8_t mot, bool isNight,
 
     // ---- 精力/休息需求 ----
     uint32_t idleSec = (realNow - lastActivityMs) / 1000;
-    uint8_t fatigue = 0;
-    if (idleSec > 60) fatigue = (uint8_t)(idleSec / 8); // 每8秒+1
+    uint16_t fatigue = 0;
+    if (idleSec > 60) fatigue = idleSec / 8; // 每8秒+1
     if (mot < 30) fatigue += 55;
     else if (mot < 60) fatigue += 25;
 
-    energyNeed = fatigue;
-    if (isNight) energyNeed += 50;
-    if (woodPlaced) energyNeed += 18;
-    energyNeed = clamp(energyNeed);
+    if (isNight) fatigue += 50;
+    if (woodPlaced) fatigue += 18;
+    energyNeed = clamp(fatigue);
 
     // ---- 安全需求 ----
     safetyNeed = 0;
@@ -39,34 +38,43 @@ void BugMind::computeDesires(uint8_t hunger, uint8_t mot, bool isNight,
 
     // ---- 好奇需求 ----
     uint32_t boredSec = (realNow - lastActivityMs) / 1000;
-    curiosityNeed = (uint8_t)(boredSec * 3);
-    if (curiosityNeed > 140) curiosityNeed = 140;
-    if (hunger > 70 && mot > 50) curiosityNeed += 35; // 饱+有精力更想探索
-    if (isNight) curiosityNeed = curiosityNeed / 2;   // 夜间好奇心降低
-    curiosityNeed = clamp(curiosityNeed);
+    uint16_t curiosity = boredSec * 3;
+    if (curiosity > 140) curiosity = 140;
+    if (hunger > 70 && mot > 50) curiosity += 35; // 饱+有精力更想探索
+    if (isNight) curiosity = curiosity / 2;       // 夜间好奇心降低
+    curiosityNeed = clamp(curiosity);
 
     // ---- 基础欲望分数 ----
-    desireScores[(uint8_t)Desire::EAT]    = foodAvailable ? hungerNeed : 0;
-    desireScores[(uint8_t)Desire::REST]   = energyNeed;
-    desireScores[(uint8_t)Desire::WANDER] = curiosityNeed;
-    desireScores[(uint8_t)Desire::HIDE]   = safetyNeed;
-    desireScores[(uint8_t)Desire::STARE]  = 35; // 基础发呆倾向
+    uint16_t baseScores[(uint8_t)Desire::COUNT] = {0};
+    baseScores[(uint8_t)Desire::EAT]    = foodAvailable ? hungerNeed : 0;
+    baseScores[(uint8_t)Desire::REST]   = energyNeed;
+    baseScores[(uint8_t)Desire::WANDER] = curiosityNeed;
+    baseScores[(uint8_t)Desire::HIDE]   = safetyNeed;
+    baseScores[(uint8_t)Desire::STARE]  = 35; // 基础发呆倾向
 
-    // ---- 当前欲望惯性（避免频繁切换） ----
-    desireScores[(uint8_t)topDesire_] += INERTIA_BONUS;
-
-    // ---- 随机噪声（让每只甲虫"个性"不同） ----
+    // ---- 当前欲望惯性与随机噪声（饱和计算，避免 uint8_t 回绕） ----
     for (int i = 0; i < (int)Desire::COUNT; i++) {
-        desireScores[i] += (uint8_t)(random(RANDOM_NOISE_MAX));
+        uint16_t score = baseScores[i];
+        if (i == (int)topDesire_) score += INERTIA_BONUS;
+        score += (uint16_t)random(RANDOM_NOISE_MAX);
+        desireScores[i] = clamp(score);
     }
 
     // ---- 选择最高分 ----
-    uint8_t max = 0;
+    uint8_t maxScore = 0;
     Desire winner = Desire::STARE;
     for (int i = 0; i < (int)Desire::COUNT; i++) {
-        if (desireScores[i] > max) {
-            max = desireScores[i];
+        if (desireScores[i] > maxScore) {
+            maxScore = desireScores[i];
             winner = (Desire)i;
+        }
+    }
+
+    // ---- 切换阈值（让心智有一点"坚持己见"） ----
+    if (winner != topDesire_) {
+        uint8_t currentScore = desireScores[(uint8_t)topDesire_];
+        if (maxScore < clamp((uint16_t)currentScore + SWITCH_MARGIN)) {
+            winner = topDesire_;
         }
     }
     topDesire_ = winner;

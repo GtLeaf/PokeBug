@@ -70,8 +70,9 @@ private:
     static constexpr int MIN_X = 35;       // 左边界，预留巨体最大缩放半宽
     static constexpr int MAX_X = 165;      // 右边界，避免巨体最大缩放进入右侧状态栏
     static constexpr uint32_t TURN_DURATION_FRAMES = 16;  // 20fps 下约 0.8 秒
-    static constexpr uint32_t EAT_DURATION_MIN_FRAMES = 60;  // 20fps 下约 3 秒
-    static constexpr uint32_t EAT_DURATION_MAX_FRAMES = 140; // 20fps 下约 7 秒
+    static constexpr uint32_t EAT_DURATION_MIN_FRAMES = 180; // 20fps 下约 9 秒，覆盖多口连续进食
+    static constexpr uint32_t EAT_DURATION_MAX_FRAMES = 260; // 20fps 下约 13 秒，足够吃完一份食物
+    static constexpr uint32_t EAT_MIN_EXIT_FRAMES = 50;      // 第一口后至少咀嚼一小段，避免一帧退出
     static constexpr uint8_t EAT_FRAME_INTERVAL_MIN = 6;     // 20fps 下约 0.3 秒
     static constexpr uint8_t EAT_FRAME_INTERVAL_MAX = 10;    // 20fps 下约 0.5 秒
     static constexpr uint8_t EAT_CONTINUE_HUNGER = 80;

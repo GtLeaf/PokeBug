@@ -17,10 +17,10 @@ public:
 
 private:
     enum class State {
-        EXPLORING,        // 轮次开始，立即触发一个事件
+        EXPLORING,        // 轮次开始，先展示场景再触发事件
+        EVENT_REVEAL,     // 事件出现前的轻微晃动
         EVENT_POPUP,      // 普通事件弹窗
         NPC_PROMPT,       // NPC 遭遇：迎战/逃跑
-        RELEASE_CONFIRM,  // 放生确认
         FINAL_SUMMARY,    // 3 轮完成或提前结束
         RETURNING,        // 返回培养缸
     };
@@ -28,14 +28,11 @@ private:
 
     // 探索参数
     static constexpr uint8_t MAX_EXPLORE_ROUNDS = 3;
-    static constexpr float TILT_THRESHOLD = 0.35f;
-    static constexpr int BUG_Y = 88;
-    static constexpr int MIN_X = 20;
-    static constexpr int MAX_X = 220;
+    static constexpr int PROCEDURAL_GROUND_Y = 98;
 
-    // 甲虫在场景中的位置
-    float bugX = 120.0f;
-    bool faceRight = true;
+    uint32_t roundStartedAtMs = 0;
+    uint32_t revealStartedAtMs = 0;
+    State pendingRevealState = State::EVENT_POPUP;
 
     // 轮次与收益
     uint8_t currentRound = 1;
@@ -71,20 +68,20 @@ private:
     void restoreSession();
     void saveSession();
     void clearSession();
+    void startRoundWait(uint32_t now);
+    void beginEventReveal(uint32_t now, State nextState);
+    int revealShakeOffset(uint32_t now) const;
     void triggerEvent(uint32_t now);
     void advanceRoundOrFinish();
     void enterFinalSummary(const char* line1, const char* line2 = nullptr);
     void applyEventReward(bool flee = false);
     void startNpcBattle();
     void applyNpcBattleResult(const NpcBattleResult& res);
-    void doRelease();
-    void drawExploring();
+    void drawExploring(int shakeX = 0, bool showProgressText = true);
     void drawPopup();
     void drawNpcPrompt();
-    void drawReleaseConfirm();
     void drawResult();
-    void drawBug(int x, int y, bool right, uint8_t palette);
-    void drawSkyAndGround();
+    void drawSkyAndGround(int shakeX = 0);
 
     static bool sSessionActive;
     static uint8_t sCurrentRound;

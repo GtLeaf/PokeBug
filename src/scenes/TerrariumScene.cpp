@@ -116,7 +116,6 @@ SceneID TerrariumScene::update() {
     }
 
     // 死亡后检测长按 A+B 3 秒重置
-    Bug& bug = GameEngine::ins().getBug();
     if (bug.isDead()) {
         bool a = Hal::ins().btnA_raw();
         bool b = Hal::ins().btnB_raw();
@@ -572,9 +571,7 @@ void TerrariumScene::updateAdultMovement() {
                             setIdleDuration();
                         }
                         break;
-                    case Desire::WANDER:
-                    case Desire::STARE:
-                    default: {
+                    case Desire::WANDER: {
                         int newTarget = random(MIN_X, MAX_X + 1);
                         if (abs(newTarget - bugX) < 30) {
                             newTarget = (bugX < 120) ? random(140, MAX_X + 1)
@@ -583,7 +580,29 @@ void TerrariumScene::updateAdultMovement() {
                         startWalkTo(newTarget);
                         break;
                     }
-                    case Desire::HIDE:
+                    case Desire::STARE:
+                        // 发呆/张望：只偶尔转头，不主动移动。
+                        if (random(100) < 35) {
+                            startTurn(!faceRight, false);
+                        } else {
+                            stateTimer = 0;
+                            setIdleDuration();
+                        }
+                        break;
+                    case Desire::HIDE: {
+                        // 警戒/躲避：后退一小段，避开刚才面向的刺激方向。
+                        int hideTarget = bugX + (faceRight ? -28 : 28);
+                        if (hideTarget < MIN_X) hideTarget = MIN_X;
+                        if (hideTarget > MAX_X) hideTarget = MAX_X;
+                        if (abs(hideTarget - bugX) > 2) {
+                            startWalkTo(hideTarget);
+                        } else {
+                            stateTimer = 0;
+                            setIdleDuration();
+                        }
+                        break;
+                    }
+                    default:
                         stateTimer = 0;
                         setIdleDuration();
                         break;
@@ -690,20 +709,26 @@ void TerrariumScene::updateAdultMovement() {
             break;
 
         case AdultState::EAT:
+            {
             // 面向食物盘（食物在左侧，所以朝左）
             faceRight = false;
             // 第一口保证吃掉，后续再按饥饿程度和间隔自然继续。
             if (bug.eatFromTray(GameEngine::ins().getGameNow(), eatBitesThisSession == 0)) {
                 eatBitesThisSession++;
             }
-            // 吃到食物消失、明显饱足或超时后离开
-            if (!bug.hasFoodInTray() || bug.getFoodAmount() == 0 ||
-                (eatBitesThisSession > 0 && bug.getHunger() >= EAT_CONTINUE_HUNGER) ||
-                stateTimer >= stateDuration) {
+            // 多口之间保持同一个 EAT session，不重置动画；饱足后也至少咀嚼一小段再离开。
+            bool foodGone = !bug.hasFoodInTray() || bug.getFoodAmount() == 0;
+            bool chewedEnough = stateTimer >= EAT_MIN_EXIT_FRAMES;
+            bool satisfied = eatBitesThisSession > 0 &&
+                             bug.getHunger() >= EAT_CONTINUE_HUNGER &&
+                             chewedEnough;
+            bool timedOut = stateTimer >= stateDuration;
+            if (foodGone || satisfied || timedOut) {
                 mind.onAte(Hal::ins().millis());
                 adultState = AdultState::IDLE;
                 stateTimer = 0;
                 setIdleDuration();
+            }
             }
             break;
 
@@ -911,6 +936,12 @@ void TerrariumScene::drawStatusBar() {
     int tw = canvas.textWidth(todName);
     int textX = BAR_X + (BAR_W - tw) / 2;
     PixelRenderer::drawPixelText(textX, 100, todName, PixelRenderer::CREAM, fs);
+
+    char clockBuf[8];
+    GameEngine::ins().getExploreClockText(clockBuf, sizeof(clockBuf));
+    tw = canvas.textWidth(clockBuf);
+    textX = BAR_X + (BAR_W - tw) / 2;
+    PixelRenderer::drawPixelText(textX, 112, clockBuf, PixelRenderer::GRAY, fs);
 }
 
 void TerrariumScene::drawDeathScreen() {

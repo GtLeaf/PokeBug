@@ -39,12 +39,9 @@ void setup() {
         uint8_t exploreCount = 0;
         SaveManager::ins().loadExploreGlobal(exploreDay, exploreTod, exploreCount);
         uint32_t gameDay = (uint32_t)(gameNow / GameEngine::GAME_DAY_MS);
-        uint64_t msInDay = gameNow % GameEngine::GAME_DAY_MS;
-        uint64_t thirdDay = GameEngine::GAME_DAY_MS / 3;
-        uint8_t naturalTod = GameEngine::TIME_MORNING;
-        if (msInDay >= thirdDay * 2) naturalTod = GameEngine::TIME_EVENING;
-        else if (msInDay >= thirdDay) naturalTod = GameEngine::TIME_AFTERNOON;
-        if (gameDay > exploreDay) {
+        uint8_t naturalTod = GameEngine::naturalExploreTimeOfDayFromMs(gameNow);
+        if (gameDay > exploreDay || exploreDay > gameDay) {
+            // 新游戏日或游戏时间被重置：修正探索时钟
             exploreDay = gameDay;
             exploreCount = 0;
             exploreTod = naturalTod;
@@ -52,7 +49,9 @@ void setup() {
             exploreTod = naturalTod;
         }
         if (exploreTod > GameEngine::TIME_EVENING) exploreTod = GameEngine::TIME_MORNING;
-        if (exploreCount > 2) exploreCount = 2;
+        if (exploreCount > GameEngine::EXPLORE_DAILY_LIMIT) {
+            exploreCount = GameEngine::EXPLORE_DAILY_LIMIT;
+        }
 
         SaveManager::ins().save(bug);
         SaveManager::ins().saveExploreGlobal(exploreDay, exploreTod, exploreCount);

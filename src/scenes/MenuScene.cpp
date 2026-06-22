@@ -216,36 +216,28 @@ void MenuScene::drawFightList() {
 void MenuScene::drawExploreList() {
     float fs = PixelRenderer::getContentFontScale();
     int rowStep = (int)(14 * fs);
-    int startY = 8;
+    int startY = 10;
     int sepGap = (int)(4 * fs);
     bool exploreAvailable = GameEngine::ins().canExplore();
+    bool night = GameEngine::ins().getTimeOfDay() == GameEngine::TIME_EVENING;
+    LGFX_Sprite& canvas = Hal::ins().canvas();
 
     for (int i = 0; i < EXPLORE_ITEM_COUNT; i++) {
         int y = startY + i * rowStep;
         bool isBack = (i == LOCATION_BACK);
-        uint16_t color = PixelRenderer::WHITE;
-        if (!isBack && !exploreAvailable) color = PixelRenderer::GRAY;
-        if (i == selected) color = (!isBack && !exploreAvailable) ? PixelRenderer::rgb565(180, 180, 0)
-                                                                  : PixelRenderer::YELLOW;
+        bool forbidden = !isBack && night && (i == LOCATION_BACK_HILL);
+        bool disabled = (!isBack && !exploreAvailable) || forbidden;
+        uint16_t color = disabled ? PixelRenderer::GRAY : PixelRenderer::WHITE;
+        if (i == selected) color = disabled ? PixelRenderer::rgb565(180, 180, 0) : PixelRenderer::YELLOW;
 
         if (i == selected) {
             PixelRenderer::fillRect(4, y, 4, (int)(8 * fs),
-                                    (!isBack && !exploreAvailable) ? PixelRenderer::GRAY : PixelRenderer::YELLOW);
+                                    disabled ? PixelRenderer::GRAY : PixelRenderer::YELLOW);
         }
 
         char label[24];
         const char* baseLabel = itemLabel(i, label, sizeof(label));
-        char row[32];
-        if (!isBack) {
-            const char* tag = "Safe";
-            if (i == LOCATION_BACK_HILL) tag = "Wood";
-            else if (i == LOCATION_RIVERSIDE) tag = "Rare";
-            else if (i == LOCATION_OLD_WOODS) tag = "Danger";
-            snprintf(row, sizeof(row), "%s %s %s", baseLabel, GameEngine::ins().getTimeOfDayShortName(), tag);
-            PixelRenderer::drawPixelText(14, y, row, color, fs);
-        } else {
-            PixelRenderer::drawPixelText(14, y, baseLabel, color, fs);
-        }
+        PixelRenderer::drawPixelText(14, y, baseLabel, color, fs);
 
         if (!isBack) {
             PixelRenderer::fillRect(4, y + rowStep - sepGap, Hal::DISPLAY_W - 8, 1, PixelRenderer::GRAY);
@@ -416,6 +408,12 @@ void MenuScene::executeSelection() {
         }
 
         if (selected >= 0 && selected < EXPLORE_ITEM_COUNT - 1) {
+            bool night = GameEngine::ins().getTimeOfDay() == GameEngine::TIME_EVENING;
+            bool forbidden = night && (selected == LOCATION_BACK_HILL);
+            if (forbidden) {
+                showToast(UiStrings::EXPLORE_NIGHT_FORBIDDEN);
+                return;
+            }
             if (bug.getStage() != Stage::ADULT) {
                 showToast(UiStrings::EXPLORE_NEED_ADULT);
             } else if (bug.isDead()) {
@@ -424,7 +422,7 @@ void MenuScene::executeSelection() {
                 showToast(UiStrings::EXPLORE_NEED_HUNGER);
             } else if (bug.getMot() < 50) {
                 showToast(UiStrings::EXPLORE_MOT_LOW);
-            } else if (GameEngine::ins().getExploreCountToday() >= 2) {
+            } else if (GameEngine::ins().getExploreCountToday() >= GameEngine::EXPLORE_DAILY_LIMIT) {
                 showToast(UiStrings::EXPLORE_DAILY_LIMIT);
             } else {
                 GameEngine::ins().setExploreLocation((uint8_t)selected);

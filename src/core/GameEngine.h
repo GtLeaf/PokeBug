@@ -147,12 +147,16 @@ public:
     uint8_t getTimeOfDay() const { return timeOfDay; }
     const char* getTimeOfDayName() const;
     const char* getTimeOfDayShortName() const;
+    void getExploreClockText(char* buf, size_t bufSize) const;
     uint8_t getExploreCountToday() const { return exploreCountToday; }
     uint32_t getExploreDay() const { return exploreDay; }
     bool canExplore() const;
+
+    static constexpr uint8_t EXPLORE_DAILY_LIMIT = 10;
     void recordExploreFinished();
     void syncExploreClock(bool persist = false);
     uint32_t getCurrentGameDay() const;
+    static uint8_t naturalExploreTimeOfDayFromMs(uint64_t gameNowMs);
 
     // 对战大厅入口模式
     LobbyMode getLobbyMode() const { return lobbyMode; }

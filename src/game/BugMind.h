@@ -79,6 +79,7 @@ private:
     uint32_t ateAtMs = 0;
 
     static constexpr uint8_t INERTIA_BONUS = 22;      // 当前欲望的惯性加成
+    static constexpr uint8_t SWITCH_MARGIN = 14;      // 新欲望必须明显更强才切换
     static constexpr uint8_t RANDOM_NOISE_MAX = 12;   // 欲望随机抖动
 
     void computeDesires(uint8_t hunger, uint8_t mot, bool isNight,

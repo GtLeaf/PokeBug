@@ -75,7 +75,7 @@ void GameEngine::begin() {
     if (SaveManager::ins().loadExploreGlobal(loadedExploreDay, loadedExploreTod, loadedExploreCount)) {
         exploreDay = loadedExploreDay;
         timeOfDay = loadedExploreTod <= TIME_EVENING ? loadedExploreTod : TIME_MORNING;
-        exploreCountToday = loadedExploreCount > 2 ? 2 : loadedExploreCount;
+        exploreCountToday = loadedExploreCount > EXPLORE_DAILY_LIMIT ? EXPLORE_DAILY_LIMIT : loadedExploreCount;
     } else {
         exploreDay = getCurrentGameDay();
         timeOfDay = naturalExploreTimeOfDay();
@@ -312,7 +312,7 @@ void GameEngine::processIMU() {
         }
     }
 
-    // 探索场景倾斜控制：由 ExploreScene 自己读取 IMU，这里仅做摇动检测
+    // 探索场景不再使用倾斜控制；这里仅保留全局摇动检测
     if (hal.isShaken()) {
         if (bug.onShake(gameNow)) {
             Serial.println("[Engine] Shake detected and processed");
@@ -528,15 +528,30 @@ const char* GameEngine::getTimeOfDayShortName() const {
     }
 }
 
+void GameEngine::getExploreClockText(char* buf, size_t bufSize) const {
+    if (!buf || bufSize == 0) return;
+    static constexpr uint64_t HOUR_MS = 60ULL * 60 * 1000;
+    static constexpr uint64_t DAY_MS = 24ULL * HOUR_MS;
+    uint64_t msInDay = gameNow % DAY_MS;
+    uint8_t hour = (uint8_t)(msInDay / HOUR_MS);
+    uint8_t minute = (uint8_t)((msInDay % HOUR_MS) / (60ULL * 1000));
+    snprintf(buf, bufSize, "%02u:%02u", hour, minute);
+}
+
 uint32_t GameEngine::getCurrentGameDay() const {
     return (uint32_t)(gameNow / GAME_DAY_MS);
 }
 
 uint8_t GameEngine::naturalExploreTimeOfDay() const {
-    uint64_t msInDay = gameNow % GAME_DAY_MS;
-    uint64_t third = GAME_DAY_MS / 3;
-    if (msInDay < third) return TIME_MORNING;
-    if (msInDay < third * 2) return TIME_AFTERNOON;
+    return naturalExploreTimeOfDayFromMs(gameNow);
+}
+
+uint8_t GameEngine::naturalExploreTimeOfDayFromMs(uint64_t gameNowMs) {
+    static constexpr uint64_t HOUR_MS = 60ULL * 60 * 1000;
+    uint64_t hour = (gameNowMs % GAME_DAY_MS) / HOUR_MS;
+    // 06:00-14:59 早晨，15:00-18:59 下午，19:00-05:59 夜晚
+    if (hour >= 6 && hour < 15) return TIME_MORNING;
+    if (hour >= 15 && hour < 19) return TIME_AFTERNOON;
     return TIME_EVENING;
 }
 
@@ -550,11 +565,19 @@ void GameEngine::syncExploreClock(bool persist) {
     bool changed = false;
 
     if (gameDay > exploreDay) {
+        // 进入新的游戏日：重置次数，时段按自然时间
         exploreDay = gameDay;
         exploreCountToday = 0;
         timeOfDay = naturalTod;
         changed = true;
-    } else if (gameDay == exploreDay && timeOfDay < naturalTod) {
+    } else if (gameDay < exploreDay) {
+        // 游戏时间被重置（如新虫、手动重置），修正全局探索时钟
+        exploreDay = gameDay;
+        exploreCountToday = 0;
+        timeOfDay = naturalTod;
+        changed = true;
+    } else if (timeOfDay < naturalTod) {
+        // 同一天内自然推进时段
         timeOfDay = naturalTod;
         changed = true;
     }
@@ -563,8 +586,8 @@ void GameEngine::syncExploreClock(bool persist) {
         timeOfDay = TIME_MORNING;
         changed = true;
     }
-    if (exploreCountToday > 2) {
-        exploreCountToday = 2;
+    if (exploreCountToday > EXPLORE_DAILY_LIMIT) {
+        exploreCountToday = EXPLORE_DAILY_LIMIT;
         changed = true;
     }
 
@@ -578,20 +601,19 @@ bool GameEngine::canExplore() const {
     if (bug.isDead()) return false;
     if (bug.getHunger() < 30) return false;
     if (bug.getMot() < 50) return false;
-    return exploreCountToday < 2;
+    return exploreCountToday < EXPLORE_DAILY_LIMIT;
 }
 
 void GameEngine::recordExploreFinished() {
-    if (exploreCountToday < 2) exploreCountToday++;
+    if (exploreCountToday < EXPLORE_DAILY_LIMIT) exploreCountToday++;
 
     if (timeOfDay == TIME_MORNING) {
         timeOfDay = TIME_AFTERNOON;
     } else if (timeOfDay == TIME_AFTERNOON) {
         timeOfDay = TIME_EVENING;
     } else {
-        timeOfDay = TIME_MORNING;
-        exploreDay++;
-        exploreCountToday = 0;
+        timeOfDay = TIME_EVENING;
+        exploreCountToday = EXPLORE_DAILY_LIMIT;
     }
     saveExploreGlobal();
 }

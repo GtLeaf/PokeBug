@@ -3,8 +3,7 @@
 #include "../core/UiStrings.h"
 #include "../hardware/Hal.h"
 #include "../hardware/PixelRenderer.h"
-#include "../game/BattleCalc.h"
-#include "../assets/HerculesAdultSprites.h"
+#include "../assets/ExploreAssets.h"
 #include <cstring>
 
 bool ExploreScene::sSessionActive = false;
@@ -14,6 +13,10 @@ int ExploreScene::sTotalWoodGain = 0;
 bool ExploreScene::sFinalRecorded = false;
 
 namespace {
+
+static constexpr uint32_t EXPLORE_EVENT_DELAY_MS = 2000;
+static constexpr uint32_t EXPLORE_REVEAL_SHAKE_MS = 360;
+static constexpr int EXPLORE_REVEAL_SHAKE_PX = 2;
 
 struct ExploreEventWeights {
     uint8_t sap;
@@ -70,6 +73,39 @@ static constexpr uint8_t NPC_TIER_TABLE[GameEngine::EXPLORE_LOCATION_COUNT][3][4
     },
 };
 
+uint8_t rgb565R(uint16_t color) {
+    return (uint8_t)((color >> 8) & 0xF8);
+}
+
+uint8_t rgb565G(uint16_t color) {
+    return (uint8_t)((color >> 3) & 0xFC);
+}
+
+uint8_t rgb565B(uint16_t color) {
+    return (uint8_t)((color << 3) & 0xF8);
+}
+
+uint16_t blendRgb565(uint16_t dst, uint16_t src, uint8_t alpha) {
+    uint8_t inv = 255 - alpha;
+    uint8_t r = (uint8_t)((rgb565R(src) * alpha + rgb565R(dst) * inv) / 255);
+    uint8_t g = (uint8_t)((rgb565G(src) * alpha + rgb565G(dst) * inv) / 255);
+    uint8_t b = (uint8_t)((rgb565B(src) * alpha + rgb565B(dst) * inv) / 255);
+    return PixelRenderer::rgb565(r, g, b);
+}
+
+void fillRectAlpha(int x, int y, int w, int h, uint16_t color, uint8_t alpha) {
+    LGFX_Sprite& canvas = Hal::ins().canvas();
+    int x0 = x < 0 ? 0 : x;
+    int y0 = y < 0 ? 0 : y;
+    int x1 = x + w > Hal::DISPLAY_W ? Hal::DISPLAY_W : x + w;
+    int y1 = y + h > Hal::DISPLAY_H ? Hal::DISPLAY_H : y + h;
+    for (int py = y0; py < y1; ++py) {
+        for (int px = x0; px < x1; ++px) {
+            canvas.drawPixel(px, py, blendRgb565(canvas.readPixel(px, py), color, alpha));
+        }
+    }
+}
+
 }
 
 void ExploreScene::onEnter() {
@@ -91,9 +127,7 @@ void ExploreScene::onEnter() {
         bug.modHunger(-20);
     }
 
-    bugX = 120.0f;
-    faceRight = true;
-    state = State::EXPLORING;
+    startRoundWait(Hal::ins().millis());
     eventType = EventType::NOTHING;
     resultLine1[0] = '\0';
     resultLine2[0] = '\0';
@@ -145,7 +179,14 @@ SceneID ExploreScene::update() {
     uint32_t now = Hal::ins().millis();
 
     if (state == State::EXPLORING) {
-        triggerEvent(now);
+        if (now - roundStartedAtMs >= EXPLORE_EVENT_DELAY_MS) {
+            triggerEvent(now);
+        }
+    }
+
+    if (state == State::EVENT_REVEAL && now - revealStartedAtMs >= EXPLORE_REVEAL_SHAKE_MS) {
+        state = pendingRevealState;
+        saveSession();
     }
 
     if (state == State::RETURNING) {
@@ -156,8 +197,28 @@ SceneID ExploreScene::update() {
     return nextScene;
 }
 
+void ExploreScene::startRoundWait(uint32_t now) {
+    roundStartedAtMs = now;
+    revealStartedAtMs = 0;
+    pendingRevealState = State::EVENT_POPUP;
+    state = State::EXPLORING;
+}
+
+void ExploreScene::beginEventReveal(uint32_t now, State nextState) {
+    revealStartedAtMs = now;
+    pendingRevealState = nextState;
+    state = State::EVENT_REVEAL;
+    saveSession();
+}
+
+int ExploreScene::revealShakeOffset(uint32_t now) const {
+    if (revealStartedAtMs == 0 || now - revealStartedAtMs >= EXPLORE_REVEAL_SHAKE_MS) {
+        return 0;
+    }
+    return ((now - revealStartedAtMs) / 45) % 2 == 0 ? -EXPLORE_REVEAL_SHAKE_PX : EXPLORE_REVEAL_SHAKE_PX;
+}
+
 void ExploreScene::triggerEvent(uint32_t now) {
-    (void)now;
     Bug& bug = GameEngine::ins().getBug();
     uint8_t location = GameEngine::ins().getExploreLocation();
     uint8_t tod = GameEngine::ins().getTimeOfDay();
@@ -186,7 +247,13 @@ void ExploreScene::triggerEvent(uint32_t now) {
 
     if (eventType == EventType::NPC) {
         if (bug.getStage() != Stage::ADULT) {
-            enterFinalSummary(UiStrings::EXPLORE_TOO_YOUNG_FIGHT, UiStrings::EXPLORE_END);
+            if (!finalRecorded) {
+                GameEngine::ins().recordExploreFinished();
+                finalRecorded = true;
+            }
+            snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_TOO_YOUNG_FIGHT);
+            snprintf(resultLine2, sizeof(resultLine2), "%s", UiStrings::EXPLORE_END);
+            beginEventReveal(now, State::FINAL_SUMMARY);
             return;
         }
 
@@ -198,13 +265,12 @@ void ExploreScene::triggerEvent(uint32_t now) {
         npcBugName[sizeof(npcBugName) - 1] = '\0';
         strncpy_P(npcMeetLine, (const char*)pgm_read_ptr(&NpcData::ENTRIES[npc.index].meet), sizeof(npcMeetLine) - 1);
         npcMeetLine[sizeof(npcMeetLine) - 1] = '\0';
-        state = State::NPC_PROMPT;
+        beginEventReveal(now, State::NPC_PROMPT);
         return;
     }
 
     applyEventReward();
-    state = State::EVENT_POPUP;
-    saveSession();
+    beginEventReveal(now, State::EVENT_POPUP);
 }
 
 void ExploreScene::applyEventReward(bool flee) {
@@ -409,10 +475,10 @@ void ExploreScene::advanceRoundOrFinish() {
         return;
     }
     currentRound++;
-    saveSession();
     resultLine1[0] = '\0';
     resultLine2[0] = '\0';
-    state = State::EXPLORING;
+    startRoundWait(Hal::ins().millis());
+    saveSession();
 }
 
 void ExploreScene::enterFinalSummary(const char* line1, const char* line2) {
@@ -482,19 +548,8 @@ void ExploreScene::applyNpcBattleResult(const NpcBattleResult& res) {
     }
 }
 
-void ExploreScene::doRelease() {
-    Bug& bug = GameEngine::ins().getBug();
-    bug.release(GameEngine::ins().getGameNow());
-    GameEngine::ins().forceSave();
-    nextScene = SCENE_TERRARIUM;
-}
-
 bool ExploreScene::onButton(const ButtonEvent& ev) {
     if (ev.action == BtnAction::LONG_PRESS) {
-        if (ev.btn == 0 && state == State::EXPLORING) {
-            state = State::RELEASE_CONFIRM;
-            return true;
-        }
         if (ev.btn == 1) {
             // 长按 B 中断探索
             enterFinalSummary(UiStrings::EXPLORE_END);
@@ -545,17 +600,6 @@ bool ExploreScene::onButton(const ButtonEvent& ev) {
         return false;
     }
 
-    if (state == State::RELEASE_CONFIRM) {
-        if (ev.btn == 0) {
-            doRelease();
-            return true;
-        }
-        if (ev.btn == 1) {
-            state = State::EXPLORING;
-            return true;
-        }
-    }
-
     return false;
 }
 
@@ -566,6 +610,9 @@ void ExploreScene::render() {
         case State::EXPLORING:
             drawExploring();
             break;
+        case State::EVENT_REVEAL:
+            drawExploring(revealShakeOffset(Hal::ins().millis()));
+            break;
         case State::EVENT_POPUP:
         case State::FINAL_SUMMARY:
             drawPopup();
@@ -573,76 +620,66 @@ void ExploreScene::render() {
         case State::NPC_PROMPT:
             drawNpcPrompt();
             break;
-        case State::RELEASE_CONFIRM:
-            drawReleaseConfirm();
-            break;
         default:
             break;
     }
 }
 
-void ExploreScene::drawSkyAndGround() {
+void ExploreScene::drawSkyAndGround(int shakeX) {
     LGFX_Sprite& canvas = Hal::ins().canvas();
+    const uint16_t* bg = ExploreAssets::background(GameEngine::ins().getExploreLocation(),
+                                                   GameEngine::ins().getTimeOfDay());
+    if (bg) {
+        PixelRenderer::drawRgb565(shakeX, 0,
+                                  ExploreAssets::FRAME_W,
+                                  ExploreAssets::FRAME_H,
+                                  bg);
+        return;
+    }
+
     // 天空渐变：上蓝下浅
-    for (int y = 0; y < BUG_Y + 10; y++) {
+    for (int y = 0; y < PROCEDURAL_GROUND_Y; y++) {
         uint8_t r = 0, g = (uint8_t)(40 + y / 3), b = (uint8_t)(60 + y / 4);
         canvas.drawFastHLine(0, y, Hal::DISPLAY_W, PixelRenderer::rgb565(r, g, b));
     }
     // 太阳
     canvas.fillCircle(Hal::DISPLAY_W - 24, 18, 6, PixelRenderer::YELLOW);
     // 草地
-    PixelRenderer::fillRect(0, BUG_Y + 10, Hal::DISPLAY_W, Hal::DISPLAY_H - (BUG_Y + 10),
+    PixelRenderer::fillRect(0, PROCEDURAL_GROUND_Y, Hal::DISPLAY_W, Hal::DISPLAY_H - PROCEDURAL_GROUND_Y,
                             PixelRenderer::rgb565(0, 80, 0));
     // 草丛装饰
     for (int x = 10; x < Hal::DISPLAY_W; x += 45) {
-        PixelRenderer::fillRect(x, BUG_Y + 4, 4, 10, PixelRenderer::rgb565(0, 100, 0));
-        PixelRenderer::fillRect(x + 6, BUG_Y + 6, 4, 8, PixelRenderer::rgb565(0, 110, 0));
+        PixelRenderer::fillRect(x, PROCEDURAL_GROUND_Y - 6, 4, 10, PixelRenderer::rgb565(0, 100, 0));
+        PixelRenderer::fillRect(x + 6, PROCEDURAL_GROUND_Y - 4, 4, 8, PixelRenderer::rgb565(0, 110, 0));
     }
 }
 
-void ExploreScene::drawBug(int x, int y, bool right, uint8_t palette) {
-    // 简化为一个像素甲虫：椭圆身体 + 角
+void ExploreScene::drawExploring(int shakeX, bool showProgressText) {
+    drawSkyAndGround(shakeX);
+    if (!showProgressText) return;
+
     LGFX_Sprite& canvas = Hal::ins().canvas();
-    uint16_t bodyColor = PixelRenderer::BROWN;
-    if (palette == 1) bodyColor = PixelRenderer::rgb565(220, 180, 0); // 金
-    else if (palette == 2) bodyColor = PixelRenderer::rgb565(230, 200, 230); // 白化
-    else if (palette == 3) bodyColor = PixelRenderer::rgb565(180, 0, 180); // 虹彩
-
-    canvas.fillEllipse(x, y, 14, 8, bodyColor);
-    // 角
-    int hornX = right ? x + 10 : x - 10;
-    canvas.drawLine(x, y - 4, hornX, y - 12, PixelRenderer::rgb565(200, 200, 200));
-    // 腿
-    for (int i = -1; i <= 1; i++) {
-        int lx = x + i * 6;
-        canvas.drawLine(lx, y + 4, lx + (right ? 4 : -4), y + 10, PixelRenderer::BLACK);
-    }
-}
-
-void ExploreScene::drawExploring() {
-    drawSkyAndGround();
-    drawBug((int)bugX, BUG_Y, faceRight, GameEngine::ins().getBug().getPaletteId());
-
     float fs = PixelRenderer::getContentFontScale();
-    char buf[32];
-    snprintf(buf, sizeof(buf), UiStrings::EXPLORE_ROUND_FMT, currentRound);
-    PixelRenderer::drawPixelText(8, 6, buf, PixelRenderer::WHITE, fs);
-    const char* locationName = GameEngine::ins().getExploreLocationName();
-    LGFX_Sprite& canvas = Hal::ins().canvas();
+    const char* text = UiStrings::EXPLORE_IN_PROGRESS;
     canvas.setTextSize(fs);
-    char locationBuf[40];
-    snprintf(locationBuf, sizeof(locationBuf), "%s %s",
-             GameEngine::ins().getTimeOfDayShortName(), locationName);
-    int locationW = canvas.textWidth(locationBuf);
-    PixelRenderer::drawPixelText(Hal::DISPLAY_W - locationW - 8, 6,
-                                 locationBuf, PixelRenderer::CREAM, fs);
-    PixelRenderer::drawPixelText(8, Hal::DISPLAY_H - 14, UiStrings::EXPLORE_NEXT_RETURN, PixelRenderer::GRAY, fs);
+    int tw = canvas.textWidth(text);
+    int th = (int)(8 * fs);
+    int padX = 8;
+    int padY = 4;
+    int boxW = tw + padX * 2;
+    int boxH = th + padY * 2;
+    int boxX = (Hal::DISPLAY_W - boxW) / 2 + shakeX;
+    int boxY = (Hal::DISPLAY_H - boxH) / 2;
+    fillRectAlpha(boxX, boxY, boxW, boxH, PixelRenderer::rgb565(24, 24, 24), 170);
+    canvas.drawRect(boxX, boxY, boxW, boxH, PixelRenderer::WHITE);
+    PixelRenderer::drawPixelText(boxX + padX, boxY + padY, text, PixelRenderer::WHITE, fs);
 }
 
 void ExploreScene::drawPopup() {
     LGFX_Sprite& canvas = Hal::ins().canvas();
     float fs = PixelRenderer::getContentFontScale();
-    PixelRenderer::fillRect(20, 30, Hal::DISPLAY_W - 40, Hal::DISPLAY_H - 60, PixelRenderer::rgb565(40, 40, 40));
+    drawExploring(0, false);
+    fillRectAlpha(20, 30, Hal::DISPLAY_W - 40, Hal::DISPLAY_H - 60, PixelRenderer::rgb565(24, 24, 24), 190);
     canvas.drawRect(20, 30, Hal::DISPLAY_W - 40, Hal::DISPLAY_H - 60, PixelRenderer::WHITE);
 
     int cx = Hal::DISPLAY_W / 2;
@@ -670,7 +707,8 @@ void ExploreScene::drawPopup() {
 void ExploreScene::drawNpcPrompt() {
     LGFX_Sprite& canvas = Hal::ins().canvas();
     float fs = PixelRenderer::getContentFontScale();
-    PixelRenderer::fillRect(16, 24, Hal::DISPLAY_W - 32, Hal::DISPLAY_H - 48, PixelRenderer::rgb565(40, 40, 40));
+    drawExploring(0, false);
+    fillRectAlpha(16, 24, Hal::DISPLAY_W - 32, Hal::DISPLAY_H - 48, PixelRenderer::rgb565(24, 24, 24), 190);
     canvas.drawRect(16, 24, Hal::DISPLAY_W - 32, Hal::DISPLAY_H - 48, PixelRenderer::WHITE);
 
     int cx = Hal::DISPLAY_W / 2;
@@ -687,22 +725,6 @@ void ExploreScene::drawNpcPrompt() {
 
     PixelRenderer::drawPixelText(cx - 58, Hal::DISPLAY_H - 36, UiStrings::EXPLORE_ACCEPT, PixelRenderer::GREEN, fs);
     PixelRenderer::drawPixelText(cx + 20, Hal::DISPLAY_H - 36, UiStrings::EXPLORE_LEAVE, PixelRenderer::GRAY, fs);
-}
-
-void ExploreScene::drawReleaseConfirm() {
-    LGFX_Sprite& canvas = Hal::ins().canvas();
-    float fs = PixelRenderer::getContentFontScale();
-    PixelRenderer::fillRect(20, 30, Hal::DISPLAY_W - 40, Hal::DISPLAY_H - 60, PixelRenderer::rgb565(40, 40, 40));
-    canvas.drawRect(20, 30, Hal::DISPLAY_W - 40, Hal::DISPLAY_H - 60, PixelRenderer::WHITE);
-
-    int cx = Hal::DISPLAY_W / 2;
-    canvas.setTextSize(fs);
-    int tw = canvas.textWidth(UiStrings::EXPLORE_RELEASE_CONFIRM);
-    PixelRenderer::drawPixelText(cx - tw / 2, 44, UiStrings::EXPLORE_RELEASE_CONFIRM, PixelRenderer::WHITE, fs);
-    tw = canvas.textWidth(UiStrings::EXPLORE_RELEASE_EGG);
-    PixelRenderer::drawPixelText(cx - tw / 2, 64, UiStrings::EXPLORE_RELEASE_EGG, PixelRenderer::GRAY, fs);
-    PixelRenderer::drawPixelText(cx - 50, Hal::DISPLAY_H - 44, UiStrings::EXPLORE_CONFIRM, PixelRenderer::GREEN, fs);
-    PixelRenderer::drawPixelText(cx + 20, Hal::DISPLAY_H - 44, UiStrings::EXPLORE_CANCEL, PixelRenderer::GRAY, fs);
 }
 
 void ExploreScene::drawResult() {
