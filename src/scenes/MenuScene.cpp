@@ -408,9 +408,8 @@ void MenuScene::executeSelection() {
         }
 
         if (selected >= 0 && selected < EXPLORE_ITEM_COUNT - 1) {
-            bool night = GameEngine::ins().getTimeOfDay() == GameEngine::TIME_EVENING;
-            bool forbidden = night && (selected == LOCATION_BACK_HILL);
-            if (forbidden) {
+            bool clockBlocked = !GameEngine::ins().isExploreTimeAllowed();
+            if (clockBlocked) {
                 showToast(UiStrings::EXPLORE_NIGHT_FORBIDDEN);
                 return;
             }
@@ -422,7 +421,8 @@ void MenuScene::executeSelection() {
                 showToast(UiStrings::EXPLORE_NEED_HUNGER);
             } else if (bug.getMot() < 50) {
                 showToast(UiStrings::EXPLORE_MOT_LOW);
-            } else if (GameEngine::ins().getExploreCountToday() >= GameEngine::EXPLORE_DAILY_LIMIT) {
+            } else if (!GameEngine::isExploreLimitBypassed() &&
+                       GameEngine::ins().getExploreCountToday() >= GameEngine::EXPLORE_DAILY_LIMIT) {
                 showToast(UiStrings::EXPLORE_DAILY_LIMIT);
             } else {
                 GameEngine::ins().setExploreLocation((uint8_t)selected);

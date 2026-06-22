@@ -39,6 +39,7 @@ struct NpcBattleResult {
     bool legend = false;
     bool fromExplore = false;
     bool fromCup = false;
+    bool spiBoosted = false;
 };
 
 // 游戏引擎 — 主循环 + 场景调度
@@ -150,13 +151,16 @@ public:
     void getExploreClockText(char* buf, size_t bufSize) const;
     uint8_t getExploreCountToday() const { return exploreCountToday; }
     uint32_t getExploreDay() const { return exploreDay; }
+    bool isExploreTimeAllowed() const;
     bool canExplore() const;
+    static bool isExploreLimitBypassed();
 
     static constexpr uint8_t EXPLORE_DAILY_LIMIT = 20;
     void recordExploreFinished();
     void syncExploreClock(bool persist = false);
     uint32_t getCurrentGameDay() const;
     static uint8_t naturalExploreTimeOfDayFromMs(uint64_t gameNowMs);
+    static bool isExploreTimeAllowedFromMs(uint64_t gameNowMs);
 
     // 对战大厅入口模式
     LobbyMode getLobbyMode() const { return lobbyMode; }
@@ -169,7 +173,7 @@ public:
 
     // 上一场本地 NPC 对战结果
     NpcBattleResult& lastNpcBattleResult() { return npcResult; }
-    void clearLastNpcBattleResult() { npcResult.valid = false; }
+    void clearLastNpcBattleResult() { npcResult.valid = false; npcResult.spiBoosted = false; }
 
     // 杯赛全局数据与周期状态
     enum class CupCycleState {

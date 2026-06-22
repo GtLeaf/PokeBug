@@ -563,10 +563,20 @@ uint8_t GameEngine::naturalExploreTimeOfDay() const {
 uint8_t GameEngine::naturalExploreTimeOfDayFromMs(uint64_t gameNowMs) {
     static constexpr uint64_t HOUR_MS = 60ULL * 60 * 1000;
     uint64_t hour = (gameNowMs % GAME_DAY_MS) / HOUR_MS;
-    // 06:00-14:59 早晨，15:00-18:59 下午，19:00-05:59 夜晚
-    if (hour >= 6 && hour < 15) return TIME_MORNING;
-    if (hour >= 15 && hour < 19) return TIME_AFTERNOON;
+    // 06:00-11:59 早晨，12:00-18:59 下午，19:00-05:59 夜晚
+    if (hour >= 6 && hour < 12) return TIME_MORNING;
+    if (hour >= 12 && hour < 19) return TIME_AFTERNOON;
     return TIME_EVENING;
+}
+
+bool GameEngine::isExploreTimeAllowedFromMs(uint64_t gameNowMs) {
+    static constexpr uint64_t HOUR_MS = 60ULL * 60 * 1000;
+    uint64_t hour = (gameNowMs % GAME_DAY_MS) / HOUR_MS;
+    return hour >= 6;
+}
+
+bool GameEngine::isExploreTimeAllowed() const {
+    return isExploreTimeAllowedFromMs(gameNow);
 }
 
 void GameEngine::saveExploreGlobal() {
@@ -615,29 +625,27 @@ bool GameEngine::canExplore() const {
     if (bug.isDead()) return false;
     if (bug.getHunger() < 30) return false;
     if (bug.getMot() < 50) return false;
-    return exploreCountToday < EXPLORE_DAILY_LIMIT;
+    if (!isExploreTimeAllowed()) return false;
+    return isExploreLimitBypassed() || exploreCountToday < EXPLORE_DAILY_LIMIT;
+}
+
+bool GameEngine::isExploreLimitBypassed() {
+#ifdef POKEBUG_TEST_UNLOCK_EXPLORE
+    return true;
+#else
+    return false;
+#endif
 }
 
 void GameEngine::recordExploreFinished() {
     if (exploreCountToday < EXPLORE_DAILY_LIMIT) exploreCountToday++;
 
-    if (timeOfDay == TIME_MORNING) {
-        timeOfDay = TIME_AFTERNOON;
-    } else if (timeOfDay == TIME_AFTERNOON) {
-        timeOfDay = TIME_EVENING;
-    } else {
-        uint64_t msInDay = gameNow % GAME_DAY_MS;
-        if (msInDay != 0) {
-            gameNow += GAME_DAY_MS - msInDay;
-            bug.update(gameNow);
-        }
-        exploreDay = exploreCycleDayFromMs(gameNow);
-        timeOfDay = TIME_EVENING;
-        exploreCountToday = EXPLORE_DAILY_LIMIT;
-        forceSave();
-        return;
-    }
-    saveExploreGlobal();
+    static constexpr uint64_t EXPLORE_DURATION_MS = 3ULL * 60 * 60 * 1000;
+    gameNow += EXPLORE_DURATION_MS;
+    bug.update(gameNow);
+    exploreDay = exploreCycleDayFromMs(gameNow);
+    timeOfDay = naturalExploreTimeOfDay();
+    forceSave();
 }
 
 uint32_t GameEngine::getIdleTimeoutMs() const {
@@ -660,6 +668,11 @@ void GameEngine::setPendingNpcBattle(const NpcCombatant& npc, SceneID returnScen
     npcBattle.legend = legend;
     npcBattle.fromExplore = fromExplore;
     npcBattle.fromCup = fromCup;
+    npcResult.valid = false;
+    npcResult.won = false;
+    npcResult.tier = npc.tier;
+    npcResult.legend = legend;
     npcResult.fromExplore = fromExplore;
     npcResult.fromCup = fromCup;
+    npcResult.spiBoosted = false;
 }

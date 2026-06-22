@@ -809,144 +809,98 @@ void TerrariumScene::drawWood() {
 void TerrariumScene::drawStatusBar() {
     Bug& bug = GameEngine::ins().getBug();
     LGFX_Sprite& canvas = Hal::ins().canvas();
-    float fs = 1.0f;
+    float fs = PixelRenderer::getContentFontScale();
 
-    // 状态栏背景（Moss 主题）
-    if (GameEngine::ins().getMainSceneBg() == GameEngine::BG_MOSS) {
-        PixelRenderer::drawIndexed8(200, 0,
-                                    MainSceneAssets::MOSS_STATE_W,
-                                    MainSceneAssets::MOSS_STATE_H,
-                                    MainSceneAssets::MOSS_STATE_INDEX,
-                                    MainSceneAssets::MOSS_STATE_PALETTE);
-    }
+    static constexpr int HUD_Y = 2;
+    int textH = (int)(8 * fs + 0.5f);
 
-    // 布局工具
-    static constexpr int BAR_X = 200;
-    static constexpr int BAR_W = 40;
-
-    auto drawSep = [&](int y) {
-        PixelRenderer::fillRect(BAR_X + 2, y, BAR_W - 4, 1, PixelRenderer::GRAY);
+    auto drawIcon = [&](int x, int y, const uint16_t* rows, int w, int h, uint16_t color) {
+        for (int row = 0; row < h; row++) {
+            uint16_t mask = rows[row];
+            for (int col = 0; col < w; col++) {
+                if (mask & (1 << (w - 1 - col))) {
+                    PixelRenderer::fillRect(x + col, y + row, 1, 1, color);
+                }
+            }
+        }
     };
 
-    auto centerText = [&](const char* text, int y, uint16_t color) {
-        canvas.setTextSize(fs);
-        int tw = canvas.textWidth(text);
-        int x = BAR_X + (BAR_W - tw) / 2;
-        PixelRenderer::drawPixelText(x, y, text, color, fs);
-    };
+    // ---- 极简 HUD：时间浮在右上角，状态压缩在下方 ----
+    char clockBuf[8];
+    GameEngine::ins().getExploreClockText(clockBuf, sizeof(clockBuf));
+    canvas.setTextSize(fs);
+    int timeW = canvas.textWidth(clockBuf);
+    int timeX = Hal::DISPLAY_W - timeW - 4;
+    int timeY = HUD_Y;
+    PixelRenderer::drawPixelText(timeX + 1, timeY + 1, clockBuf, PixelRenderer::BLACK, fs);
+    PixelRenderer::drawPixelText(timeX, timeY, clockBuf, PixelRenderer::WHITE, fs);
 
-    // 布局：简约疏朗，每个区块之间留出空白，无分隔线
-    // 135px 高度均匀分布：阶段(8) 空(14) 饥饿(22) 空(14) MOT(38)
-
-    // ---- 1. 阶段图标 ----
-    const char* stageName = "?";
-    switch (bug.getStage()) {
-        case Stage::EGG:      stageName = "E"; break;
-        case Stage::LARVA:    stageName = "L"; break;
-        case Stage::PUPA:     stageName = "P"; break;
-        case Stage::JUVENILE: stageName = "J"; break;
-        case Stage::ADULT:    stageName = "A"; break;
-    }
-    centerText(stageName, 8, PixelRenderer::WHITE);
-
-    // ---- 2. 饥饿度（无标签，颜色即信息） ----
-    uint16_t hColor = bug.getHunger() > 50 ? PixelRenderer::GREEN :
-                      (bug.getHunger() > 20 ? PixelRenderer::YELLOW : PixelRenderer::RED);
-    PixelRenderer::drawProgressBar(204, 22, 32, 6, bug.getHunger() / 100.0f, hColor, PixelRenderer::GRAY);
-
-    // ---- 3. MOT：像素爱心，从底部像水位一样填充 ----
     uint8_t mot = bug.getMot();
-    // 7x6 爱心掩码（MSB 在左，1=像素）
-    static const uint8_t HEART_MASK[6] = {
-        0b0110110,  // .##.##.
-        0b1111111,  // #######
-        0b1111111,  // #######
-        0b0111110,  // .#####.
-        0b0011100,  // ..###..
-        0b0001000,  // ...#...
+    static const uint16_t HEART_MASK[9] = {
+        0b000000000,
+        0b011000110,
+        0b111101111,
+        0b111111111,
+        0b111111111,
+        0b011111110,
+        0b001111100,
+        0b000111000,
+        0b000010000,
     };
-    static constexpr int HEART_W = 7;
-    static constexpr int HEART_H = 6;
-    int heartX = BAR_X + (BAR_W - HEART_W) / 2;  // 居中
-    int heartY = 38;
-    int totalRows = HEART_H;
+    static constexpr int ICON_SIZE = 9;
+    static constexpr int ICON_GAP = 4;
+    int iconY = HUD_Y + textH + 4;
+    int weatherX = Hal::DISPLAY_W - ICON_SIZE - 5;
+    int heartX = weatherX - ICON_GAP - ICON_SIZE;
+    int totalRows = ICON_SIZE;
     int fillRows = (mot * totalRows + 50) / 100;
     if (fillRows < 1 && mot > 0) fillRows = 1;
     if (fillRows > totalRows) fillRows = totalRows;
 
     for (int row = 0; row < totalRows; row++) {
-        uint8_t mask = HEART_MASK[row];
-        bool fill = (row >= totalRows - fillRows);  // 从底部向上填充
+        uint16_t mask = HEART_MASK[row];
+        bool fill = (row >= totalRows - fillRows);
         uint16_t c = fill ? PixelRenderer::RED : PixelRenderer::GRAY;
-        for (int col = 0; col < HEART_W; col++) {
-            if (mask & (1 << (HEART_W - 1 - col))) {
-                PixelRenderer::fillRect(heartX + col, heartY + row, 1, 1, c);
+        for (int col = 0; col < ICON_SIZE; col++) {
+            if (mask & (1 << (ICON_SIZE - 1 - col))) {
+                PixelRenderer::fillRect(heartX + col, iconY + row, 1, 1, c);
             }
         }
     }
 
-    // ---- 4. 天气图标 + 探索时段 ----
-    // 12x12 天气图标（仅表示天气，不随时段变化）
-    static const uint16_t WEATHER_SUN[12] = {
-        0b001000100100,  // ..#...#...
-        0b001000100100,  // ..#...#...
-        0b011101110100,  // .###.###..
-        0b001000100100,  // ..#...#...
-        0b111111111100,  // ##########
-        0b110111011100,  // ##.###.###
-        0b111111111100,  // ##########
-        0b110111011100,  // ##.###.###
-        0b111111111100,  // ##########
-        0b001000100100,  // ..#...#...
-        0b011101110100,  // .###.###..
-        0b001000100100,  // ..#...#...
+    static const uint16_t WEATHER_SUN[9] = {
+        0b100010001,
+        0b010010010,
+        0b001111100,
+        0b011111110,
+        0b111111111,
+        0b011111110,
+        0b001111100,
+        0b010010010,
+        0b100010001,
     };
-    static const uint16_t WEATHER_CLOUD[12] = {
-        0b000000000000,  // ...........
-        0b000000000000,  // ...........
-        0b000111110000,  // ...#####...
-        0b001111111000,  // ..#######..
-        0b011111111100,  // .#########.
-        0b111000111100,  // ###...####.
-        0b111111111100,  // ##########.
-        0b011111111100,  // .#########.
-        0b001111111000,  // ..#######..
-        0b000111110000,  // ...#####...
-        0b000000000000,  // ...........
-        0b000000000000,  // ...........
+    static const uint16_t WEATHER_CLOUD[9] = {
+        0b000000000,
+        0b000111000,
+        0b001111100,
+        0b011111110,
+        0b111111111,
+        0b111111111,
+        0b011111110,
+        0b000000000,
+        0b000000000,
     };
-
     uint32_t gameDay = GameEngine::ins().getCurrentGameDay();
     bool cloudy = (gameDay % 3 == 0);
     const uint16_t* icon = cloudy ? WEATHER_CLOUD : WEATHER_SUN;
     uint16_t iconColor = cloudy ? PixelRenderer::WHITE : PixelRenderer::YELLOW;
+    drawIcon(weatherX, iconY, icon, ICON_SIZE, ICON_SIZE, iconColor);
 
-    static constexpr int ICON_W = 12;
-    static constexpr int ICON_H = 12;
-    static constexpr int ICON_GAP = 4;
-    int iconX = BAR_X + (BAR_W - ICON_W) / 2;
-    int iconY = 100 - ICON_H - ICON_GAP;
-
-    for (int row = 0; row < ICON_H; row++) {
-        uint16_t mask = icon[row];
-        for (int col = 0; col < ICON_W; col++) {
-            if (mask & (1 << (ICON_W - 1 - col))) {
-                PixelRenderer::fillRect(iconX + col, iconY + row, 1, 1, iconColor);
-            }
-        }
-    }
-
-    const char* todName = GameEngine::ins().getTimeOfDayShortName();
-    canvas.setTextSize(fs);
-    int tw = canvas.textWidth(todName);
-    int textX = BAR_X + (BAR_W - tw) / 2;
-    PixelRenderer::drawPixelText(textX, 100, todName, PixelRenderer::CREAM, fs);
-
-    char clockBuf[8];
-    GameEngine::ins().getExploreClockText(clockBuf, sizeof(clockBuf));
-    tw = canvas.textWidth(clockBuf);
-    textX = BAR_X + (BAR_W - tw) / 2;
-    PixelRenderer::drawPixelText(textX, 112, clockBuf, PixelRenderer::GRAY, fs);
+    uint16_t hColor = bug.getHunger() > 50 ? PixelRenderer::GREEN :
+                      (bug.getHunger() > 20 ? PixelRenderer::YELLOW : PixelRenderer::RED);
+    int barX = heartX;
+    int barW = (weatherX + ICON_SIZE) - heartX;
+    PixelRenderer::drawProgressBar(barX, iconY + ICON_SIZE + 3, barW, 4, bug.getHunger() / 100.0f, hColor, PixelRenderer::GRAY);
 }
 
 void TerrariumScene::drawDeathScreen() {

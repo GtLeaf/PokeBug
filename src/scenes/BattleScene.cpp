@@ -12,6 +12,33 @@ static uint8_t battleStatWithHunger(float value, uint8_t hunger) {
     return (uint8_t)stat;
 }
 
+static float rollNpcBattleSpiReward(bool win, NpcData::Tier tier) {
+    if (!win) return 0.0f;
+
+    uint8_t chance = 0;
+    uint8_t minTenths = 0;
+    uint8_t maxTenths = 0;
+    switch (tier) {
+        case NpcData::Tier::ROOKIE:
+            chance = 30; minTenths = 1; maxTenths = 1;
+            break;
+        case NpcData::Tier::NORMAL:
+            chance = 45; minTenths = 1; maxTenths = 2;
+            break;
+        case NpcData::Tier::VETERAN:
+            chance = 60; minTenths = 2; maxTenths = 3;
+            break;
+        case NpcData::Tier::LEGEND:
+            chance = 80; minTenths = 3; maxTenths = 4;
+            break;
+        default:
+            return 0.0f;
+    }
+
+    if ((uint8_t)random(100) >= chance) return 0.0f;
+    return (float)random(minTenths, maxTenths + 1) * 0.1f;
+}
+
 void BattleScene::onEnter() {
     state = State::CONNECTING;
     roundNum = 1;
@@ -511,9 +538,10 @@ void BattleScene::applyBattleResult() {
     if (resultApplied) return;
     resultApplied = true;
 
-    GameEngine::ins().getBug().onBattleEnd(localWin, GameEngine::ins().getGameNow());
+    PendingNpcBattle& pending = GameEngine::ins().pendingNpcBattle();
+    float spiReward = localNpcBattle ? rollNpcBattleSpiReward(localWin, pending.tier) : -1.0f;
+    float spiGain = GameEngine::ins().getBug().onBattleEnd(localWin, GameEngine::ins().getGameNow(), spiReward);
     if (localNpcBattle) {
-        PendingNpcBattle& pending = GameEngine::ins().pendingNpcBattle();
         GameEngine::ins().pendingNpcBattle().resultSet = true;
         GameEngine::ins().pendingNpcBattle().won = localWin;
         // 同时写入 GameEngine 的跨场景结果记录
@@ -524,6 +552,7 @@ void BattleScene::applyBattleResult() {
         res.fromCup = pending.fromCup;
         res.tier = pending.tier;
         res.legend = legendNpc;
+        res.spiBoosted = spiGain > 0.001f;
     }
     Serial.printf("[BattleScene] battle end, localWin=%d\n", localWin);
 }

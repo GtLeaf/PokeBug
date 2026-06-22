@@ -172,11 +172,16 @@ void Bug::updateHunger(uint64_t now, uint32_t deltaMs) {
 }
 
 void Bug::updatePupaSpi(uint64_t now, uint32_t deltaMs) {
-    (void)now;
     static uint32_t pupaSpiAcc = 0;
+    uint64_t elapsed = now > stageStartTime ? now - stageStartTime : 0;
+    if (elapsed > PUPA_DURATION_MS) {
+        uint64_t overrun = elapsed - PUPA_DURATION_MS;
+        deltaMs = overrun >= deltaMs ? 0 : (uint32_t)(deltaMs - overrun);
+    }
+
     uint32_t interval = PUPA_SPI_GROWTH_MS;
     if (larvaBerryFed) {
-        interval = (interval * 9) / 10; // 每 9 分钟 +1
+        interval = (interval * 9) / 10; // 提前 10%，但整个蛹期仍只会稳定触发一次
     }
     pupaSpiAcc += deltaMs;
     while (pupaSpiAcc >= interval) {
@@ -635,19 +640,21 @@ void Bug::onEggTilt(uint64_t now, uint32_t deltaMs, bool left) {
     else eggRightTiltMs += deltaMs;
 }
 
-void Bug::onBattleEnd(bool win, uint64_t now) {
+float Bug::onBattleEnd(bool win, uint64_t now, float spiReward) {
     (void)now;
+    float beforeSpi = spi;
     if (win) {
         wins++;
-        spi += 0.5f;
         if ((int)foodCounts[(uint8_t)FoodType::DROP] + 2 <= MAX_FOOD_COUNT) foodCounts[(uint8_t)FoodType::DROP] += 2;
         else foodCounts[(uint8_t)FoodType::DROP] = MAX_FOOD_COUNT;
     } else {
         losses++;
-        spi += 0.2f;
     }
+    if (spiReward < 0.0f) spiReward = win ? 0.5f : 0.2f;
+    if (spiReward > 0.0f) spi += spiReward;
     mot = 50;
     clampAttributes();
+    return spi - beforeSpi;
 }
 
 uint8_t Bug::getTotalFoodCount() const {

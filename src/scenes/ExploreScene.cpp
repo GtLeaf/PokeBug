@@ -343,7 +343,7 @@ void ExploreScene::applyEventReward(bool flee) {
                             break;
                         case 4:
                             addSap(3);
-                            addStat(0.0f, 0.0f, 0.0f, 0.0f, 0.1f, "SPI +0.1");
+                            addStat(0.0f, 0.0f, 0.0f, 0.0f, 0.1f, UiStrings::EXPLORE_SPI_PLUS);
                             snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_RAINBOW);
                             break;
                         case 5:
@@ -395,7 +395,7 @@ void ExploreScene::applyEventReward(bool flee) {
                             break;
                         case 1:
                             addSap(3);
-                            addStat(0.0f, 0.0f, 0.0f, 0.0f, 0.2f, "SPI +0.2");
+                            addStat(0.0f, 0.0f, 0.0f, 0.0f, 0.2f, UiStrings::EXPLORE_SPI_PLUS);
                             snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_FIREFLIES);
                             break;
                         case 2:
@@ -453,7 +453,7 @@ void ExploreScene::applyEventReward(bool flee) {
                         default:
                             addSap(6);
                             addWood(1);
-                            addStat(0.0f, 0.0f, 0.0f, 0.0f, 0.3f, "SPI +0.3");
+                            addStat(0.0f, 0.0f, 0.0f, 0.0f, 0.3f, UiStrings::EXPLORE_SPI_PLUS);
                             snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_OLD_PHANTOM);
                             break;
                     }
@@ -506,6 +506,8 @@ void ExploreScene::startNpcBattle() {
 
 void ExploreScene::applyNpcBattleResult(const NpcBattleResult& res) {
     Bug& bug = GameEngine::ins().getBug();
+    resultLine1[0] = '\0';
+    resultLine2[0] = '\0';
     if (res.won) {
         int sap = 0;
         switch (res.tier) {
@@ -519,7 +521,9 @@ void ExploreScene::applyNpcBattleResult(const NpcBattleResult& res) {
         totalSapGain += sap;
         if (res.tier == NpcData::Tier::LEGEND) totalWoodGain += 1;
         snprintf(resultLine1, sizeof(resultLine1), UiStrings::EXPLORE_VICTORY_SAP, sap);
-        snprintf(resultLine2, sizeof(resultLine2), "SPI +0.5");
+        if (res.spiBoosted) {
+            snprintf(resultLine2, sizeof(resultLine2), "%s", UiStrings::EXPLORE_SPI_PLUS);
+        }
         state = State::EVENT_POPUP;
         saveSession();
     } else {

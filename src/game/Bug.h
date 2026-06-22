@@ -60,7 +60,7 @@ public:
     void onEggShake(uint64_t now, bool violent);
     void onEggTilt(uint64_t now, uint32_t deltaMs, bool left);
     // 对战结算
-    void onBattleEnd(bool win, uint64_t now);
+    float onBattleEnd(bool win, uint64_t now, float spiReward = -1.0f);
 
     // ---------- 阶段与生命 ----------
     Stage getStage() const { return stage; }
@@ -164,7 +164,7 @@ public:
     // 阶段时长（按设计文档 v1.0）
     static constexpr uint32_t EGG_DURATION_MS      = 5ULL * 60 * 1000;   // 5 min
     static constexpr uint32_t LARVA_DURATION_MS    = 30ULL * 60 * 1000;  // 30 min
-    static constexpr uint32_t PUPA_DURATION_MS     = 10ULL * 60 * 1000;  // 10 min
+    static constexpr uint32_t PUPA_DURATION_MS     = 60ULL * 60 * 1000;  // 60 min
     static constexpr uint32_t JUVENILE_DURATION_MS = 60ULL * 60 * 1000;  // 60 min
     static constexpr uint32_t EGG_SHAKE_DELAY_MS  = 30ULL * 1000;   // 每次摇晃卵延长 30s
     static constexpr uint32_t EGG_SHAKE_DELAY_MAX_MS = 2ULL * 60 * 1000; // 累计最多延长 2min
@@ -181,8 +181,8 @@ public:
     static constexpr uint8_t  POKE_ANGER_DECAY_VALUE = 10;                 // 每次衰减 -10
     static constexpr uint8_t  POKE_MOT_BUFF          = 5;                  // 触发后 MOT +5
 
-    // 蛹期安静成长：每 10 min SPI +1
-    static constexpr uint32_t PUPA_SPI_GROWTH_MS     = 10ULL * 60 * 1000;
+    // 蛹期安静成长：整个蛹期总计维持原有 SPI +1
+    static constexpr uint32_t PUPA_SPI_GROWTH_MS     = 60ULL * 60 * 1000;
 
 private:
     uint8_t geneVIG = 0, geneATK = 0, geneMNT = 0, geneEND = 0, geneAPP = 0;
