@@ -200,7 +200,10 @@ void BattleLink::setBattlePeer(const uint8_t* mac, bool asHost) {
 bool BattleLink::sendSync(const battle_sync_t& sync) {
     if (!battlePeerSet) { Serial.println("[BattleLink] sendSync: no peer"); return false; }
     if (sendState == SendState::SENDING) { Serial.println("[BattleLink] sendSync: busy"); return false; }
-    memcpy(sendCtx.buf, &sync, sizeof(sync));
+    battle_sync_t packet = sync;
+    packet.type = MSG_BATTLE_SYNC;
+    packet.version = BATTLE_PROTOCOL_VERSION;
+    memcpy(sendCtx.buf, &packet, sizeof(packet));
     sendCtx.len = sizeof(sync);
     memcpy(sendCtx.targetMac, battlePeerMac, 6);
     sendCtx.retryCount = 0;
@@ -215,7 +218,10 @@ bool BattleLink::sendSync(const battle_sync_t& sync) {
 bool BattleLink::sendReady(const battle_ready_t& ready) {
     if (!battlePeerSet) { Serial.println("[BattleLink] sendReady: no peer"); return false; }
     if (sendState == SendState::SENDING) { Serial.println("[BattleLink] sendReady: busy"); return false; }
-    memcpy(sendCtx.buf, &ready, sizeof(ready));
+    battle_ready_t packet = ready;
+    packet.type = MSG_BATTLE_READY;
+    packet.version = BATTLE_PROTOCOL_VERSION;
+    memcpy(sendCtx.buf, &packet, sizeof(packet));
     sendCtx.len = sizeof(ready);
     memcpy(sendCtx.targetMac, battlePeerMac, 6);
     sendCtx.retryCount = 0;
@@ -230,7 +236,10 @@ bool BattleLink::sendReady(const battle_ready_t& ready) {
 bool BattleLink::sendRound(const battle_round_t& round) {
     if (!battlePeerSet) { Serial.println("[BattleLink] sendRound: no peer"); return false; }
     if (sendState == SendState::SENDING) { Serial.println("[BattleLink] sendRound: busy"); return false; }
-    memcpy(sendCtx.buf, &round, sizeof(round));
+    battle_round_t packet = round;
+    packet.type = MSG_BATTLE_ROUND;
+    packet.version = BATTLE_PROTOCOL_VERSION;
+    memcpy(sendCtx.buf, &packet, sizeof(packet));
     sendCtx.len = sizeof(round);
     memcpy(sendCtx.targetMac, battlePeerMac, 6);
     sendCtx.retryCount = 0;
@@ -246,7 +255,7 @@ bool BattleLink::sendRound(const battle_round_t& round) {
 bool BattleLink::sendResult(bool win) {
     if (!battlePeerSet) { Serial.println("[BattleLink] sendResult: no peer"); return false; }
     if (sendState == SendState::SENDING) { Serial.println("[BattleLink] sendResult: busy"); return false; }
-    battle_result_t res = { MSG_BATTLE_RESULT, win ? (uint8_t)1 : (uint8_t)0 };
+    battle_result_t res = { MSG_BATTLE_RESULT, BATTLE_PROTOCOL_VERSION, win ? (uint8_t)1 : (uint8_t)0 };
     memcpy(sendCtx.buf, &res, sizeof(res));
     sendCtx.len = sizeof(res);
     memcpy(sendCtx.targetMac, battlePeerMac, 6);
@@ -467,6 +476,11 @@ void BattleLink::handleJoinAck(const uint8_t* mac, const join_ack_t& ack) {
 
 void BattleLink::handleReady(const uint8_t* mac, const battle_ready_t& ready) {
     if (!isBattlePeerMac(mac)) return;
+    if (ready.version != BATTLE_PROTOCOL_VERSION) {
+        Serial.printf("[BattleLink] ready version mismatch got=%d expected=%d\n",
+                      ready.version, BATTLE_PROTOCOL_VERSION);
+        return;
+    }
     pendingReady = true;
     pendingReadyData = ready;
     queueAck(mac, MSG_BATTLE_READY);
@@ -475,6 +489,11 @@ void BattleLink::handleReady(const uint8_t* mac, const battle_ready_t& ready) {
 
 void BattleLink::handleSync(const uint8_t* mac, const battle_sync_t& sync) {
     if (!isBattlePeerMac(mac)) return;
+    if (sync.version != BATTLE_PROTOCOL_VERSION) {
+        Serial.printf("[BattleLink] sync version mismatch got=%d expected=%d\n",
+                      sync.version, BATTLE_PROTOCOL_VERSION);
+        return;
+    }
     pendingSync = true;
     pendingSyncData = sync;
     queueAck(mac, MSG_BATTLE_SYNC);
@@ -484,6 +503,11 @@ void BattleLink::handleSync(const uint8_t* mac, const battle_sync_t& sync) {
 
 void BattleLink::handleRound(const uint8_t* mac, const battle_round_t& round) {
     if (!isBattlePeerMac(mac)) return;
+    if (round.version != BATTLE_PROTOCOL_VERSION) {
+        Serial.printf("[BattleLink] round version mismatch got=%d expected=%d\n",
+                      round.version, BATTLE_PROTOCOL_VERSION);
+        return;
+    }
     pendingRound = true;
     pendingRoundData = round;
     queueAck(mac, MSG_BATTLE_ROUND);
@@ -493,6 +517,11 @@ void BattleLink::handleRound(const uint8_t* mac, const battle_round_t& round) {
 
 void BattleLink::handleResult(const uint8_t* mac, const battle_result_t& result) {
     if (!isBattlePeerMac(mac)) return;
+    if (result.version != BATTLE_PROTOCOL_VERSION) {
+        Serial.printf("[BattleLink] result version mismatch got=%d expected=%d\n",
+                      result.version, BATTLE_PROTOCOL_VERSION);
+        return;
+    }
     pendingResult = true;
     pendingResultWin = (result.win != 0);
     queueAck(mac, MSG_BATTLE_RESULT);

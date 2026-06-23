@@ -89,7 +89,7 @@ hp = 20 + SIZ * 3 + END * 2
 ### 先手
 
 ```cpp
-initiative = SPD * 6 + MOT + random(-8, 8)
+initiative = SPD * 6 + MOT * 0.5 + random(-8, 8)
 ```
 
 轻微随机节奏避免 `SPD +1` 永久锁先手。

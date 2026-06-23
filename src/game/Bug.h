@@ -69,6 +69,7 @@ public:
     bool isDead() const { return !alive; }
     bool canAdvanceStage(uint64_t now) const;
     void advanceStage(uint64_t now);
+    void debugSetStage(Stage nextStage, uint64_t now);
 
     // ---------- 属性查询 ----------
     float getSiz() const { return siz; }
@@ -85,6 +86,8 @@ public:
     void setMot(uint8_t value) { mot = value > 100 ? 100 : value; }
     uint8_t getHunger() const { return hunger; }
     void modHunger(int8_t delta);
+    void ensureMinHunger(uint8_t minHunger = 1);
+    void skipSimulationTime(uint64_t deltaMs);
     void addTrainingBonus(float sizDelta, float strDelta, float endDelta,
                           float spdDelta, float spiDelta);
 
@@ -159,6 +162,7 @@ public:
     uint8_t getCupLegendKills() const { return cupLegendKills; }
     uint16_t getAchievementFlags() const { return achievementFlags; }
     uint8_t getCupStreak() const { return cupStreak; }
+    float getStageProgress(uint64_t now) const;
 
     void addReleaseCount();
     void recordCupParticipation();

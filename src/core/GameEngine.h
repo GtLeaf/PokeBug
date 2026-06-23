@@ -93,12 +93,12 @@ public:
     uint64_t getGameNow() const { return gameNow; }
     void resetGameNow() { gameNow = 0; }
 
-    // 昼夜判断：19:00 - 次日 05:00 为夜间，与探索 Evening 时段保持一致。
+    // 昼夜判断：21:00 - 次日 05:00 为夜间。
     bool isNight() const {
         static constexpr uint64_t HOUR_MS = 60ULL * 60 * 1000;
         static constexpr uint64_t DAY_MS = 24ULL * HOUR_MS;
         uint64_t hour = (gameNow % DAY_MS) / HOUR_MS;
-        return hour >= 19 || hour < 5;
+        return hour >= 21 || hour < 5;
     }
 
     // 全局字体缩放
@@ -166,7 +166,12 @@ public:
     bool canExplore() const;
     static bool isExploreLimitBypassed();
 
+    // 睡觉：将虚拟时间推进到下一个早晨 06:00，并更新甲虫成长与探索时钟
+    bool canSleep() const;
+    bool sleepUntilMorning();
+
     static constexpr uint8_t EXPLORE_DAILY_LIMIT = 20;
+    static constexpr uint64_t EXPLORE_FINISH_ADVANCE_MS = 3ULL * 60 * 60 * 1000;
     void recordExploreFinished();
     void syncExploreClock(bool persist = false);
     uint32_t getCurrentGameDay() const;

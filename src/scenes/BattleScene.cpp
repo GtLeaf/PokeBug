@@ -146,6 +146,13 @@ void BattleScene::onEnter() {
     roundEndEnemyHp = 0;
     roundEndMyMot = 0;
     roundEndEnemyMot = 0;
+    myGauge = 0.0f;
+    enemyGauge = 0.0f;
+    myRealGauge = 0.0f;
+    enemyRealGauge = 0.0f;
+    lastGaugeUpdateMs = 0;
+    gaugeReadySinceMs = 0;
+    clientReadyReceived = false;
     initFromBug();
 
     // 检查是否有本地 NPC 对战请求
@@ -276,7 +283,7 @@ SceneID BattleScene::update() {
             if (syncAcked && foeSyncReceived) {
                 Serial.printf("[BattleScene] sync done, I am %s\n",
                               BattleLink::ins().isHost() ? "HOST" : "CLIENT");
-                startRound();
+                startRound(true);
             }
 
             if (Hal::ins().millis() - stateStartMs >= SYNC_TIMEOUT_MS) {
@@ -288,35 +295,32 @@ SceneID BattleScene::update() {
         }
 
         case State::ROUND_START: {
-            startRound();
+            startRound(true);
             break;
         }
 
-        case State::CHARGE: {
-            if (Hal::ins().millis() - stateStartMs >= CHARGE_MS) {
-                state = State::CLASH;
-                stateStartMs = Hal::ins().millis();
-                roundSent = false;
-                Serial.printf("[BattleScene] round %d charge -> clash\n", roundNum);
+        case State::GAUGE_FILLING: {
+            uint32_t now = Hal::ins().millis();
+            updateGauge(now);
+            bool gaugeReady = (myRealGauge >= 1.0f || enemyRealGauge >= 1.0f);
+            if (gaugeReady && gaugeReadySinceMs == 0) {
+                gaugeReadySinceMs = now;
             }
-            break;
-        }
 
-        case State::CLASH: {
             if (localNpcBattle) {
-                // 本地 NPC 战：直接以主机逻辑计算并应用
-                if (!roundComputed) {
-                    hostRound = computeAuthoritativeRound();
+                // 本地 NPC 战：任意一方 gauge 充满即计算并执行攻击计划
+                if (!roundComputed && tryComputeRound()) {
                     roundComputed = true;
                 }
-                beginAuthoritativeRound(hostRound);
-                roundSent = true;
+                if (roundComputed) {
+                    beginAuthoritativeRound(hostRound);
+                    roundSent = true;
+                }
                 break;
             }
 
             if (BattleLink::ins().isHost()) {
-                // 主机：等从机汇报 MOT，计算完整回合状态后下发
-                // 先尝试取新 ready；再检查是否有缓存的未来回合 ready
+                // 主机：gauge 触发且拿到从机 MOT 后，计算一次 ATB 行动并下发
                 battle_ready_t ready;
                 bool gotReady = false;
                 if (hasPendingClientReady && pendingClientReady.round_num == roundNum) {
@@ -330,13 +334,8 @@ SceneID BattleScene::update() {
                 if (gotReady) {
                     if (ready.round_num == roundNum) {
                         enemy.mot = ready.my_mot;
-                        if (!roundComputed) {
-                            hostRound = computeAuthoritativeRound();
-                            roundComputed = true;
-                            Serial.printf("[BattleScene] host round %d computed\n", roundNum);
-                        }
+                        clientReadyReceived = true;
                     } else if (ready.round_num > roundNum) {
-                        // 从机已跑到下一回合，缓存 ready 等主机追上
                         pendingClientReady = ready;
                         hasPendingClientReady = true;
                         Serial.printf("[BattleScene] host ready future got=%d expected=%d, buffered\n",
@@ -345,6 +344,11 @@ SceneID BattleScene::update() {
                         Serial.printf("[BattleScene] host ready round mismatch got=%d expected=%d\n",
                                       ready.round_num, roundNum);
                     }
+                }
+
+                if (!roundComputed && clientReadyReceived && tryComputeRound()) {
+                    roundComputed = true;
+                    Serial.printf("[BattleScene] host round %d computed\n", roundNum);
                 }
 
                 // 已拿到从机 MOT 并计算出回合，持续重试发送直到 ACK 成功
@@ -360,8 +364,8 @@ SceneID BattleScene::update() {
                     }
                 }
             } else {
-                // 从机：发送本回合 MOT（含加油），等待主机下发的完整状态
-                if (!roundSent) {
+                // 从机：本地 gauge 到达行动点后发送本回合 MOT（含加油），等待主机下发行动
+                if (gaugeReady && !roundSent) {
                     battle_ready_t ready;
                     ready.type = MSG_BATTLE_READY;
                     ready.round_num = (uint8_t)roundNum;
@@ -387,7 +391,7 @@ SceneID BattleScene::update() {
                 }
             }
 
-            if (Hal::ins().millis() - stateStartMs >= ROUND_TIMEOUT_MS) {
+            if (gaugeReadySinceMs != 0 && now - gaugeReadySinceMs >= ROUND_TIMEOUT_MS) {
                 Serial.printf("[BattleScene] round %d timeout -> NO FOE\n", roundNum);
                 noOpponent = true;
                 state = State::DONE;
@@ -398,6 +402,8 @@ SceneID BattleScene::update() {
         case State::ATTACK_ONE: {
             if (Hal::ins().millis() - stateStartMs >= ATTACK_MS) {
                 applyCurrentAttack();
+                // 攻击期间双方 gauge 保持冻结，不重置
+
                 if (secondAttackPlanned) {
                     state = State::ATTACK_TWO;
                     stateStartMs = Hal::ins().millis();
@@ -406,6 +412,7 @@ SceneID BattleScene::update() {
                     enemy.hp = roundEndEnemyHp;
                     me.mot = roundEndMyMot;
                     enemy.mot = roundEndEnemyMot;
+                    resetGaugeAfterAction();
                     state = State::ROUND_END;
                     stateStartMs = Hal::ins().millis();
                 }
@@ -420,6 +427,7 @@ SceneID BattleScene::update() {
                 enemy.hp = roundEndEnemyHp;
                 me.mot = roundEndMyMot;
                 enemy.mot = roundEndEnemyMot;
+                resetGaugeAfterAction();
                 state = State::ROUND_END;
                 stateStartMs = Hal::ins().millis();
             }
@@ -435,7 +443,7 @@ SceneID BattleScene::update() {
                                   roundNum, me.hp, enemy.hp);
                 } else {
                     roundNum++;
-                    startRound();
+                    startRound(false);
                 }
             }
             break;
@@ -503,9 +511,11 @@ void BattleScene::maybeLogStateStall() {
     }
 }
 
-void BattleScene::startRound() {
-    state = State::CHARGE;
+void BattleScene::startRound(bool resetGauge) {
+    state = State::GAUGE_FILLING;
     stateStartMs = Hal::ins().millis();
+    lastGaugeUpdateMs = stateStartMs;
+    gaugeReadySinceMs = 0;
     roundBoosted = false;
     myDmg = 0;
     enemyDmg = 0;
@@ -521,11 +531,72 @@ void BattleScene::startRound() {
     roundEndEnemyMot = enemy.mot;
     roundSent = false;
     roundComputed = false;
+    clientReadyReceived = false;
+    if (resetGauge) {
+        myGauge = 0.0f;
+        enemyGauge = 0.0f;
+        myRealGauge = 0.0f;
+        enemyRealGauge = 0.0f;
+    }
     // 若缓存的从机 ready 属于下一回合则保留，否则丢弃
     if (hasPendingClientReady && pendingClientReady.round_num != roundNum) {
         hasPendingClientReady = false;
     }
     Serial.printf("[BattleScene] round %d start\n", roundNum);
+}
+
+void BattleScene::updateGauge(uint32_t nowMs) {
+    uint32_t delta = nowMs - lastGaugeUpdateMs;
+    lastGaugeUpdateMs = nowMs;
+    if (delta == 0) return;
+
+    int myScore = tempoScore(me);
+    int enemyScore = tempoScore(enemy);
+    int fastestScore = myScore > enemyScore ? myScore : enemyScore;
+    if (fastestScore < 1) fastestScore = 1;
+
+    float fastestFillMs = (float)GAUGE_FILL_MS * GAUGE_BASE_SCORE / (float)fastestScore;
+    if (fastestFillMs > (float)GAUGE_FASTEST_MAX_MS) {
+        fastestFillMs = (float)GAUGE_FASTEST_MAX_MS;
+    }
+
+    float myDelta = (float)delta * ((float)myScore / (float)fastestScore) / fastestFillMs;
+    float enemyDelta = (float)delta * ((float)enemyScore / (float)fastestScore) / fastestFillMs;
+    myRealGauge += myDelta;
+    enemyRealGauge += enemyDelta;
+    if (myRealGauge > 1.0f) myRealGauge = 1.0f;
+    if (enemyRealGauge > 1.0f) enemyRealGauge = 1.0f;
+
+    // 显示 gauge 与真实触发 gauge 保持一致，避免到终点却不行动。
+    myGauge = myRealGauge;
+    enemyGauge = enemyRealGauge;
+}
+
+bool BattleScene::tryComputeRound() {
+    // 任意一方真实 gauge 充满即可计算一次 ATB 行动。
+    if (myRealGauge < 1.0f && enemyRealGauge < 1.0f) return false;
+    if (roundComputed) return false;
+
+    hostRound = computeAuthoritativeRound();
+    return true;
+}
+
+void BattleScene::enterAttackOne() {
+    state = State::ATTACK_ONE;
+    stateStartMs = Hal::ins().millis();
+    // 先攻方已经到达终点，后攻方保持当前 gauge 继续显示
+    if (firstAttackByMe) myGauge = 1.0f;
+    else enemyGauge = 1.0f;
+}
+
+void BattleScene::resetGaugeAfterAction() {
+    if (firstAttackByMe) {
+        myGauge = 0.0f;
+        myRealGauge = 0.0f;
+    } else {
+        enemyGauge = 0.0f;
+        enemyRealGauge = 0.0f;
+    }
 }
 
 battle_round_t BattleScene::computeAuthoritativeRound() {
@@ -538,10 +609,10 @@ battle_round_t BattleScene::computeAuthoritativeRound() {
     round.host_dmg = 0;
     round.client_dmg = 0;
 
-    // 先手判定：SPD、MOT 与少量随机节奏共同决定
-    int hostIni = BattleCalc::computeInitiative(me);
-    int clientIni = BattleCalc::computeInitiative(enemy);
-    bool hostFirst = hostIni >= clientIni;
+    // 行动判定：谁的 ATB gauge 先满谁行动；同时满时 SPD 高者优先。
+    bool hostReady = myRealGauge >= 1.0f;
+    bool clientReady = enemyRealGauge >= 1.0f;
+    bool hostFirst = hostReady && (!clientReady || tempoScore(me) >= tempoScore(enemy));
 
     int hostHp = me.hp;
     int clientHp = enemy.hp;
@@ -552,26 +623,12 @@ battle_round_t BattleScene::computeAuthoritativeRound() {
         hostCrit = hostAttack.crit;
         hostDodged = hostAttack.dodged;
         clientHp -= (int)round.host_dmg;
-        if (clientHp > 0) {
-            BattleCalc::AttackResult clientAttack = BattleCalc::computeAttack(enemy, me);
-            round.client_dmg = clientAttack.damage;
-            clientCrit = clientAttack.crit;
-            clientDodged = clientAttack.dodged;
-            hostHp -= (int)round.client_dmg;
-        }
     } else {
         BattleCalc::AttackResult clientAttack = BattleCalc::computeAttack(enemy, me);
         round.client_dmg = clientAttack.damage;
         clientCrit = clientAttack.crit;
         clientDodged = clientAttack.dodged;
         hostHp -= (int)round.client_dmg;
-        if (hostHp > 0) {
-            BattleCalc::AttackResult hostAttack = BattleCalc::computeAttack(me, enemy);
-            round.host_dmg = hostAttack.damage;
-            hostCrit = hostAttack.crit;
-            hostDodged = hostAttack.dodged;
-            clientHp -= (int)round.host_dmg;
-        }
     }
 
     if (hostHp < 0) hostHp = 0;
@@ -635,8 +692,7 @@ void BattleScene::beginAuthoritativeRound(const battle_round_t& round) {
     bool secondByMe = !firstAttackByMe;
     secondAttackPlanned = attackExistsFor(secondByMe);
 
-    state = State::ATTACK_ONE;
-    stateStartMs = Hal::ins().millis();
+    enterAttackOne();
 
     Serial.printf("[BattleScene] round %d applied: hostDmg=%d clientDmg=%d hostHp=%d clientHp=%d\n",
                   roundNum, round.host_dmg, round.client_dmg, round.host_hp, round.client_hp);
@@ -725,7 +781,7 @@ bool BattleScene::onButton(const ButtonEvent& ev) {
         return true;
     }
 
-    if (state == State::CHARGE && ev.action == BtnAction::PRESSED && ev.btn == 0) {
+    if (state == State::GAUGE_FILLING && ev.action == BtnAction::PRESSED && ev.btn == 0) {
         if (!roundBoosted) {
             roundBoosted = true;
             me.mot += 15;
@@ -827,6 +883,42 @@ void BattleScene::drawCombatantSprite(const Combatant& combatant, int centerX, i
                                              !faceRight);
 }
 
+int BattleScene::tempoScore(const Combatant& combatant) const {
+    int score = (int)combatant.spd * 6;
+    return score < 1 ? 1 : score;
+}
+
+float BattleScene::tempoProgress(bool forMe) const {
+    return forMe ? myGauge : enemyGauge;
+}
+
+void BattleScene::drawTempoBar() {
+    static constexpr int LABEL_X = 8;
+    static constexpr int BAR_X = 50;
+    static constexpr int BAR_Y = 124;
+    static constexpr int BAR_W = 152;
+    static constexpr int BAR_H = 5;
+    static constexpr int ICON_Y = BAR_Y + 2;
+
+    PixelRenderer::drawPixelText(LABEL_X, BAR_Y - 3, "TEMPO", PixelRenderer::GRAY, 1);
+    PixelRenderer::fillRect(BAR_X, BAR_Y, BAR_W, BAR_H, PixelRenderer::rgb565(30, 30, 36));
+    PixelRenderer::fillRect(BAR_X, BAR_Y + 2, BAR_W, 1, PixelRenderer::rgb565(72, 72, 82));
+    PixelRenderer::fillRect(BAR_X + BAR_W, BAR_Y - 1, 2, BAR_H + 2, PixelRenderer::CREAM);
+
+    auto drawMarker = [&](bool mine, float progress, int yOffset) {
+        if (progress < 0.0f) progress = 0.0f;
+        if (progress > 1.0f) progress = 1.0f;
+        int x = BAR_X + (int)(progress * BAR_W);
+        int y = ICON_Y + yOffset;
+        uint16_t color = mine ? PixelRenderer::CYAN : PixelRenderer::rgb565(230, 90, 100);
+        PixelRenderer::fillRect(x - 3, y - 2, 7, 5, color);
+        PixelRenderer::fillRect(x - 2, y - 1, 5, 3, brightenBattleRgb565(color, 1.25f));
+    };
+
+    drawMarker(true, tempoProgress(true), -2);
+    drawMarker(false, tempoProgress(false), 4);
+}
+
 void BattleScene::drawBattleField() {
     PixelRenderer::fillRect(0, 0, 240, 135, PixelRenderer::rgb565(20, 20, 30));
 
@@ -878,8 +970,7 @@ void BattleScene::drawBattleField() {
     const char* msg = "";
     switch (state) {
         case State::SYNCING: msg = "SYNC"; break;
-        case State::CHARGE: msg = "CHARGE! A=boost"; break;
-        case State::CLASH: msg = "READY"; break;
+        case State::GAUGE_FILLING: msg = "CHARGE! A=boost"; break;
         case State::ATTACK_ONE:
         case State::ATTACK_TWO:
             msg = isCurrentAttackByMe() ? "ATTACK!" : "FOE ATK";
@@ -898,6 +989,8 @@ void BattleScene::drawBattleField() {
         PixelRenderer::fillRect(0, 0, 240, 135, PixelRenderer::WHITE);
         flashThisFrame = false;
     }
+
+    drawTempoBar();
 }
 
 void BattleScene::drawResult() {

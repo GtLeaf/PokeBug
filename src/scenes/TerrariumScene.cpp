@@ -4,6 +4,7 @@
 #include "../hardware/Hal.h"
 #include "../assets/MainSceneAssets.h"
 #include "../assets/HerculesAdultSprites.h"
+#include "../assets/HerculesPupaSprites.h"
 #include "../assets/WoodAssets.h"
 #include "../assets/BowlAssets.h"
 #include "../assets/FoodAssets.h"
@@ -18,6 +19,13 @@ const uint16_t TerrariumScene::PALETTE[4][2] = {
 };
 
 namespace {
+
+constexpr int PUPA_BOTTOM_MARGIN_PX = 0;
+constexpr int PUPA_POKE_SHAKE_PX = 3;
+
+bool isMobileBeetleStage(Stage stage) {
+    return stage == Stage::ADULT || stage == Stage::JUVENILE;
+}
 
 uint16_t adultHueMain(Temperament temperament) {
     switch (temperament) {
@@ -84,7 +92,7 @@ void TerrariumScene::onEnter() {
 
     Bug& bug = GameEngine::ins().getBug();
     const TerrariumViewState& saved = GameEngine::ins().getTerrariumViewState();
-    if (saved.valid && bug.getStage() == Stage::ADULT && !bug.isDead()) {
+    if (saved.valid && isMobileBeetleStage(bug.getStage()) && !bug.isDead()) {
         bugX = saved.bugX;
         bugY = saved.bugY;
         animFrame = saved.animFrame;
@@ -95,6 +103,7 @@ void TerrariumScene::onEnter() {
         walkAfterTurn = saved.walkAfterTurn;
         slideAfterTurn = saved.slideAfterTurn;
         climbAfterTurn = saved.climbAfterTurn;
+        walkTargetIsRest = false;
         turnFrameIndex = saved.turnFrameIndex;
         targetX = saved.targetX;
         slideTargetX = saved.slideTargetX;
@@ -121,7 +130,7 @@ void TerrariumScene::onExit() {
 
 void TerrariumScene::persistViewState() {
     Bug& bug = GameEngine::ins().getBug();
-    if (bug.getStage() == Stage::ADULT && !bug.isDead()) {
+    if (isMobileBeetleStage(bug.getStage()) && !bug.isDead()) {
         TerrariumViewState state;
         state.bugX = bugX;
         state.bugY = bugY;
@@ -132,6 +141,7 @@ void TerrariumScene::persistViewState() {
         state.walkAfterTurn = walkAfterTurn;
         state.slideAfterTurn = slideAfterTurn;
         state.climbAfterTurn = climbAfterTurn;
+        // walkTargetIsRest 是短暂运行时意图，不持久化，恢复后按普通 WALK 继续。
         state.turnFrameIndex = turnFrameIndex;
         state.targetX = targetX;
         state.slideTargetX = slideTargetX;
@@ -160,6 +170,7 @@ void TerrariumScene::resetLocalViewState() {
     walkAfterTurn = false;
     slideAfterTurn = false;
     climbAfterTurn = false;
+    walkTargetIsRest = false;
     turnFrameIndex = 0;
     targetX = bugX;
     slideTargetX = bugX;
@@ -167,6 +178,7 @@ void TerrariumScene::resetLocalViewState() {
     tiltHighSideIsRight = true;
     eatFrameInterval = 0;
     eatBitesThisSession = 0;
+    eatLastBiteMs = 0;
     restResumeAllowedMs = 0;
     foodRefillGraceUntilMs = 0;
     alertUntilMs = 0;
@@ -189,17 +201,16 @@ SceneID TerrariumScene::update() {
                     Hal::ins().millis());
     }
 
-    // 死亡后检测长按 A+B 3 秒重置
+    // 死亡后同时按 A+B 重置
     if (bug.isDead()) {
         bool a = Hal::ins().btnA_raw();
         bool b = Hal::ins().btnB_raw();
         if (a && b) {
-            if (resetPressStart == 0) resetPressStart = Hal::ins().millis();
-            else if (Hal::ins().millis() - resetPressStart >= 3000) {
+            if (resetPressStart == 0) {
                 bug.resetAfterDeath(GameEngine::ins().getGameNow());
                 GameEngine::ins().clearTerrariumViewState();
                 resetLocalViewState();
-                resetPressStart = 0;
+                resetPressStart = Hal::ins().millis();  // 标记已触发，防止连续重置
             }
         } else {
             resetPressStart = 0;
@@ -235,6 +246,8 @@ SceneID TerrariumScene::update() {
     // 成虫使用状态机自然移动：贴地、走走停停、有食物会靠近吃
     if (bug.getStage() == Stage::ADULT && !bug.isDead()) {
         updateAdultMovement();
+    } else if (bug.getStage() == Stage::JUVENILE && !bug.isDead()) {
+        updateJuvenileMovement();
     } else if (bug.getStage() != Stage::ADULT) {
         bugX = 120;
         faceRight = true;
@@ -283,6 +296,7 @@ bool TerrariumScene::onButton(const ButtonEvent& ev) {
         if (bug.getStage() == Stage::EGG) {
             // 卵期短按 B：戳蛋
             bug.onEggPoke(gameNow);
+            startPokeFeedback(Hal::ins().millis(), 600, true);
             Serial.println("[Terrarium] Poked egg");
             return true;
         }
@@ -298,13 +312,8 @@ bool TerrariumScene::onButton(const ButtonEvent& ev) {
             if (!inThreatenHold) {
                 pokeReactionStartMs = now;
             }
-            pokeFingerStartMs = now;  // 每次戳都重新播放手指动画
-            pokeReactionEndMs = now + 600;  // 手指动画保持 600ms
+            startPokeFeedback(now, 600, true);
             pokeThreatenEndMs = now + POKE_REACTION_MS;  // 威吓保持约 3s
-            pokeReactionWasPoked = true;
-            pokeFingerFromRight = random(2) == 0;
-            pokeFingerFrameIndex = random(ActionAssets::FINGER_FRAME_COUNT);
-            pokeFingerYOffset = (int8_t)random(-3, 4);
             if (bug.getStage() == Stage::ADULT) {
                 // 若从夜间休息中被戳醒，设置随机清醒冷却，不能马上重新入睡
                 if (adultState == AdultState::REST) {
@@ -326,10 +335,7 @@ bool TerrariumScene::onButton(const ButtonEvent& ev) {
             Serial.println("[Terrarium] Poked bug");
         } else {
             // 冷却中：短提示
-            pokeReactionStartMs = Hal::ins().millis();
-            pokeFingerStartMs = Hal::ins().millis();
-            pokeReactionEndMs = Hal::ins().millis() + 300;
-            pokeReactionWasPoked = false;
+            startPokeFeedback(Hal::ins().millis(), 300, false);
             Serial.println("[Terrarium] Poke on cooldown");
         }
         return true;
@@ -416,7 +422,10 @@ void TerrariumScene::drawBug() {
                 return;
             }
             if (bug.getStage() == Stage::PUPA) {
-                drawPupa(bugX, 95, pal);
+                int shake = ((Hal::ins().millis() / 100) % 2) ? PUPA_POKE_SHAKE_PX : -PUPA_POKE_SHAKE_PX;
+                drawPupa(Hal::DISPLAY_W / 2 + shake,
+                         Hal::DISPLAY_H - PUPA_BOTTOM_MARGIN_PX - HerculesPupaSprites::FRAME_H / 2,
+                         pal);
                 return;
             }
             // 成虫：fall through 到 drawAdult，其内部会处理 poke 反应（威吓姿态）
@@ -438,7 +447,12 @@ void TerrariumScene::drawBug() {
             drawLarva(bugX, GROUND_Y - 5, pal);
             break;
         case Stage::PUPA:
-            drawPupa(bugX, 95, pal);
+            drawPupa(Hal::DISPLAY_W / 2,
+                     Hal::DISPLAY_H - PUPA_BOTTOM_MARGIN_PX - HerculesPupaSprites::FRAME_H / 2,
+                     pal);
+            break;
+        case Stage::JUVENILE:
+            drawAdult(bugX, GROUND_Y, pal);
             break;
         case Stage::ADULT:
         default:
@@ -467,9 +481,20 @@ void TerrariumScene::drawLarva(int x, int y, uint8_t palette) {
 }
 
 void TerrariumScene::drawPupa(int x, int y, uint8_t palette) {
-    uint16_t body = PALETTE[palette][1];
-    PixelRenderer::fillRect(x - 7, y - 9, 14, 18, body);
-    PixelRenderer::fillRect(x - 5, y - 11, 10, 2, body);
+    (void)palette;
+    Bug& bug = GameEngine::ins().getBug();
+    float progress = bug.getStageProgress(GameEngine::ins().getGameNow());
+    uint8_t frameIndex = (uint8_t)(progress * HerculesPupaSprites::FRAME_COUNT);
+    if (frameIndex >= HerculesPupaSprites::FRAME_COUNT) {
+        frameIndex = HerculesPupaSprites::FRAME_COUNT - 1;
+    }
+
+    uint16_t offset = pgm_read_word(&HerculesPupaSprites::FRAMES[frameIndex].offset);
+    uint16_t length = pgm_read_word(&HerculesPupaSprites::FRAMES[frameIndex].length);
+    uint8_t w = pgm_read_byte(&HerculesPupaSprites::FRAMES[frameIndex].width);
+    uint8_t h = pgm_read_byte(&HerculesPupaSprites::FRAMES[frameIndex].height);
+    PixelRenderer::drawRgb565Rle(x - w / 2, y - h / 2, w, h,
+                                 HerculesPupaSprites::RLE, offset, length);
 }
 
 void TerrariumScene::drawAdult(int x, int y, uint8_t palette) {
@@ -583,16 +608,18 @@ void TerrariumScene::startTurn(bool targetFaceRight, bool continueWalking) {
     adultState = AdultState::TURN;
     turnTargetFaceRight = targetFaceRight;
     walkAfterTurn = continueWalking;
+    if (!continueWalking) walkTargetIsRest = false;
     turnFrameIndex = random(HerculesAdultSprites::TURN_FRAME_COUNT);
     stateTimer = 0;
     stateDuration = TURN_DURATION_FRAMES;
 }
 
 // 开始向目标位置行走
-void TerrariumScene::startWalkTo(int x) {
+void TerrariumScene::startWalkTo(int x, bool restTarget) {
     targetX = x;
     if (targetX < MIN_X) targetX = MIN_X;
     if (targetX > MAX_X) targetX = MAX_X;
+    walkTargetIsRest = restTarget;
 
     bool needFaceRight = (targetX > bugX);
     if (needFaceRight != faceRight) {
@@ -610,16 +637,22 @@ void TerrariumScene::enterEat() {
     stateDuration = random(EAT_DURATION_MIN_FRAMES, EAT_DURATION_MAX_FRAMES + 1);
     eatFrameInterval = (uint8_t)random(EAT_FRAME_INTERVAL_MIN, EAT_FRAME_INTERVAL_MAX + 1);
     eatBitesThisSession = 0;
+    eatLastBiteMs = 0;
 }
 
 void TerrariumScene::enterRest() {
     adultState = AdultState::REST;
     stateTimer = 0;
     stateDuration = 0;
+    walkTargetIsRest = false;
     faceRight = random(2) == 0;
 }
 
 void TerrariumScene::setIdleDuration() {
+    if (GameEngine::ins().getBug().getStage() == Stage::JUVENILE) {
+        stateDuration = random(18, 61);
+        return;
+    }
     bool alerted = alertUntilMs != 0 && Hal::ins().millis() < alertUntilMs;
     if (alerted) {
         stateDuration = random(100, 221);
@@ -639,6 +672,25 @@ bool TerrariumScene::wantsToRestOnWood() {
 
 bool TerrariumScene::wantsToWander() {
     return mind.isDesiring(Desire::WANDER);
+}
+
+int TerrariumScene::pickRestTargetX() {
+    Bug& bug = GameEngine::ins().getBug();
+    if (bug.isWoodPlaced()) return WOOD_REST_X;
+
+    int minX = MIN_X + 18;
+    int maxX = MAX_X - 10;
+    if (minX > maxX) {
+        minX = MIN_X;
+        maxX = MAX_X;
+    }
+    int x = random(minX, maxX + 1);
+    if (abs(x - FOOD_X) < 28) {
+        x = (x < FOOD_X) ? FOOD_X - 32 : FOOD_X + 32;
+        if (x < minX) x = minX;
+        if (x > maxX) x = maxX;
+    }
+    return x;
 }
 
 // 成虫状态机：贴地、走走停停、靠近食物进食
@@ -696,11 +748,12 @@ void TerrariumScene::updateAdultMovement() {
                         }
                         break;
                     case Desire::REST:
-                        if (bug.isWoodPlaced() && Hal::ins().millis() >= restResumeAllowedMs) {
-                            if (abs(WOOD_REST_X - bugX) <= 2) {
+                        if (Hal::ins().millis() >= restResumeAllowedMs) {
+                            int restTarget = pickRestTargetX();
+                            if (abs(restTarget - bugX) <= 2) {
                                 enterRest();
                             } else {
-                                startWalkTo(WOOD_REST_X);
+                                startWalkTo(restTarget, true);
                             }
                         } else {
                             stateTimer = 0;
@@ -789,9 +842,10 @@ void TerrariumScene::updateAdultMovement() {
                     if (targetX == FOOD_X && bug.getHunger() < EAT_CONTINUE_HUNGER &&
                         bug.hasFoodInTray() && bug.getFoodAmount() > 0) {
                         enterEat();
-                    } else if (targetX == WOOD_REST_X && bug.isWoodPlaced()) {
+                    } else if (walkTargetIsRest) {
                         enterRest();
                     } else {
+                        walkTargetIsRest = false;
                         adultState = AdultState::IDLE;
                         stateTimer = 0;
                         setIdleDuration();
@@ -849,9 +903,15 @@ void TerrariumScene::updateAdultMovement() {
             {
             // 面向食物盘（食物在左侧，所以朝左）
             faceRight = false;
-            // 第一口可绕过间隔，保证动画和咬食有反馈；满饱时 eatFromTray 不会扣食物。
-            if (bug.eatFromTray(GameEngine::ins().getGameNow(), eatBitesThisSession == 0)) {
-                eatBitesThisSession++;
+            uint32_t nowMs = Hal::ins().millis();
+            bool firstBite = eatBitesThisSession == 0;
+            bool biteDue = firstBite || (nowMs - eatLastBiteMs >= EAT_BITE_INTERVAL_MS);
+            if (biteDue && bug.getHunger() < EAT_CONTINUE_HUNGER) {
+                // 成虫进食节奏用现实时间控制；forceBite 只绕过 Bug 内部的虚拟时间间隔。
+                if (bug.eatFromTray(GameEngine::ins().getGameNow(), true)) {
+                    eatBitesThisSession++;
+                    eatLastBiteMs = nowMs;
+                }
             }
             // 多口之间保持同一个 EAT session，不重置动画；饱足后也至少咀嚼一小段再离开。
             bool foodGone = !bug.hasFoodInTray() || bug.getFoodAmount() == 0;
@@ -875,16 +935,16 @@ void TerrariumScene::updateAdultMovement() {
             break;
 
         case AdultState::REST:
-            // 趴在腐木上休息；只有真正停在腐木旁时才获得腐木成长。
+            // 休息/睡觉：有腐木时会优先趴在腐木旁；没有腐木时也会找一处安静位置睡。
             {
                 bool alerted = alertUntilMs != 0 && Hal::ins().millis() < alertUntilMs;
-                if (!bug.isWoodPlaced() || bug.getHunger() < 35 || alerted) {
+                if (bug.getHunger() < 35 || alerted) {
                     adultState = AdultState::IDLE;
                     stateTimer = 0;
                     setIdleDuration();
                     break;
                 }
-                if (abs(WOOD_REST_X - bugX) <= 2) {
+                if (bug.isWoodPlaced() && abs(WOOD_REST_X - bugX) <= 2) {
                     bug.recordWoodRest(GameEngine::ins().getGameNow());
                 }
                 if (!GameEngine::ins().isNight() && stateTimer > 180 && random(1000) < 4) {
@@ -897,9 +957,79 @@ void TerrariumScene::updateAdultMovement() {
     }
 }
 
+void TerrariumScene::updateJuvenileMovement() {
+    stateTimer++;
+
+    switch (adultState) {
+        case AdultState::IDLE:
+            if (stateTimer > (stateDuration / 2) && random(1000) < 12) {
+                startTurn(!faceRight, false);
+                break;
+            }
+            if (stateTimer >= stateDuration) {
+                int newTarget = random(MIN_X, MAX_X + 1);
+                if (abs(newTarget - bugX) < 24) {
+                    if (bugX < 120) {
+                        newTarget = random(135, MAX_X + 1);
+                    } else {
+                        newTarget = random(MIN_X, 106);
+                    }
+                }
+                startWalkTo(newTarget);
+            }
+            break;
+
+        case AdultState::TURN:
+            if (stateTimer >= stateDuration) {
+                faceRight = turnTargetFaceRight;
+                stateTimer = 0;
+                if (walkAfterTurn) {
+                    adultState = AdultState::WALK;
+                    stateDuration = 0;
+                } else {
+                    adultState = AdultState::IDLE;
+                    setIdleDuration();
+                }
+                slideAfterTurn = false;
+                climbAfterTurn = false;
+            }
+            break;
+
+        case AdultState::WALK:
+            {
+                int dx = (targetX > bugX) ? 1 : -1;
+                faceRight = dx > 0;
+                // 青年期睡得少、爱动，移动比成虫更频繁一点。
+                if (stateTimer % 2 == 0) {
+                    bugX += dx;
+                    if (bugX < MIN_X) bugX = MIN_X;
+                    if (bugX > MAX_X) bugX = MAX_X;
+                }
+                if (abs(targetX - bugX) <= 2) {
+                    adultState = AdultState::IDLE;
+                    stateTimer = 0;
+                    walkTargetIsRest = false;
+                    setIdleDuration();
+                }
+            }
+            break;
+
+        case AdultState::EAT:
+        case AdultState::REST:
+        case AdultState::SLIDE:
+        case AdultState::CLIMB:
+        default:
+            adultState = AdultState::IDLE;
+            stateTimer = 0;
+            walkTargetIsRest = false;
+            setIdleDuration();
+            break;
+    }
+}
+
 void TerrariumScene::drawFoodTray() {
     static constexpr int BOWL_X = 14;
-    static constexpr int BOWL_Y = GROUND_Y - BowlAssets::FRAME_H + 3;
+    static constexpr int BOWL_Y = GROUND_Y - BowlAssets::FRAME_H + 8;
 
     uint8_t style = GameEngine::ins().getBowlStyle();
     if (style >= BowlAssets::SPRITE_COUNT) style = 0;
@@ -918,7 +1048,7 @@ void TerrariumScene::drawFoodTray() {
         uint16_t foodOffset = pgm_read_word(&FoodAssets::SPRITE_FRAMES[foodStyle].offset);
         uint16_t foodLength = pgm_read_word(&FoodAssets::SPRITE_FRAMES[foodStyle].length);
         PixelRenderer::drawRgb565RleEaten(BOWL_X + (BowlAssets::FRAME_W - FoodAssets::FRAME_W) / 2,
-                                          BOWL_Y - 1,
+                                          BOWL_Y - 3,
                                           FoodAssets::FRAME_W,
                                           FoodAssets::FRAME_H,
                                           FoodAssets::SPRITE_RLE,
@@ -1242,9 +1372,21 @@ int TerrariumScene::getPokeTargetY() const {
             return 95;
         case Stage::LARVA:
             return GROUND_Y - 5;
+        case Stage::JUVENILE:
         case Stage::ADULT:
         default:
             return GROUND_Y - 20;
+    }
+}
+
+void TerrariumScene::startPokeFeedback(uint32_t now, uint32_t durationMs, bool wasPoked) {
+    pokeFingerStartMs = now;
+    pokeReactionEndMs = now + durationMs;
+    pokeReactionWasPoked = wasPoked;
+    if (wasPoked) {
+        pokeFingerFromRight = random(2) == 0;
+        pokeFingerFrameIndex = random(ActionAssets::FINGER_FRAME_COUNT);
+        pokeFingerYOffset = (int8_t)random(-3, 4);
     }
 }
 

@@ -50,6 +50,7 @@ private:
     bool walkAfterTurn = false;
     bool slideAfterTurn = false;  // 转身后进入 SLIDE
     bool climbAfterTurn = false;  // 转身后进入 CLIMB
+    bool walkTargetIsRest = false; // 当前 WALK 目标是否是睡眠点
     uint8_t turnFrameIndex = 0;
     int targetX = 120;
     int slideTargetX = 0;         // SLIDE 目标位置
@@ -59,6 +60,7 @@ private:
     uint32_t stateDuration = 0;   // 当前状态目标持续帧数
     uint8_t eatFrameInterval = 0; // EAT 动画每帧持续帧数
     uint8_t eatBitesThisSession = 0;
+    uint32_t eatLastBiteMs = 0;   // 成虫咬食使用现实时间节奏，避免被游戏速度压缩
     uint32_t restResumeAllowedMs = 0; // 允许重新进入夜间休息的时间戳
     uint32_t foodRefillGraceUntilMs = 0; // 刚吃空但仍饿时，等待玩家补食的时间窗
     uint32_t alertUntilMs = 0;        // 被戳后的警戒结束时间
@@ -76,6 +78,7 @@ private:
     static constexpr uint32_t EAT_DURATION_MIN_FRAMES = 180; // 20fps 下约 9 秒，覆盖多口连续进食
     static constexpr uint32_t EAT_DURATION_MAX_FRAMES = 260; // 20fps 下约 13 秒，足够吃完一份食物
     static constexpr uint32_t EAT_MIN_EXIT_FRAMES = 50;      // 第一口后至少咀嚼一小段，避免一帧退出
+    static constexpr uint32_t EAT_BITE_INTERVAL_MS = 2000;    // 每口至少间隔 2 秒现实时间
     static constexpr uint8_t EAT_FRAME_INTERVAL_MIN = 6;     // 20fps 下约 0.3 秒
     static constexpr uint8_t EAT_FRAME_INTERVAL_MAX = 10;    // 20fps 下约 0.5 秒
     static constexpr uint8_t EAT_CONTINUE_HUNGER = 80;
@@ -107,11 +110,13 @@ private:
     void drawAdult(int x, int y, uint8_t palette);
 
     void updateAdultMovement();
+    void updateJuvenileMovement();
     void startTurn(bool targetFaceRight, bool continueWalking);
-    void startWalkTo(int x);
+    void startWalkTo(int x, bool restTarget = false);
     void enterEat();
     void enterRest();
     void setIdleDuration();
+    int pickRestTargetX();
     void startClimbOrIdle();
     bool wantsToEat();
     bool wantsToRestOnWood();
@@ -139,6 +144,7 @@ private:
     bool pokeFingerFromRight = false;
     uint8_t pokeFingerFrameIndex = 0;
     int8_t pokeFingerYOffset = 0;
+    void startPokeFeedback(uint32_t now, uint32_t durationMs, bool wasPoked);
     void drawLarvaPoked(int x, int y, uint8_t palette);
     void drawPokeCooldownHint(int x, int y);
     void drawPokeAction();

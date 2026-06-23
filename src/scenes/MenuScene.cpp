@@ -17,6 +17,7 @@ int MenuScene::lastBowlSelected = 0;
 int MenuScene::lastFoodSelected = 0;
 int MenuScene::lastFightSelected = 0;
 int MenuScene::lastExploreSelected = 0;
+int MenuScene::lastDebugSelected = 0;
 
 void MenuScene::onEnter() {
     mode = Mode::MAIN;
@@ -30,6 +31,11 @@ void MenuScene::onEnter() {
 }
 
 void MenuScene::onExit() {
+    if (sleepTransitionActive) {
+        Hal::ins().setBrightness(sleepTransitionBaseBrightness);
+        sleepTransitionActive = false;
+    }
+
     if (mode == Mode::FOOD) {
         lastFoodSelected = selected;
     } else if (mode == Mode::BOWL) {
@@ -42,6 +48,8 @@ void MenuScene::onExit() {
         lastFightSelected = selected;
     } else if (mode == Mode::EXPLORE) {
         lastExploreSelected = selected;
+    } else if (mode == Mode::DEBUG) {
+        lastDebugSelected = selected;
     } else {
         lastSelected = selected;
     }
@@ -49,15 +57,35 @@ void MenuScene::onExit() {
 
 
 SceneID MenuScene::update() {
+    if (sleepTransitionActive) {
+        uint32_t elapsed = Hal::ins().millis() - sleepTransitionStartMs;
+        if (elapsed >= SLEEP_TRANSITION_MS) {
+            Hal::ins().setBrightness(sleepTransitionBaseBrightness);
+            sleepTransitionActive = false;
+            return SCENE_TERRARIUM;
+        }
+        Hal::ins().setBrightness(sleepTransitionBrightness(elapsed));
+    }
     return nextScene;
 }
 
 void MenuScene::render() {
     PixelRenderer::fillRect(0, 0, 240, 135, PixelRenderer::rgb565(0, 0, 0));
 
+    if (sleepTransitionActive) {
+        drawSleepTransition();
+        return;
+    }
+
     if (mode == Mode::MAIN) {
         drawBattery();
     }
+    if (sleepConfirmActive) {
+        drawSleepConfirm();
+        drawToast();
+        return;
+    }
+
     if (mode == Mode::FOOD) {
         drawFoodLayout();
     } else if (mode == Mode::WOOD) {
@@ -68,6 +96,8 @@ void MenuScene::render() {
         drawFightList();
     } else if (mode == Mode::EXPLORE) {
         drawExploreList();
+    } else if (mode == Mode::DEBUG) {
+        drawDebugList();
     } else {
         drawList();
     }
@@ -142,13 +172,17 @@ void MenuScene::drawList() {
         uint16_t descColor = (isSelected && cupAvailable) ? PixelRenderer::WHITE : PixelRenderer::GRAY;
 
         int leftW = BOX_W;
-        if (mode == Mode::MAIN && i < MenuAssets::MAIN_ICON_COUNT) {
+        int iconIndex = i;
+        if (mode == Mode::MAIN && i == DEBUG) iconIndex = -1;
+        else if (mode == Mode::MAIN && i > DEBUG) iconIndex = i - 1;
+
+        if (mode == Mode::MAIN && iconIndex >= 0 && iconIndex < MenuAssets::MAIN_ICON_COUNT) {
             if (isSelected) {
                 PixelRenderer::fillRect(boxX - 4, y - BOX_H / 2, 2, BOX_H, PixelRenderer::YELLOW);
             }
 
-            uint16_t offset = pgm_read_word(&MenuAssets::MAIN_ICON_FRAMES[i].offset);
-            uint16_t length = pgm_read_word(&MenuAssets::MAIN_ICON_FRAMES[i].length);
+            uint16_t offset = pgm_read_word(&MenuAssets::MAIN_ICON_FRAMES[iconIndex].offset);
+            uint16_t length = pgm_read_word(&MenuAssets::MAIN_ICON_FRAMES[iconIndex].length);
             int scaledIconW = (int)(MenuAssets::FRAME_W * relScale);
             int scaledIconH = (int)(MenuAssets::FRAME_H * relScale);
             int iconX = boxX + (ICON_SLOT_W - scaledIconW) / 2;
@@ -245,13 +279,57 @@ void MenuScene::drawExploreList() {
     }
 }
 
+void MenuScene::drawDebugList() {
+    float fs = PixelRenderer::getContentFontScale();
+    int rowStep = (int)(14 * fs);
+    int startY = 10;
+    int sepGap = (int)(4 * fs);
+
+    for (int i = 0; i < DEBUG_ITEM_COUNT; i++) {
+        int y = startY + i * rowStep;
+        bool isBack = (i == DEBUG_BACK);
+        uint16_t color = (i == selected) ? PixelRenderer::YELLOW : PixelRenderer::WHITE;
+
+        if (i == selected) {
+            PixelRenderer::fillRect(4, y, 4, (int)(8 * fs), PixelRenderer::YELLOW);
+        }
+
+        char label[24];
+        const char* baseLabel = itemLabel(i, label, sizeof(label));
+        PixelRenderer::drawPixelText(14, y, baseLabel, color, fs);
+
+        if (!isBack) {
+            PixelRenderer::fillRect(4, y + rowStep - sepGap, Hal::DISPLAY_W - 8, 1, PixelRenderer::GRAY);
+        }
+    }
+}
+
 bool MenuScene::onButton(const ButtonEvent& ev) {
+    if (sleepTransitionActive) {
+        return true;
+    }
+
     // Toast 激活时任意按键关闭弹窗
     if (toastMsg && Hal::ins().millis() < toastEndMs) {
         if (ev.action == BtnAction::PRESSED) {
             toastMsg = nullptr;
             return true;
         }
+    }
+
+    // Sleep 确认对话框
+    if (sleepConfirmActive) {
+        if (ev.action == BtnAction::PRESSED) {
+            if (ev.btn == 0) {
+                // A：确认睡觉
+                executeSleep();
+            } else if (ev.btn == 1) {
+                // B：取消
+                sleepConfirmActive = false;
+            }
+            return true;
+        }
+        return false;
     }
 
     if (ev.action == BtnAction::LONG_PRESS) {
@@ -273,6 +351,8 @@ bool MenuScene::onButton(const ButtonEvent& ev) {
             } else if (mode == Mode::FIGHT) {
                 enterMode(Mode::MAIN);
             } else if (mode == Mode::EXPLORE) {
+                enterMode(Mode::MAIN);
+            } else if (mode == Mode::DEBUG) {
                 enterMode(Mode::MAIN);
             } else {
                 nextScene = SCENE_TERRARIUM;
@@ -339,12 +419,19 @@ void MenuScene::executeSelection() {
     }
 
     if (mode == Mode::WOOD) {
-        if (selected >= 0 && selected < WOOD_ITEM_COUNT - 1) {
-            if (!bug.isWoodUnlocked((uint8_t)selected)) {
+        if (selected == WOOD_NONE) {
+            // 选择空选项：移除主界面的腐木
+            bug.removeWood();
+            GameEngine::ins().setWoodStyle(0xFF);  // 0xFF 表示未选择任何腐木风格
+            saveSettingsNow();
+            Serial.printf("[Menu] Wood removed\n");
+        } else if (selected >= 0 && selected < WOOD_ITEM_COUNT - 1) {
+            uint8_t style = (uint8_t)(selected - 1);
+            if (!bug.isWoodUnlocked(style)) {
                 showToast(UiStrings::WOOD_NEED_ROTTEN);
                 return;
             }
-            GameEngine::ins().setWoodStyle((uint8_t)selected);
+            GameEngine::ins().setWoodStyle(style);
             bug.setWood(GameEngine::ins().getWoodStyle());
             saveSettingsNow();
             // 若腐木尚未放置且已解锁，自动放置以便主界面立刻显示
@@ -361,6 +448,9 @@ void MenuScene::executeSelection() {
 
     if (mode == Mode::BOX) {
         switch (selected) {
+            case BOX_FOOD:
+                enterMode(Mode::FOOD);
+                break;
             case BOX_WOOD:
                 enterMode(Mode::WOOD);
                 break;
@@ -371,6 +461,15 @@ void MenuScene::executeSelection() {
                 GameEngine::ins().cycleMainSceneBg();
                 saveSettingsNow();
                 Serial.printf("[Menu] Main scene bg: %s\n", GameEngine::ins().getMainSceneBgName());
+                break;
+            case BOX_SLEEP:
+                if (bug.isDead()) {
+                    showToast(UiStrings::SLEEP_BEETLE_DIED);
+                } else if (!GameEngine::ins().canSleep()) {
+                    showToast(UiStrings::SLEEP_TOO_EARLY);
+                } else {
+                    sleepConfirmActive = true;
+                }
                 break;
             case BOX_BACK:
                 enterMode(Mode::MAIN);
@@ -437,6 +536,25 @@ void MenuScene::executeSelection() {
         return;
     }
 
+    if (mode == Mode::DEBUG) {
+        if (selected == DEBUG_BACK) {
+            enterMode(Mode::MAIN);
+            return;
+        }
+
+        if (selected >= DEBUG_EGG && selected <= DEBUG_ADULT) {
+            Stage nextStage = (Stage)selected; // Debug menu uses stage ids 1-5 in labels; enum remains 0-4.
+            bug.debugSetStage(nextStage, GameEngine::ins().getGameNow());
+            GameEngine::ins().forceSave();
+
+            char toast[32];
+            const char* stageName = itemLabel(selected, toast, sizeof(toast));
+            showToast(stageName);
+            Serial.printf("[Menu] Debug stage set to %d\n", selected + 1);
+        }
+        return;
+    }
+
     switch (selected) {
         case FEED:
             enterMode(Mode::FOOD);
@@ -454,6 +572,9 @@ void MenuScene::executeSelection() {
         case SETTINGS:
             nextScene = SCENE_SETTINGS;
             break;
+        case DEBUG:
+            enterMode(Mode::DEBUG);
+            break;
         case INFO:
             nextScene = SCENE_INFO;
             break;
@@ -470,6 +591,7 @@ void MenuScene::enterMode(Mode nextMode) {
     else if (mode == Mode::BOX) lastBoxSelected = selected;
     else if (mode == Mode::FIGHT) lastFightSelected = selected;
     else if (mode == Mode::EXPLORE) lastExploreSelected = selected;
+    else if (mode == Mode::DEBUG) lastDebugSelected = selected;
     else lastSelected = selected;
 
     mode = nextMode;
@@ -496,6 +618,10 @@ void MenuScene::enterMode(Mode nextMode) {
         selected = lastExploreSelected;
         if (selected >= EXPLORE_ITEM_COUNT - 1) selected = 0;
     }
+    else if (mode == Mode::DEBUG) {
+        selected = lastDebugSelected;
+        if (selected >= DEBUG_ITEM_COUNT - 1) selected = 0;
+    }
     else selected = lastSelected;
     int count = itemCount();
     if (selected >= count) selected = 0;
@@ -509,6 +635,7 @@ int MenuScene::itemCount() const {
     if (mode == Mode::BOX) return BOX_ITEM_COUNT;
     if (mode == Mode::FIGHT) return FIGHT_ITEM_COUNT;
     if (mode == Mode::EXPLORE) return EXPLORE_ITEM_COUNT;
+    if (mode == Mode::DEBUG) return DEBUG_ITEM_COUNT;
     return MAIN_ITEM_COUNT;
 }
 
@@ -528,14 +655,19 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
     }
 
     if (mode == Mode::WOOD) {
+        if (index == WOOD_NONE) {
+            return UiStrings::WOOD_NONE;
+        }
         if (index >= 0 && index < WOOD_ITEM_COUNT - 1) {
-            return WoodAssets::NAME[index];
+            return WoodAssets::NAME[index - 1];
         }
         return UiStrings::BACK;
     }
 
     if (mode == Mode::BOX) {
         switch (index) {
+            case BOX_FOOD:
+                return UiStrings::MENU_FEED;
             case BOX_WOOD:
                 return UiStrings::MENU_WOOD;
             case BOX_BOWL:
@@ -544,6 +676,8 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
                 snprintf(buf, bufSize, "%s:%s", UiStrings::BG,
                          GameEngine::ins().getMainSceneBgName());
                 return buf;
+            case BOX_SLEEP:
+                return UiStrings::MENU_SLEEP;
             case BOX_BACK:
             default:
                 return UiStrings::BACK;
@@ -571,6 +705,18 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
         }
     }
 
+    if (mode == Mode::DEBUG) {
+        switch (index) {
+            case DEBUG_EGG: return "1 Egg";
+            case DEBUG_LARVA: return "2 Larva";
+            case DEBUG_PUPA: return "3 Pupa";
+            case DEBUG_JUVENILE: return "4 Juvenile";
+            case DEBUG_ADULT: return "5 Adult";
+            case DEBUG_BACK:
+            default: return UiStrings::BACK;
+        }
+    }
+
     switch (index) {
         case INFO: return UiStrings::MENU_INFO;
         case FEED: return UiStrings::MENU_FEED;
@@ -578,6 +724,7 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
         case FIGHT: return UiStrings::MENU_FIGHT;
         case EXPLORE: return UiStrings::MENU_EXPLORE;
         case SETTINGS: return UiStrings::MENU_SETTINGS;
+        case DEBUG: return UiStrings::MENU_DEBUG;
         case BACK:
         default:
             return UiStrings::BACK;
@@ -595,6 +742,21 @@ void MenuScene::saveSettingsNow() {
         GameEngine::ins().getBowlStyle(),
         GameEngine::ins().getFoodStyle()
     );
+}
+
+void MenuScene::executeSleep() {
+    sleepConfirmActive = false;
+    if (!GameEngine::ins().sleepUntilMorning()) {
+        if (GameEngine::ins().getBug().isDead()) {
+            showToast(UiStrings::SLEEP_BEETLE_DIED);
+        } else {
+            showToast(UiStrings::SLEEP_TOO_EARLY);
+        }
+        Serial.println("[Menu] Sleep until morning rejected");
+        return;
+    }
+    startSleepTransition();
+    Serial.println("[Menu] Sleep until morning executed");
 }
 
 bool MenuScene::isCupAvailable() const {
@@ -670,6 +832,111 @@ void MenuScene::drawToast() {
         }
         p++;
     }
+}
+
+void MenuScene::drawSleepConfirm() {
+    float fs = PixelRenderer::getContentFontScale();
+    LGFX_Sprite& canvas = Hal::ins().canvas();
+
+    // 背景遮罩
+    PixelRenderer::fillRect(0, 0, Hal::DISPLAY_W, Hal::DISPLAY_H,
+                            PixelRenderer::rgb565(0, 0, 0));
+
+    // 提示文字
+    const char* msg = UiStrings::SLEEP_CONFIRM;
+    int lineCount = 1;
+    int maxLineW = 0;
+    const char* p = msg;
+    const char* lineStart = msg;
+    while (true) {
+        if (*p == '\n' || *p == '\0') {
+            if (*p == '\n') lineCount++;
+            char buf[64];
+            int len = min((int)(p - lineStart), (int)sizeof(buf) - 1);
+            memcpy(buf, lineStart, len);
+            buf[len] = '\0';
+            canvas.setTextSize(fs);
+            int w = canvas.textWidth(buf);
+            if (w > maxLineW) maxLineW = w;
+            if (*p == '\0') break;
+            lineStart = p + 1;
+        }
+        p++;
+    }
+
+    int padX = (int)(8 * fs);
+    int padY = (int)(6 * fs);
+    int lineH = (int)(12 * fs);
+    int boxW = maxLineW + padX * 2;
+    int boxH = lineCount * lineH + padY * 2 + (int)(14 * fs);  // 额外空间给导航提示
+    int boxX = (Hal::DISPLAY_W - boxW) / 2;
+    int boxY = (Hal::DISPLAY_H - boxH) / 2;
+
+    PixelRenderer::fillRect(boxX, boxY, boxW, boxH, PixelRenderer::rgb565(20, 20, 30));
+    canvas.drawRect(boxX, boxY, boxW, boxH, PixelRenderer::WHITE);
+
+    int y = boxY + padY;
+    p = msg;
+    lineStart = msg;
+    while (true) {
+        if (*p == '\n' || *p == '\0') {
+            char buf[64];
+            int len = min((int)(p - lineStart), (int)sizeof(buf) - 1);
+            memcpy(buf, lineStart, len);
+            buf[len] = '\0';
+            canvas.setTextSize(fs);
+            int w = canvas.textWidth(buf);
+            int x = boxX + (boxW - w) / 2;
+            PixelRenderer::drawPixelText(x, y, buf, PixelRenderer::WHITE, fs);
+            y += lineH;
+            if (*p == '\0') break;
+            lineStart = p + 1;
+        }
+        p++;
+    }
+
+    // 导航提示
+    canvas.setTextSize(fs);
+    int navW = canvas.textWidth(UiStrings::SLEEP_NAV);
+    PixelRenderer::drawPixelText(boxX + (boxW - navW) / 2,
+                                 y + (int)(2 * fs),
+                                 UiStrings::SLEEP_NAV,
+                                 PixelRenderer::GRAY, fs);
+}
+
+void MenuScene::startSleepTransition() {
+    toastMsg = nullptr;
+    sleepTransitionBaseBrightness = Hal::ins().getBrightness();
+    sleepTransitionStartMs = Hal::ins().millis();
+    sleepTransitionActive = true;
+    Hal::ins().setBrightness(sleepTransitionBaseBrightness);
+}
+
+uint8_t MenuScene::sleepTransitionBrightness(uint32_t elapsedMs) const {
+    if (elapsedMs < SLEEP_FADE_MS) {
+        uint32_t remaining = SLEEP_FADE_MS - elapsedMs;
+        return (uint8_t)((uint32_t)sleepTransitionBaseBrightness * remaining / SLEEP_FADE_MS);
+    }
+    if (elapsedMs < SLEEP_FADE_MS + SLEEP_HOLD_MS) {
+        return 0;
+    }
+    uint32_t fadeInElapsed = elapsedMs - SLEEP_FADE_MS - SLEEP_HOLD_MS;
+    if (fadeInElapsed > SLEEP_FADE_MS) fadeInElapsed = SLEEP_FADE_MS;
+    return (uint8_t)((uint32_t)sleepTransitionBaseBrightness * fadeInElapsed / SLEEP_FADE_MS);
+}
+
+void MenuScene::drawSleepTransition() {
+    PixelRenderer::fillRect(0, 0, Hal::DISPLAY_W, Hal::DISPLAY_H, PixelRenderer::BLACK);
+
+    float fs = PixelRenderer::getContentFontScale();
+    if (fs < 1.6f) fs = 1.6f;
+    const char* text = "zzz";
+    LGFX_Sprite& canvas = Hal::ins().canvas();
+    canvas.setTextSize(fs);
+    int w = canvas.textWidth(text);
+    int x = (Hal::DISPLAY_W - w) / 2;
+    int y = (Hal::DISPLAY_H - (int)(12 * fs)) / 2;
+    PixelRenderer::drawPixelText(x, y, text, PixelRenderer::WHITE, fs);
 }
 
 void MenuScene::drawFoodLayout() {
@@ -968,7 +1235,8 @@ void MenuScene::drawWoodLayout() {
 
         bool isSelected = (i == selected);
         bool isStyle = (i < WOOD_ITEM_COUNT - 1);
-        bool unlocked = isStyle && bug.isWoodUnlocked((uint8_t)i);
+        uint8_t styleIdx = (i == WOOD_NONE) ? 0xFF : (uint8_t)(i - 1);
+        bool unlocked = (i == WOOD_NONE) || (isStyle && bug.isWoodUnlocked(styleIdx));
         uint16_t color;
         if (isSelected) {
             color = (!isStyle || unlocked) ? PixelRenderer::YELLOW : PixelRenderer::rgb565(180, 180, 0);
@@ -977,17 +1245,19 @@ void MenuScene::drawWoodLayout() {
         }
 
         const char* label;
-        if (isStyle) {
-            label = WoodAssets::NAME[i];
+        if (i == WOOD_NONE) {
+            label = UiStrings::WOOD_NONE;
+        } else if (isStyle) {
+            label = WoodAssets::NAME[styleIdx];
         } else {
             label = UiStrings::BACK;
         }
 
         int textY = y + (ROW_H - (int)(8 * fs)) / 2;
 
-        // 当前腐木风格菱形标记
-        int currentStyle = GameEngine::ins().getWoodStyle();
-        if (isStyle && i == currentStyle && unlocked) {
+        // 当前腐木风格菱形标记（None 不显示）
+        int currentStyle = (int)GameEngine::ins().getWoodStyle();
+        if (i != WOOD_NONE && isStyle && styleIdx == currentStyle && unlocked) {
             int cx = TEXT_X - 8;
             int cy = textY + (int)(4 * fs);
             canvas.fillTriangle(cx, cy - 3, cx + 3, cy, cx, cy + 3, PixelRenderer::CYAN);
@@ -999,7 +1269,15 @@ void MenuScene::drawWoodLayout() {
 
     // ---- 右侧详情面板 ----
     if (selected >= 0 && selected < WOOD_ITEM_COUNT - 1) {
-        int idx = selected;
+        if (selected == WOOD_NONE) {
+            // 空选项：右侧显示简短说明
+            PixelRenderer::drawPixelText(RIGHT_X + 10, 40,
+                                         "No wood placed.",
+                                         PixelRenderer::GRAY, fs);
+            return;
+        }
+
+        int idx = selected - 1;
         bool unlocked = bug.isWoodUnlocked((uint8_t)idx);
 
         uint16_t woodOffset = pgm_read_word(&WoodAssets::SPRITE_FRAMES[idx].offset);

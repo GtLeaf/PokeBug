@@ -41,6 +41,16 @@ static constexpr uint8_t LEVEL[(uint8_t)FoodType::COUNT] = {
     1, 1, 2, 2, 3, 3
 };
 
+// 每口恢复的 HUN。属性收益越强的食物越不顶饱；Drop 是基础食物，恢复最高。
+static constexpr uint8_t HUNGER_PER_BITE[(uint8_t)FoodType::COUNT] = {
+    /* DROP   */ 15,
+    /* CUBE   */ 13,
+    /* SLICE  */ 11,
+    /* CITRUS */ 12,
+    /* JELLY  */ 8,
+    /* BERRY  */ 9,
+};
+
 // 食物名称
 static constexpr const char* NAME[(uint8_t)FoodType::COUNT] = {
     "Drop", "Cube", "Slice", "Citrus", "Jelly", "Berry"
@@ -109,6 +119,10 @@ inline const char* descLine2(FoodType t) {
 
 inline uint8_t level(FoodType t) {
     return LEVEL[(uint8_t)t];
+}
+
+inline uint8_t hungerPerBite(FoodType t) {
+    return HUNGER_PER_BITE[(uint8_t)t];
 }
 
 inline uint8_t adultMotRecovery(FoodType t) {

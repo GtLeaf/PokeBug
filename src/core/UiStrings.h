@@ -36,9 +36,18 @@ static constexpr const char* MENU_BOX         = "Box";         // 箱子/背包
 static constexpr const char* MENU_FIGHT       = "Fight";       // 对战
 static constexpr const char* MENU_EXPLORE     = "Explore";     // 探索
 static constexpr const char* MENU_SETTINGS    = "Settings";    // 设置
+static constexpr const char* MENU_DEBUG       = "Debug";       // 调试
 static constexpr const char* MENU_CUP         = "Cup";         // 甲虫杯
 static constexpr const char* MENU_WOOD        = "Wood";        // 腐木
 static constexpr const char* MENU_BOWL        = "Bowl";        // 食物盘
+static constexpr const char* MENU_SLEEP       = "Sleep";       // 睡觉
+
+// Sleep 提示
+static constexpr const char* SLEEP_TOO_EARLY  = "Too early to sleep.";          // 太早了，不能睡觉
+static constexpr const char* SLEEP_BEETLE_DIED = "Beetle has died.";            // 甲虫已死亡
+static constexpr const char* SLEEP_CONFIRM    = "Fast-forward to\n6:00 AM?";    // 将时间前进至早上6:00？
+static constexpr const char* SLEEP_NAV        = "A:Yes  B:No";                   // A确认 B取消
+static constexpr const char* SLEEP_GOOD_MORNING = "Good morning!";               // 早上好
 
 // Settings 场景（设置界面）
 static constexpr const char* SET_BRIGHTNESS   = "Brightness";    // 亮度
@@ -57,7 +66,7 @@ static constexpr const char* IDLE_NEVER       = "Never";   // 永不
 
 // Terrarium 场景（培养缸主界面）
 static constexpr const char* DIED             = "DIED";              // 死亡
-static constexpr const char* HOLD_AB_RESET    = "Hold A+B 3s";        // 长按A+B 3秒重置
+static constexpr const char* HOLD_AB_RESET    = "Press A+B";          // 同时按A+B重置
 
 // Lobby 场景（对战大厅）
 static constexpr const char* LOBBY_ROOM       = "ROOM";              // 房间
@@ -153,6 +162,7 @@ static constexpr const char* EXPLORE_HEART_OF_ROT     = "Heart of rot! Sap +2";
 static constexpr const char* EXPLORE_OLD_PHANTOM      = "Old tree phantom! +6";
 
 // 腐木（Wood）
+static constexpr const char* WOOD_NONE          = "None";
 static constexpr const char* WOOD_PLACED        = "Wood placed!";
 static constexpr const char* WOOD_NEED_ROTTEN   = "Wood locked.";
 static constexpr const char* EXPLORE_CONTINUE         = "A:Continue";

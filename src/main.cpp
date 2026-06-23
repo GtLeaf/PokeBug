@@ -30,9 +30,12 @@ void setup() {
         SaveManager::ins().loadSettings(fontScale, brightness, gameSpeed, idleTimeout,
                                         mainSceneBg, woodStyle, bowlStyle, foodStyle);
 
-        // 推进虚拟时间 10 分钟并更新
+        // 推进虚拟时间 10 分钟并更新。设备深睡时，甲虫也按睡眠状态结算。
         uint64_t gameNow = bug.getLastUpdateTime() + (uint64_t)(600000 * gameSpeed);
+        bug.ensureMinHunger(1);
+        bug.setSleeping(true);
         bug.update(gameNow);
+        bug.setSleeping(false);
 
         uint32_t exploreDay = (uint32_t)(gameNow / GameEngine::GAME_DAY_MS);
         uint8_t exploreTod = GameEngine::TIME_MORNING;

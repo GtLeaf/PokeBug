@@ -22,6 +22,8 @@ enum BattleMsgType : uint8_t {
     MSG_ACK           = 0x80,
 };
 
+static constexpr uint8_t BATTLE_PROTOCOL_VERSION = 2;
+
 // 房间广播包 8 bytes
 struct __attribute__((packed)) room_advert_t {
     uint8_t type;
@@ -44,16 +46,18 @@ struct __attribute__((packed)) join_ack_t {
     uint8_t accepted;  // 1=接受，0=拒绝
 };
 
-// 从机准备包 3 bytes（上报本回合 MOT，含加油）
+// 从机准备包 4 bytes（上报本回合 MOT，含加油）
 struct __attribute__((packed)) battle_ready_t {
     uint8_t type;           // MSG_BATTLE_READY
+    uint8_t version;        // BATTLE_PROTOCOL_VERSION
     uint8_t round_num;
     uint8_t my_mot;         // 从机本回合 MOT
 };
 
-// 属性同步包 9 bytes
+// 属性同步包 10 bytes
 struct __attribute__((packed)) battle_sync_t {
     uint8_t type;
+    uint8_t version;        // BATTLE_PROTOCOL_VERSION
     uint8_t siz;
     uint8_t str;
     uint8_t end;
@@ -64,9 +68,10 @@ struct __attribute__((packed)) battle_sync_t {
     uint8_t palette_id;
 };
 
-// 回合结果包 9 bytes（主机 authoritative，包含双方状态）
+// 回合结果包 10 bytes（主机 authoritative，包含双方状态）
 struct __attribute__((packed)) battle_round_t {
     uint8_t type;           // MSG_BATTLE_ROUND
+    uint8_t version;        // BATTLE_PROTOCOL_VERSION
     uint8_t round_num;
     uint8_t host_dmg;       // 主机对从机造成的伤害
     uint8_t client_dmg;     // 从机对主机造成的伤害
@@ -77,9 +82,10 @@ struct __attribute__((packed)) battle_round_t {
     uint8_t crits;          // bit0=主机暴击, bit1=从机暴击, bit2=主机攻击被闪避, bit3=从机攻击被闪避, bit4=主机先手
 };
 
-// 结算包 2 bytes
+// 结算包 3 bytes
 struct __attribute__((packed)) battle_result_t {
     uint8_t type;
+    uint8_t version;        // BATTLE_PROTOCOL_VERSION
     uint8_t win;  // 发送方视角：1=胜，0=负
 };
 

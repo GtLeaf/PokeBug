@@ -85,6 +85,29 @@ void Bug::modHunger(int8_t delta) {
     hunger = (uint8_t)h;
 }
 
+void Bug::ensureMinHunger(uint8_t minHunger) {
+    if (hunger < minHunger) {
+        hunger = minHunger;
+        deathTimerStart = 0;  // 清除饥饿死亡计时，避免睡觉时饿死
+    }
+}
+
+void Bug::skipSimulationTime(uint64_t deltaMs) {
+    if (deltaMs == 0) return;
+
+    stageStartTime += deltaMs;
+    eggStartTime += deltaMs;
+    lastUpdateTime += deltaMs;
+    if (lastFeedTime != 0) lastFeedTime += deltaMs;
+    if (lastSapProduceTime != 0) lastSapProduceTime += deltaMs;
+    if (lastShakeTrainTime != 0) lastShakeTrainTime += deltaMs;
+    if (restStartTime != 0) restStartTime += deltaMs;
+    if (lastPokeTime != 0) lastPokeTime += deltaMs;
+    if (motBuffEndTime != 0) motBuffEndTime += deltaMs;
+    if (lastEatTime != 0) lastEatTime += deltaMs;
+    if (deathTimerStart != 0) deathTimerStart += deltaMs;
+}
+
 void Bug::addTrainingBonus(float sizDelta, float strDelta, float endDelta,
                            float spdDelta, float spiDelta) {
     siz += sizDelta;
@@ -141,8 +164,12 @@ void Bug::update(uint64_t now) {
         }
     }
 
-    // 幼虫/蛹期自主进食；成虫由 TerrariumScene 在走到食物盘并进入 EAT 状态时控制进食
-    if (stage != Stage::ADULT) {
+    // 睡眠快进/深睡更新中，如果已经饿到危险区且盘中有食物，允许自动咬食。
+    static constexpr uint8_t SLEEP_AUTO_EAT_HUNGER = 30;
+    if (sleeping && hunger < SLEEP_AUTO_EAT_HUNGER) {
+        eatFromTray(now, true);
+    } else if (stage != Stage::ADULT) {
+        // 幼虫/青年期自主进食；成虫平时由 TerrariumScene 走到食物盘后控制进食。
         eatFromTray(now);
     }
 
@@ -209,6 +236,24 @@ bool Bug::canAdvanceStage(uint64_t now) const {
     }
 }
 
+float Bug::getStageProgress(uint64_t now) const {
+    uint64_t duration = 0;
+    switch (stage) {
+        case Stage::EGG: duration = EGG_DURATION_MS; break;
+        case Stage::LARVA: duration = LARVA_DURATION_MS; break;
+        case Stage::PUPA: duration = PUPA_DURATION_MS; break;
+        case Stage::JUVENILE: duration = JUVENILE_DURATION_MS; break;
+        case Stage::ADULT:
+        default:
+            return 1.0f;
+    }
+    if (duration == 0 || now <= stageStartTime) return 0.0f;
+    float progress = (float)(now - stageStartTime) / (float)duration;
+    if (progress < 0.0f) return 0.0f;
+    if (progress > 1.0f) return 1.0f;
+    return progress;
+}
+
 void Bug::checkStageTransition(uint64_t now) {
     uint8_t maxAdvances = 3;
     while (maxAdvances-- > 0 && canAdvanceStage(now)) {
@@ -244,6 +289,21 @@ void Bug::advanceStage(uint64_t now) {
             break;
         default:
             return;
+    }
+    clampAttributes();
+}
+
+void Bug::debugSetStage(Stage nextStage, uint64_t now) {
+    stage = nextStage;
+    alive = true;
+    stageStartTime = now;
+    lastUpdateTime = now;
+    deathTimerStart = 0;
+    hungerDropAcc = 0;
+    sleeping = false;
+    pupaShakes = 0;
+    if (stage == Stage::EGG) {
+        eggStartTime = now;
     }
     clampAttributes();
 }
@@ -480,7 +540,8 @@ bool Bug::eatFromTray(uint64_t now, bool forceBite) {
     if (!forceBite && (!hungry || random(100) >= eatChance)) return false;
 
     foodAmount--;
-    hunger += 9;
+    modHunger((int8_t)FoodTypeInfo::hungerPerBite(trayFoodType));
+    deathTimerStart = 0;
     lastEatTime = now;
 
     // 实际属性增益

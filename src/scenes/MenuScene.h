@@ -21,6 +21,7 @@ private:
         FOOD,
         FIGHT,
         EXPLORE,
+        DEBUG,
     };
 
     Mode mode = Mode::MAIN;
@@ -39,19 +40,22 @@ private:
     static int lastFoodSelected;
     static int lastFightSelected;
     static int lastExploreSelected;
-    static constexpr int MAIN_ITEM_COUNT = 7;
-    static constexpr int BOX_ITEM_COUNT = 4;
-    static constexpr int WOOD_ITEM_COUNT = 6; // 5 种风格 + Back
+    static int lastDebugSelected;
+    static constexpr int MAIN_ITEM_COUNT = 8;
+    static constexpr int BOX_ITEM_COUNT = 6;
+    static constexpr int WOOD_ITEM_COUNT = 7; // None + 5 种风格 + Back
     static constexpr int BOWL_ITEM_COUNT = 4; // 3 种风格 + Back
     static constexpr int FOOD_ITEM_COUNT = 7;
     static constexpr int FIGHT_ITEM_COUNT = 4;
     static constexpr int EXPLORE_ITEM_COUNT = 5; // 4 locations + Back
+    static constexpr int DEBUG_ITEM_COUNT = 6; // 5 stages + Back
     static constexpr uint32_t FOOD_CONFIRM_MS = 250;
 
     void drawBattery();
     void drawList();
     void drawFightList();
     void drawExploreList();
+    void drawDebugList();
     void drawFoodLayout();
     void drawWoodLayout();
     void drawBowlLayout();
@@ -65,6 +69,19 @@ private:
     void showToast(const char* msg, uint32_t durationMs = 2000);
     void drawToast();
 
+    bool sleepConfirmActive = false;
+    bool sleepTransitionActive = false;
+    uint32_t sleepTransitionStartMs = 0;
+    uint8_t sleepTransitionBaseBrightness = 128;
+    static constexpr uint32_t SLEEP_FADE_MS = 500;
+    static constexpr uint32_t SLEEP_HOLD_MS = 500;
+    static constexpr uint32_t SLEEP_TRANSITION_MS = SLEEP_FADE_MS * 2 + SLEEP_HOLD_MS;
+    void drawSleepConfirm();
+    void drawSleepTransition();
+    void executeSleep();
+    void startSleepTransition();
+    uint8_t sleepTransitionBrightness(uint32_t elapsedMs) const;
+
     enum MenuItem {
         INFO = 0,
         FEED,
@@ -73,17 +90,21 @@ private:
         EXPLORE,
         SETTINGS,
         BACK,
+        DEBUG,
     };
 
     enum BoxItem {
-        BOX_WOOD = 0,
+        BOX_FOOD = 0,
+        BOX_WOOD,
         BOX_BOWL,
         BOX_BG,
+        BOX_SLEEP,
         BOX_BACK,
     };
 
     enum WoodItem {
-        WOOD_TWIG = 0,
+        WOOD_NONE = 0,
+        WOOD_TWIG,
         WOOD_STACK,
         WOOD_MOSSY,
         WOOD_PALE,
@@ -121,5 +142,14 @@ private:
         LOCATION_RIVERSIDE,
         LOCATION_OLD_WOODS,
         LOCATION_BACK,
+    };
+
+    enum DebugItem {
+        DEBUG_EGG = 0,
+        DEBUG_LARVA,
+        DEBUG_PUPA,
+        DEBUG_JUVENILE,
+        DEBUG_ADULT,
+        DEBUG_BACK,
     };
 };

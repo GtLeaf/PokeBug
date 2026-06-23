@@ -1,4 +1,5 @@
 #include "GameEngine.h"
+#include "UiStrings.h"
 #include "esp_sleep.h"
 #include "../scenes/TerrariumScene.h"
 #include "../scenes/MenuScene.h"
@@ -462,7 +463,7 @@ const char* GameEngine::getMainSceneBgName() const {
 }
 
 void GameEngine::setWoodStyle(uint8_t id) {
-    if (id >= WoodTypeInfo::COUNT) id = 0;
+    if (id != 0xFF && id >= WoodTypeInfo::COUNT) id = 0;
     woodStyle = id;
 }
 
@@ -472,6 +473,7 @@ void GameEngine::cycleWoodStyle() {
 }
 
 const char* GameEngine::getWoodStyleName() const {
+    if (woodStyle == 0xFF) return UiStrings::WOOD_NONE;
     return WoodTypeInfo::name((WoodType)woodStyle);
 }
 
@@ -666,8 +668,68 @@ bool GameEngine::isExploreLimitBypassed() {
 
 void GameEngine::recordExploreFinished() {
     if (exploreCountToday < EXPLORE_DAILY_LIMIT) exploreCountToday++;
+    gameNow += EXPLORE_FINISH_ADVANCE_MS;
+    bug.skipSimulationTime(EXPLORE_FINISH_ADVANCE_MS);
     syncExploreClock(false);
     forceSave();
+}
+
+bool GameEngine::canSleep() const {
+    if (bug.isDead()) return false;
+    static constexpr uint64_t HOUR_MS = 60ULL * 60 * 1000;
+    static constexpr uint64_t DAY_MS = 24ULL * HOUR_MS;
+    uint64_t hour = (gameNow % DAY_MS) / HOUR_MS;
+    // 主动睡眠窗口：20:00 到次日 04:59。
+    return hour >= 20 || hour < 5;
+}
+
+bool GameEngine::sleepUntilMorning() {
+    static constexpr uint64_t HOUR_MS = 60ULL * 60 * 1000;
+    static constexpr uint64_t DAY_MS = 24ULL * HOUR_MS;
+    static constexpr uint64_t MORNING_MS = 6ULL * HOUR_MS;
+    static constexpr uint8_t ACTIVE_SLEEP_MIN_HUNGER = 10;
+
+    if (!canSleep()) return false;
+
+    uint64_t msInDay = gameNow % DAY_MS;
+    uint64_t currentHour = msInDay / HOUR_MS;
+
+    uint64_t targetMs;
+    if (currentHour >= 20) {
+        // 20:00 后：推进到次日 06:00
+        targetMs = ((gameNow / DAY_MS) + 1) * DAY_MS + MORNING_MS;
+    } else if (currentHour < 5) {
+        // 凌晨：推进到当日 06:00
+        targetMs = (gameNow / DAY_MS) * DAY_MS + MORNING_MS;
+    } else {
+        return false;
+    }
+
+    if (targetMs <= gameNow) return false;
+
+    uint64_t delta = targetMs - gameNow;
+    gameNow = targetMs;
+
+    // 推进期间每 10 分钟更新一次甲虫，避免单次 delta 过大导致饥饿计算溢出。
+    // 玩家选择睡到早晨时，甲虫也视为睡眠状态：饥饿下降更慢，低饥饿会自动吃盘中食物。
+    static constexpr uint64_t UPDATE_STEP_MS = 10ULL * 60 * 1000;
+    uint64_t updated = 0;
+    bug.ensureMinHunger(ACTIVE_SLEEP_MIN_HUNGER);
+    bug.setSleeping(true);
+    while (updated + UPDATE_STEP_MS < delta) {
+        updated += UPDATE_STEP_MS;
+        bug.update(gameNow - delta + updated);
+        bug.ensureMinHunger(ACTIVE_SLEEP_MIN_HUNGER);  // 主动睡眠不会把 HUN 压到濒死值
+    }
+    bug.update(gameNow);
+    bug.setSleeping(false);
+    bug.ensureMinHunger(ACTIVE_SLEEP_MIN_HUNGER);
+
+    syncExploreClock(true);
+    forceSave();
+
+    Serial.printf("[Engine] Sleep until morning: delta=%llums, gameNow=%llu\n", delta, gameNow);
+    return true;
 }
 
 uint32_t GameEngine::getIdleTimeoutMs() const {
