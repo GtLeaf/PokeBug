@@ -42,6 +42,32 @@ struct NpcBattleResult {
     bool spiBoosted = false;
 };
 
+// 培养缸主界面的运行时表现状态。随场景切换保留，不写入 NVS 存档。
+struct TerrariumViewState {
+    bool valid = false;
+    int bugX = 120;
+    int bugY = 80;
+    uint32_t animFrame = 0;
+    uint8_t adultState = 0;
+    bool faceRight = true;
+    bool turnTargetFaceRight = true;
+    bool walkAfterTurn = false;
+    bool slideAfterTurn = false;
+    bool climbAfterTurn = false;
+    uint8_t turnFrameIndex = 0;
+    int targetX = 120;
+    int slideTargetX = 120;
+    int climbTargetX = 120;
+    bool tiltHighSideIsRight = true;
+    uint32_t stateTimer = 0;
+    uint32_t stateDuration = 0;
+    uint8_t eatFrameInterval = 0;
+    uint8_t eatBitesThisSession = 0;
+    uint32_t restResumeAllowedMs = 0;
+    uint32_t foodRefillGraceUntilMs = 0;
+    uint32_t alertUntilMs = 0;
+};
+
 // 游戏引擎 — 主循环 + 场景调度
 class GameEngine {
 public:
@@ -76,6 +102,14 @@ public:
     // 强制保存
     void forceSave();
 
+    // 培养缸场景表现状态（进出菜单时恢复位置/朝向/动作）
+    const TerrariumViewState& getTerrariumViewState() const { return terrariumViewState; }
+    void saveTerrariumViewState(const TerrariumViewState& state) {
+        terrariumViewState = state;
+        terrariumViewState.valid = true;
+    }
+    void clearTerrariumViewState() { terrariumViewState = TerrariumViewState(); }
+
     // 游戏速度（0.5 / 1 / 2 / 4 / 8… 影响虚拟时间）
     float getGameSpeed() const { return gameSpeed; }
     void setGameSpeed(float speed) { gameSpeed = speed; }
@@ -84,12 +118,12 @@ public:
     uint64_t getGameNow() const { return gameNow; }
     void resetGameNow() { gameNow = 0; }
 
-    // 昼夜判断：20:00 - 次日 06:00 为夜间
+    // 昼夜判断：19:00 - 次日 05:00 为夜间，与探索 Evening 时段保持一致。
     bool isNight() const {
         static constexpr uint64_t HOUR_MS = 60ULL * 60 * 1000;
         static constexpr uint64_t DAY_MS = 24ULL * HOUR_MS;
         uint64_t hour = (gameNow % DAY_MS) / HOUR_MS;
-        return hour >= 20 || hour < 6;
+        return hour >= 19 || hour < 5;
     }
 
     // 全局字体缩放
@@ -106,7 +140,9 @@ public:
         BG_MOSS = 0,
         BG_BEGINNER = 1,
         BG_CHILD_ROOM = 2,
-        BG_COUNT = 3,
+        BG_ENTOMOLOGIST = 3,
+        BG_SCHOOL = 4,
+        BG_COUNT = 5,
     };
     uint8_t getMainSceneBg() const { return mainSceneBg; }
     void setMainSceneBg(uint8_t id);
@@ -197,6 +233,7 @@ public:
 
     // 当前是否在探索/对战/杯赛等不可进入 Deep Sleep 的场景
     bool isBlockDeepSleepScene() const;
+    bool isGameTimePausedScene() const;
 
 private:
     GameEngine() = default;
@@ -220,6 +257,7 @@ private:
     SystemState systemState = SystemState::ACTIVE;
 
     Bug bug;
+    TerrariumViewState terrariumViewState;
     uint32_t lastSaveTime = 0;
 
     float gameSpeed = 1.0f;

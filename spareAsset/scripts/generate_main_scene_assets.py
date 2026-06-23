@@ -11,11 +11,12 @@ PREVIEWS = ROOT / "spareAsset/previews/mainScene"
 GENERATED = ROOT / "spareAsset/generated/src_assets"
 
 SOURCES = [
-    ("MOSS_BG", ROOT / "asset/mainScene/box/moss/bg_moss.png", 200, 120),
-    ("MOSS_GROUND", ROOT / "asset/mainScene/box/moss/ground_moss.png", 200, 15),
-    ("MOSS_STATE", ROOT / "asset/mainScene/box/moss/state_moss.png", 40, 135),
-    ("BEGINNER_FULL", ROOT / "asset/mainScene/box/beginnerBox/bg_full_beginner.png", 240, 135),
-    ("CHILD_ROOM_FULL", ROOT / "asset/mainScene/box/childRoom/child_room.png", 240, 135),
+    ("ROOM_FULL", ROOT / "spareAsset/origin/bg/room.png", 240, 135),
+    ("GIRL_ROOM_FULL", ROOT / "spareAsset/origin/bg/room_girl.png", 240, 135),
+    ("BOY_ROOM_FULL", ROOT / "spareAsset/origin/bg/boy_room.png", 240, 135),
+    ("ENTOMOLOGIST_ROOM_FULL", ROOT / "spareAsset/origin/bg/entomologist_room.png", 240, 135),
+    ("SCHOOL_DAY_FULL", ROOT / "spareAsset/origin/bg/school/school_day.png", 240, 135),
+    ("SCHOOL_NIGHT_FULL", ROOT / "spareAsset/origin/bg/school/school_night.png", 240, 135),
 ]
 
 

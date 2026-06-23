@@ -74,7 +74,7 @@ struct __attribute__((packed)) battle_round_t {
     uint8_t client_hp;      // 从机本回合后 HP
     uint8_t host_mot;       // 主机本回合后 MOT
     uint8_t client_mot;     // 从机本回合后 MOT
-    uint8_t crits;          // bit0=主机暴击, bit1=从机暴击, bit2=主机攻击被闪避, bit3=从机攻击被闪避
+    uint8_t crits;          // bit0=主机暴击, bit1=从机暴击, bit2=主机攻击被闪避, bit3=从机攻击被闪避, bit4=主机先手
 };
 
 // 结算包 2 bytes

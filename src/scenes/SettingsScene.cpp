@@ -18,6 +18,7 @@ bool SettingsScene::onButton(const ButtonEvent& ev) {
         if (ev.btn == 0 && ev.action == BtnAction::PRESSED) {
             SaveManager::ins().clear();
             GameEngine::ins().getBug().initNew(0);
+            GameEngine::ins().clearTerrariumViewState();
             GameEngine::ins().resetGameNow();
             GameEngine::ins().setGameSpeed(1.0f);
             GameEngine::ins().setIdleTimeoutIndex(0);

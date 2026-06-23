@@ -9,7 +9,6 @@
 bool ExploreScene::sSessionActive = false;
 uint8_t ExploreScene::sCurrentRound = 1;
 int ExploreScene::sTotalSapGain = 0;
-int ExploreScene::sTotalWoodGain = 0;
 bool ExploreScene::sFinalRecorded = false;
 
 namespace {
@@ -143,7 +142,6 @@ void ExploreScene::onExit() {
 void ExploreScene::startNewSession() {
     currentRound = 1;
     totalSapGain = 0;
-    totalWoodGain = 0;
     finalRecorded = false;
     saveSession();
 }
@@ -155,7 +153,6 @@ void ExploreScene::restoreSession() {
     }
     currentRound = sCurrentRound;
     totalSapGain = sTotalSapGain;
-    totalWoodGain = sTotalWoodGain;
     finalRecorded = sFinalRecorded;
 }
 
@@ -163,7 +160,6 @@ void ExploreScene::saveSession() {
     sSessionActive = true;
     sCurrentRound = currentRound;
     sTotalSapGain = totalSapGain;
-    sTotalWoodGain = totalWoodGain;
     sFinalRecorded = finalRecorded;
 }
 
@@ -171,7 +167,6 @@ void ExploreScene::clearSession() {
     sSessionActive = false;
     sCurrentRound = 1;
     sTotalSapGain = 0;
-    sTotalWoodGain = 0;
     sFinalRecorded = false;
 }
 
@@ -290,15 +285,9 @@ void ExploreScene::applyEventReward(bool flee) {
             snprintf(resultLine1, sizeof(resultLine1), UiStrings::EXPLORE_FOOD_SOURCE_PLUS, eventValue);
             break;
         case EventType::WOOD:
-            if (bug.getRottenWood() == 0 && !bug.isWoodPlaced()) {
-                bug.addRottenWood(1);
-                totalWoodGain += 1;
-                snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_ROTTEN_WOOD_PLUS);
-            } else {
-                bug.addFood(FoodType::DROP, 1);
-                totalSapGain += 1;
-                snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_WOOD_FULL_SAP);
-            }
+            bug.addFood(FoodType::DROP, 2);
+            totalSapGain += 2;
+            snprintf(resultLine1, sizeof(resultLine1), UiStrings::EXPLORE_SAP_PLUS, 2);
             break;
         case EventType::RARE: {
             uint8_t location = GameEngine::ins().getExploreLocation();
@@ -309,10 +298,6 @@ void ExploreScene::applyEventReward(bool flee) {
             auto addSap = [&](uint8_t amount) {
                 bug.addFood(FoodType::DROP, amount);
                 totalSapGain += amount;
-            };
-            auto addWood = [&](uint8_t amount) {
-                bug.addRottenWood(amount);
-                totalWoodGain += amount;
             };
             auto addStat = [&](float siz, float str, float end, float spd, float spi, const char* text) {
                 bug.addTrainingBonus(siz, str, end, spd, spi);
@@ -357,7 +342,6 @@ void ExploreScene::applyEventReward(bool flee) {
                 case GameEngine::EXPLORE_BACK_HILL:
                     switch (rareSubType) {
                         case 0:
-                            addWood(1);
                             addSap(1);
                             snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_SUN_BARK);
                             break;
@@ -370,7 +354,6 @@ void ExploreScene::applyEventReward(bool flee) {
                             snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_PINECONE);
                             break;
                         case 3:
-                            addWood(1);
                             addSap(2);
                             snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_CRACKED_STUMP);
                             break;
@@ -390,7 +373,6 @@ void ExploreScene::applyEventReward(bool flee) {
                     switch (rareSubType) {
                         case 0:
                             addSap(2);
-                            addWood(1);
                             snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_MOSS_CARPET);
                             break;
                         case 1:
@@ -404,13 +386,11 @@ void ExploreScene::applyEventReward(bool flee) {
                             break;
                         case 3:
                             addSap(3);
-                            addWood(1);
                             addStat(0.0f, 0.0f, 0.2f, 0.0f, 0.0f, "END +0.2");
                             snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_FAIRY_RING);
                             break;
                         case 4:
                             addSap(2);
-                            addWood(1);
                             snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_DRIFTWOOD);
                             break;
                         case 5:
@@ -431,12 +411,10 @@ void ExploreScene::applyEventReward(bool flee) {
                             break;
                         case 1:
                             addSap(2);
-                            addWood(1);
                             snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_DEER_MUSHROOM);
                             break;
                         case 2:
                             addSap(3);
-                            addWood(1);
                             snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_DEADWOOD_BEETLES);
                             break;
                         case 3:
@@ -445,14 +423,12 @@ void ExploreScene::applyEventReward(bool flee) {
                             break;
                         case 4:
                             addSap(2);
-                            addWood(1);
                             addStat(0.0f, 0.2f, 0.0f, 0.0f, 0.0f, "STR +0.2");
                             snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_HEART_OF_ROT);
                             break;
                         case 5:
                         default:
                             addSap(6);
-                            addWood(1);
                             addStat(0.0f, 0.0f, 0.0f, 0.0f, 0.3f, UiStrings::EXPLORE_SPI_PLUS);
                             snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_OLD_PHANTOM);
                             break;
@@ -489,8 +465,6 @@ void ExploreScene::enterFinalSummary(const char* line1, const char* line2) {
     snprintf(resultLine1, sizeof(resultLine1), "%s", line1 ? line1 : UiStrings::EXPLORE_COMPLETE);
     if (line2) {
         snprintf(resultLine2, sizeof(resultLine2), "%s", line2);
-    } else if (totalWoodGain > 0) {
-        snprintf(resultLine2, sizeof(resultLine2), "Sap +%d Wood +%d", totalSapGain, totalWoodGain);
     } else {
         snprintf(resultLine2, sizeof(resultLine2), "Sap +%d", totalSapGain);
     }
@@ -514,12 +488,11 @@ void ExploreScene::applyNpcBattleResult(const NpcBattleResult& res) {
             case NpcData::Tier::ROOKIE:  sap = 1; break;
             case NpcData::Tier::NORMAL:  sap = random(1, 3); break;
             case NpcData::Tier::VETERAN: sap = random(2, 4); break;
-            case NpcData::Tier::LEGEND:  sap = random(3, 6); bug.addRottenWood(1); break;
+            case NpcData::Tier::LEGEND:  sap = random(3, 6); break;
             default: break;
         }
         bug.addFood(FoodType::DROP, sap);
         totalSapGain += sap;
-        if (res.tier == NpcData::Tier::LEGEND) totalWoodGain += 1;
         snprintf(resultLine1, sizeof(resultLine1), UiStrings::EXPLORE_VICTORY_SAP, sap);
         if (res.spiBoosted) {
             snprintf(resultLine2, sizeof(resultLine2), "%s", UiStrings::EXPLORE_SPI_PLUS);

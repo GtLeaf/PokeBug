@@ -22,6 +22,14 @@ uint16_t temperamentColor(Temperament temperament) {
     return PixelRenderer::WHITE;
 }
 
+uint16_t potentialColor(uint8_t cap) {
+    if (cap <= 10) return PixelRenderer::GRAY;                 // Low
+    if (cap <= 13) return PixelRenderer::WHITE;                // Common
+    if (cap <= 16) return PixelRenderer::rgb565(80, 150, 255); // Rare
+    if (cap <= 19) return PixelRenderer::rgb565(163, 53, 238); // Epic
+    return PixelRenderer::ORANGE;                              // Legendary
+}
+
 }
 
 void InfoScene::onEnter() {
@@ -158,7 +166,8 @@ void InfoScene::renderAttributes() {
     if (barW < 40) barW = 40;
 
     for (int i = 0; i < 5; i++) {
-        PixelRenderer::drawPixelText(marginX, y, attrs[i].name, PixelRenderer::WHITE, fs);
+        uint16_t color = potentialColor(attrs[i].cap);
+        PixelRenderer::drawPixelText(marginX, y, attrs[i].name, color, fs);
 
         float ratio = attrs[i].cap == 0 ? 0.0f : attrs[i].val / attrs[i].cap;
         if (ratio > 1.0f) ratio = 1.0f;
@@ -168,7 +177,7 @@ void InfoScene::renderAttributes() {
 
         snprintf(buf, sizeof(buf), "%d", (int)roundf(attrs[i].val));
         int valW = canvas.textWidth(buf);
-        PixelRenderer::drawPixelText(valueRight - valW, y, buf, PixelRenderer::WHITE, fs);
+        PixelRenderer::drawPixelText(valueRight - valW, y, buf, color, fs);
         y += rowStep;
     }
 }

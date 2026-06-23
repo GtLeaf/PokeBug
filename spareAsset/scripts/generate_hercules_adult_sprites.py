@@ -8,6 +8,8 @@ from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "asset/mainScene/beetle/hercules/adult"
+ORIGIN = ROOT / "spareAsset/origin/beetle/hercules/adult"
+ATTACK_ORIGIN = ROOT / "spareAsset/origin/attack"
 OUT_H = ROOT / "src/assets/HerculesAdultSprites.h"
 OUT_CPP = ROOT / "src/assets/HerculesAdultSprites.cpp"
 SPARE = ROOT / "spareAsset"
@@ -16,47 +18,59 @@ PREVIEWS = SPARE / "previews/beetle/hercules/adult"
 GENERATED = SPARE / "generated/src_assets"
 
 ACTION_SOURCES = [
-    # kind="frames_dir" reads one PNG per frame from spareAsset/extracted.
-    # To switch WALK back to the original sheet, change this entry to:
-    # {"name": "WALK", "kind": "sheet", "file": "walk.png"}
-    {"name": "WALK", "kind": "frames_dir", "dir": EXTRACTED / "walk"},
-    {"name": "EAT", "kind": "sheet", "file": "eat.png"},
-    {"name": "TURN", "kind": "sheet", "file": "turn.png"},
-    {"name": "THREATEN", "kind": "sheet", "file": "threaten.png"},
-    {"name": "RESET", "kind": "sheet", "file": "reset.png"},
+    # kind="frames_dir" reads one PNG per frame. New walk/eat/sleep source
+    # frames live under spareAsset/origin so future replacement only needs
+    # swapping those PNGs and rerunning this script.
+    {"name": "WALK", "kind": "frames_dir", "dir": ORIGIN / "walk"},
+    {"name": "EAT", "kind": "frames_dir", "dir": ORIGIN / "eat"},
+    {"name": "SLEEP_GETDOWN", "kind": "frames_dir", "dir": ORIGIN / "sleep/getDown", "scale_group": "SLEEP"},
+    {"name": "SLEEP_BREATH", "kind": "frames_dir", "dir": ORIGIN / "sleep/breath", "scale_group": "SLEEP"},
+    {"name": "TURN", "kind": "frames_dir", "dir": ORIGIN / "turn"},
+    {"name": "THREATEN", "kind": "frames_dir", "dir": ORIGIN / "threaten"},
+    {"name": "ATTACK_DOWN", "kind": "frames_dir", "dir": ATTACK_ORIGIN / "down", "scale_group": "ATTACK"},
+    {"name": "ATTACK_UP", "kind": "frames_dir", "dir": ATTACK_ORIGIN / "up", "scale_group": "ATTACK"},
+    {"name": "RESET", "kind": "frames_dir", "dir": ORIGIN / "sleep/breath", "frame_indices": [2], "scale_group": "SLEEP"},
 ]
 
 ACTION_NAMES = [source["name"] for source in ACTION_SOURCES]
 
 # Size policy.
 #
-# Change ADULT_BASE_SCALE to resize every adult action together while keeping
-# each action's relative proportions. For example:
-#   ADULT_BASE_SCALE = 1.10  # all adult sprites become 10% larger
-#   ADULT_BASE_SCALE = 0.90  # all adult sprites become 10% smaller
+# Usage for future size tuning:
+# 1. Change ADULT_BASE_SCALE to resize every adult action together while keeping
+#    each action's relative proportions. Example:
+#       ADULT_BASE_SCALE = 1.10  # all adult sprites become 10% larger
+#       ADULT_BASE_SCALE = 0.90  # all adult sprites become 10% smaller
+# 2. Keep ADULT_RUNTIME_MAX_SCALE in sync with Bug::getAdultScale() max value.
+#    The script exports terrarium movement bounds for that worst-case size.
+# 3. Rerun:
+#       python3 spareAsset/scripts/generate_hercules_adult_sprites.py
+#    Then build with:
+#       pio run
 #
 # BASE_POLICY stores the current hand-tuned visual targets at 1.0x. These
 # numbers are based on WALK as the body-size reference; do not make every frame
 # independently fill the canvas, or low/raised poses will look like different
 # sized beetles.
-ADULT_BASE_SCALE = 1.2
+ADULT_BASE_SCALE = 1.44
+ADULT_RUNTIME_MAX_SCALE = 1.20
+SCREEN_WIDTH = 240
 
 BASE_POLICY = {
     "WALK": {"max_w": 48, "max_h": 28},
     "EAT": {"max_w": 50, "max_h": 22},
+    "SLEEP_GETDOWN": {"max_w": 50, "max_h": 24},
+    "SLEEP_BREATH": {"max_w": 50, "max_h": 24},
     "TURN": {"max_w": 34, "max_h": 30},
     # Threaten is body-scale driven: long/raised poses may use more height,
     # but all three frames keep a comparable body width.
-    "THREATEN": {"max_w": 58, "max_h": 40},
-    "RESET": {"max_w": 44, "max_h": 22},
-}
-
-POLICY = {
-    name: {
-        "max_w": max(1, round(value["max_w"] * ADULT_BASE_SCALE)),
-        "max_h": max(1, round(value["max_h"] * ADULT_BASE_SCALE)),
-    }
-    for name, value in BASE_POLICY.items()
+    "THREATEN": {"max_w": 50, "max_h": 40},
+    # Battle attack frames are generated from large transparent source frames.
+    # Keep down/up in one scale group so the wind-up and upward horn lift read
+    # as one continuous body size.
+    "ATTACK_DOWN": {"max_w": 54, "max_h": 34},
+    "ATTACK_UP": {"max_w": 54, "max_h": 34},
+    "RESET": {"max_w": 50, "max_h": 24},
 }
 
 # Palette replacement key written into generated RLE.
@@ -167,6 +181,25 @@ def image_data(img):
     return getter() if getter else img.getdata()
 
 
+def make_scaled_policy(base_scale):
+    return {
+        name: {
+            "max_w": max(1, round(value["max_w"] * base_scale)),
+            "max_h": max(1, round(value["max_h"] * base_scale)),
+        }
+        for name, value in BASE_POLICY.items()
+    }
+
+
+def terrarium_bounds(max_frame_w):
+    half_width = max(1, round(max_frame_w * ADULT_RUNTIME_MAX_SCALE / 2))
+    return {
+        "half_width": half_width,
+        "min_x": half_width,
+        "max_x": SCREEN_WIDTH - half_width,
+    }
+
+
 def visible_bbox(mask):
     minx = miny = None
     maxx = maxy = 0
@@ -204,12 +237,15 @@ def apply_palette_key(img, class_img):
     return keyed
 
 
-def build_frame(name, frame_index, raw_crop, raw_classes, source_label):
-    policy = POLICY[name]
+def source_path(filename):
+    path = Path(filename)
+    return path if path.is_absolute() else SRC / path
+
+
+def build_frame(name, frame_index, raw_crop, raw_classes, source_label, scale):
     bbox = raw_crop.getbbox()
     crop = raw_crop.crop(bbox) if bbox else Image.new("RGBA", (1, 1), (0, 0, 0, 0))
     class_crop = raw_classes.crop(bbox) if bbox else Image.new("L", (1, 1), CLASS_NONE)
-    scale = min(policy["max_w"] / crop.width, policy["max_h"] / crop.height)
     resized = crop.resize(
         (max(1, round(crop.width * scale)), max(1, round(crop.height * scale))),
         Image.Resampling.LANCZOS,
@@ -223,28 +259,29 @@ def build_frame(name, frame_index, raw_crop, raw_classes, source_label):
     palette_pixels = sum(1 for v in image_data(resized_classes) if v == CLASS_PALETTE)
     print(
         f"{name.lower()}_{frame_index}: {source_label} {crop.width}x{crop.height} -> "
-        f"{keyed.width}x{keyed.height} palette_pixels={palette_pixels}"
+        f"{keyed.width}x{keyed.height} scale={scale:.5f} palette_pixels={palette_pixels}"
     )
     return keyed
 
 
-def make_frames_from_sheet(name, filename):
-    im, classes, comps = components(SRC / filename)
+def raw_frames_from_sheet(filename):
+    path = source_path(filename)
+    im, classes, comps = components(path)
     frames = []
     for i, (x1, y1, x2, y2) in enumerate(comps):
         raw_crop = im.crop((x1, y1, x2, y2))
         raw_classes = classes.crop((x1, y1, x2, y2))
-        frames.append(build_frame(name, i, raw_crop, raw_classes, filename))
+        frames.append((raw_crop, raw_classes, path.name))
     return frames
 
 
-def make_frames_from_dir(name, frames_dir):
+def raw_frames_from_dir(frames_dir):
     files = sorted(frames_dir.glob("*.png"), key=natural_key)
     if not files:
         raise FileNotFoundError(f"No PNG frames found in {frames_dir}")
 
     frames = []
-    for i, path in enumerate(files):
+    for path in files:
         im, mask, classes = transparentized(path)
         bbox = visible_bbox(mask)
         if bbox:
@@ -253,18 +290,55 @@ def make_frames_from_dir(name, frames_dir):
         else:
             raw_crop = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
             raw_classes = Image.new("L", (1, 1), CLASS_NONE)
-        frames.append(build_frame(name, i, raw_crop, raw_classes, path.name))
+        frames.append((raw_crop, raw_classes, path.name))
     return frames
 
 
-def make_frames(source):
-    name = source["name"]
+def make_raw_frames(source):
     kind = source["kind"]
     if kind == "sheet":
-        return make_frames_from_sheet(name, source["file"])
+        return raw_frames_from_sheet(source["file"])
     if kind == "frames_dir":
-        return make_frames_from_dir(name, source["dir"])
+        frames = raw_frames_from_dir(source["dir"])
+        if "frame_indices" in source:
+            picked = []
+            for idx in source["frame_indices"]:
+                if idx < 0 or idx >= len(frames):
+                    raise IndexError(f"Frame index {idx} out of range for {source['dir']}")
+                picked.append(frames[idx])
+            return picked
+        return frames
     raise ValueError(f"Unsupported action source kind: {kind}")
+
+
+def scale_group(source):
+    return source.get("scale_group", source["name"])
+
+
+def compute_group_scales(raw_sets, policy):
+    group_scales = {}
+    for source in ACTION_SOURCES:
+        name = source["name"]
+        group = scale_group(source)
+        size_policy = policy[name]
+        for raw_crop, _raw_classes, _source_label in raw_sets[name]:
+            bbox = raw_crop.getbbox()
+            crop = raw_crop.crop(bbox) if bbox else Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+            frame_scale = min(size_policy["max_w"] / crop.width, size_policy["max_h"] / crop.height)
+            if group not in group_scales:
+                group_scales[group] = frame_scale
+            else:
+                group_scales[group] = min(group_scales[group], frame_scale)
+    return group_scales
+
+
+def make_frames(source, raw_sets, group_scales):
+    name = source["name"]
+    scale = group_scales[scale_group(source)]
+    return [
+        build_frame(name, i, raw_crop, raw_classes, source_label, scale)
+        for i, (raw_crop, raw_classes, source_label) in enumerate(raw_sets[name])
+    ]
 
 
 def encode(img):
@@ -326,6 +400,15 @@ def write_preview(all_sets):
 def write_outputs(all_sets):
     max_w = max(fr.width for frames in all_sets.values() for fr in frames)
     max_h = max(fr.height for frames in all_sets.values() for fr in frames)
+    if max_w > 255 or max_h > 255:
+        raise ValueError(f"Frame metadata uses uint8_t; generated max frame {max_w}x{max_h} is too large")
+    bounds = terrarium_bounds(max_w)
+    externs = []
+    for name in ACTION_NAMES:
+        externs.append(f"extern const uint8_t {name}_FRAME_COUNT;")
+        externs.append(f"extern const RleFrame {name}_FRAMES[] PROGMEM;")
+        externs.append(f"extern const uint16_t {name}_RLE[] PROGMEM;")
+        externs.append("")
     OUT_H.write_text(
         f"""#pragma once
 #include <Arduino.h>
@@ -333,8 +416,13 @@ def write_outputs(all_sets):
 
 namespace HerculesAdultSprites {{
 
-static constexpr uint8_t MAX_FRAME_W = {max_w};
-static constexpr uint8_t MAX_FRAME_H = {max_h};
+static constexpr uint16_t MAX_FRAME_W = {max_w};
+static constexpr uint16_t MAX_FRAME_H = {max_h};
+static constexpr uint8_t BASE_SCALE_PERCENT = {round(ADULT_BASE_SCALE * 100)};
+static constexpr uint8_t RUNTIME_MAX_SCALE_PERCENT = {round(ADULT_RUNTIME_MAX_SCALE * 100)};
+static constexpr uint8_t TERRARIUM_EDGE_HALF_W = {bounds["half_width"]};
+static constexpr uint8_t TERRARIUM_MIN_X = {bounds["min_x"]};
+static constexpr uint8_t TERRARIUM_MAX_X = {bounds["max_x"]};
 
 static constexpr uint16_t PALETTE_KEY = 0xF800;
 
@@ -345,25 +433,7 @@ struct RleFrame {{
     uint8_t height;
 }};
 
-extern const uint8_t WALK_FRAME_COUNT;
-extern const RleFrame WALK_FRAMES[] PROGMEM;
-extern const uint16_t WALK_RLE[] PROGMEM;
-
-extern const uint8_t EAT_FRAME_COUNT;
-extern const RleFrame EAT_FRAMES[] PROGMEM;
-extern const uint16_t EAT_RLE[] PROGMEM;
-
-extern const uint8_t TURN_FRAME_COUNT;
-extern const RleFrame TURN_FRAMES[] PROGMEM;
-extern const uint16_t TURN_RLE[] PROGMEM;
-
-extern const uint8_t THREATEN_FRAME_COUNT;
-extern const RleFrame THREATEN_FRAMES[] PROGMEM;
-extern const uint16_t THREATEN_RLE[] PROGMEM;
-
-extern const uint8_t RESET_FRAME_COUNT;
-extern const RleFrame RESET_FRAMES[] PROGMEM;
-extern const uint16_t RESET_RLE[] PROGMEM;
+{chr(10).join(externs)}
 
 }}
 """,
@@ -397,16 +467,26 @@ def main():
     EXTRACTED.mkdir(parents=True, exist_ok=True)
     PREVIEWS.mkdir(parents=True, exist_ok=True)
     GENERATED.mkdir(parents=True, exist_ok=True)
+    policy = make_scaled_policy(ADULT_BASE_SCALE)
     print(f"ADULT_BASE_SCALE={ADULT_BASE_SCALE:.2f}")
-    print(f"POLICY={POLICY}")
-    all_sets = {source["name"]: make_frames(source) for source in ACTION_SOURCES}
+    print(f"ADULT_RUNTIME_MAX_SCALE={ADULT_RUNTIME_MAX_SCALE:.2f}")
+    print(f"POLICY={policy}")
+    raw_sets = {source["name"]: make_raw_frames(source) for source in ACTION_SOURCES}
+    group_scales = compute_group_scales(raw_sets, policy)
+    print(f"GROUP_SCALES={group_scales}")
+    all_sets = {source["name"]: make_frames(source, raw_sets, group_scales) for source in ACTION_SOURCES}
     write_preview(all_sets)
     write_outputs(all_sets)
     (GENERATED / OUT_H.name).write_text(OUT_H.read_text(encoding="utf-8"), encoding="utf-8")
     (GENERATED / OUT_CPP.name).write_text(OUT_CPP.read_text(encoding="utf-8"), encoding="utf-8")
     max_w = max(fr.width for frames in all_sets.values() for fr in frames)
     max_h = max(fr.height for frames in all_sets.values() for fr in frames)
-    print(f"MAX_FRAME={max_w}x{max_h}, GIANT_1.2_HALF_WIDTH={round(max_w * 1.2 / 2)}")
+    bounds = terrarium_bounds(max_w)
+    print(
+        f"MAX_FRAME={max_w}x{max_h}, "
+        f"RUNTIME_MAX_HALF_WIDTH={bounds['half_width']}, "
+        f"TERRARIUM_X={bounds['min_x']}..{bounds['max_x']}"
+    )
 
 
 if __name__ == "__main__":

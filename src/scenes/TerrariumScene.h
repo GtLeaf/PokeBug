@@ -3,6 +3,7 @@
 #include "../hardware/PixelRenderer.h"
 #include "../game/Bug.h"
 #include "../game/BugMind.h"
+#include "../assets/HerculesAdultSprites.h"
 
 // 成虫行为状态
 enum class AdultState {
@@ -58,6 +59,7 @@ private:
     uint8_t eatFrameInterval = 0; // EAT 动画每帧持续帧数
     uint8_t eatBitesThisSession = 0;
     uint32_t restResumeAllowedMs = 0; // 允许重新进入夜间休息的时间戳
+    uint32_t foodRefillGraceUntilMs = 0; // 刚吃空但仍饿时，等待玩家补食的时间窗
     uint32_t alertUntilMs = 0;        // 被戳后的警戒结束时间
     uint32_t lastShakeNotifyMs = 0;   // 上次 shake 通知心智的时间
     BugMind mind;
@@ -67,8 +69,8 @@ private:
     static constexpr int WOOD_REST_X = 154; // 腐木上的休息位置（腐木中心）
     static constexpr uint32_t REST_WAKEUP_COOLDOWN_MIN_MS = 10000; // 唤醒后清醒最短时间 10s
     static constexpr uint32_t REST_WAKEUP_COOLDOWN_MAX_MS = 30000; // 唤醒后清醒最长时间 30s
-    static constexpr int MIN_X = 35;       // 左边界，预留巨体最大缩放半宽
-    static constexpr int MAX_X = 198;      // 右边界，右上角 HUD 不再占用整条活动区
+    static constexpr int MIN_X = HerculesAdultSprites::TERRARIUM_MIN_X; // 由成虫生成脚本按最大巨体尺寸导出
+    static constexpr int MAX_X = HerculesAdultSprites::TERRARIUM_MAX_X; // 由成虫生成脚本按最大巨体尺寸导出
     static constexpr uint32_t TURN_DURATION_FRAMES = 16;  // 20fps 下约 0.8 秒
     static constexpr uint32_t EAT_DURATION_MIN_FRAMES = 180; // 20fps 下约 9 秒，覆盖多口连续进食
     static constexpr uint32_t EAT_DURATION_MAX_FRAMES = 260; // 20fps 下约 13 秒，足够吃完一份食物
@@ -76,6 +78,9 @@ private:
     static constexpr uint8_t EAT_FRAME_INTERVAL_MIN = 6;     // 20fps 下约 0.3 秒
     static constexpr uint8_t EAT_FRAME_INTERVAL_MAX = 10;    // 20fps 下约 0.5 秒
     static constexpr uint8_t EAT_CONTINUE_HUNGER = 80;
+    static constexpr uint32_t FOOD_REFILL_GRACE_MS = 3000;
+    static constexpr uint8_t REST_GETDOWN_FRAME_INTERVAL = 8; // 入睡动作每帧约 0.4 秒
+    static constexpr uint8_t REST_BREATH_FRAME_INTERVAL = 18; // 睡眠呼吸慢循环
     static constexpr uint16_t IDLE_LOOK_AROUND_CHANCE_PER_1000 = 3;
     static constexpr uint32_t ALERT_MIN_MS = 8000;
     static constexpr uint32_t ALERT_MAX_MS = 16000;
@@ -93,6 +98,7 @@ private:
     void drawWood();
     void drawStatusBar();
     void drawDeathScreen();
+    void resetLocalViewState();
 
     void drawEgg(int x, int y, uint8_t palette);
     void drawLarva(int x, int y, uint8_t palette);
@@ -127,7 +133,8 @@ private:
     bool pokeReactionWasPoked = false;
     static constexpr uint32_t THREATEN_PLAY_MS = 400;   // threaten 动画播放时长
     static constexpr uint32_t THREATEN_HOLD_MS = 2500;  // 最后一帧保持时长
-    static constexpr uint32_t POKE_REACTION_MS = THREATEN_PLAY_MS + THREATEN_HOLD_MS;
+    static constexpr uint32_t THREATEN_RETURN_MS = 300; // 结束前反向播放，避免直接跳回站姿
+    static constexpr uint32_t POKE_REACTION_MS = THREATEN_PLAY_MS + THREATEN_HOLD_MS + THREATEN_RETURN_MS;
     bool pokeFingerFromRight = false;
     uint8_t pokeFingerFrameIndex = 0;
     int8_t pokeFingerYOffset = 0;

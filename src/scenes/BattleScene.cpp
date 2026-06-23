@@ -4,12 +4,24 @@
 #include "../hardware/Hal.h"
 #include "../hardware/PixelRenderer.h"
 #include "../game/BattleCalc.h"
+#include "../assets/HerculesAdultSprites.h"
 
 static uint8_t battleStatWithHunger(float value, uint8_t hunger) {
     int stat = (int)roundf(value);
     if (hunger < 10) stat -= 2;
     if (stat < 1) stat = 1;
     return (uint8_t)stat;
+}
+
+static uint16_t battlePaletteColor(uint8_t palette) {
+    switch (palette & 0x03) {
+        case 1: return 0x07E0; // green
+        case 2: return 0xFE00; // gold
+        case 3: return 0xE71C; // pale violet
+        case 0:
+        default:
+            return 0xF800;     // red
+    }
 }
 
 static float rollNpcBattleSpiReward(bool win, NpcData::Tier tier) {
@@ -36,7 +48,7 @@ static float rollNpcBattleSpiReward(bool win, NpcData::Tier tier) {
     }
 
     if ((uint8_t)random(100) >= chance) return 0.0f;
-    return (float)random(minTenths, maxTenths + 1) * 0.1f;
+    return (float)random(minTenths, maxTenths + 1) * 0.15f;
 }
 
 void BattleScene::onEnter() {
@@ -53,6 +65,12 @@ void BattleScene::onEnter() {
     hasPendingClientReady = false;
     meShakeEndMs = 0;
     enemyShakeEndMs = 0;
+    firstAttackByMe = true;
+    secondAttackPlanned = false;
+    roundEndMyHp = 0;
+    roundEndEnemyHp = 0;
+    roundEndMyMot = 0;
+    roundEndEnemyMot = 0;
     initFromBug();
 
     // 检查是否有本地 NPC 对战请求
@@ -216,10 +234,8 @@ SceneID BattleScene::update() {
                     hostRound = computeAuthoritativeRound();
                     roundComputed = true;
                 }
-                applyAuthoritativeRound(hostRound);
+                beginAuthoritativeRound(hostRound);
                 roundSent = true;
-                state = State::ROUND_END;
-                stateStartMs = Hal::ins().millis();
                 break;
             }
 
@@ -259,10 +275,8 @@ SceneID BattleScene::update() {
                 // 已拿到从机 MOT 并计算出回合，持续重试发送直到 ACK 成功
                 if (roundComputed && !roundSent && !BattleLink::ins().isSending()) {
                     if (BattleLink::ins().takeLastSendSuccess()) {
-                        applyAuthoritativeRound(hostRound);
+                        beginAuthoritativeRound(hostRound);
                         roundSent = true;
-                        state = State::ROUND_END;
-                        stateStartMs = Hal::ins().millis();
                         Serial.printf("[BattleScene] host round %d sent and acked\n", roundNum);
                     } else if (BattleLink::ins().sendRound(hostRound)) {
                         Serial.printf("[BattleScene] host round %d send queued\n", roundNum);
@@ -288,9 +302,7 @@ SceneID BattleScene::update() {
                 battle_round_t round;
                 if (BattleLink::ins().takeReceivedRound(round)) {
                     if (round.round_num == roundNum) {
-                        applyAuthoritativeRound(round);
-                        state = State::ROUND_END;
-                        stateStartMs = Hal::ins().millis();
+                        beginAuthoritativeRound(round);
                         Serial.printf("[BattleScene] client round %d applied\n", roundNum);
                     } else {
                         Serial.printf("[BattleScene] client round mismatch got=%d expected=%d\n",
@@ -304,6 +316,37 @@ SceneID BattleScene::update() {
                 Serial.printf("[BattleScene] round %d timeout -> NO FOE\n", roundNum);
                 noOpponent = true;
                 state = State::DONE;
+            }
+            break;
+        }
+
+        case State::ATTACK_ONE: {
+            if (Hal::ins().millis() - stateStartMs >= ATTACK_MS) {
+                applyCurrentAttack();
+                if (secondAttackPlanned) {
+                    state = State::ATTACK_TWO;
+                    stateStartMs = Hal::ins().millis();
+                } else {
+                    me.hp = roundEndMyHp;
+                    enemy.hp = roundEndEnemyHp;
+                    me.mot = roundEndMyMot;
+                    enemy.mot = roundEndEnemyMot;
+                    state = State::ROUND_END;
+                    stateStartMs = Hal::ins().millis();
+                }
+            }
+            break;
+        }
+
+        case State::ATTACK_TWO: {
+            if (Hal::ins().millis() - stateStartMs >= ATTACK_MS) {
+                applyCurrentAttack();
+                me.hp = roundEndMyHp;
+                enemy.hp = roundEndEnemyHp;
+                me.mot = roundEndMyMot;
+                enemy.mot = roundEndEnemyMot;
+                state = State::ROUND_END;
+                stateStartMs = Hal::ins().millis();
             }
             break;
         }
@@ -395,6 +438,12 @@ void BattleScene::startRound() {
     enemyCrit = false;
     myAttackDodged = false;
     enemyAttackDodged = false;
+    firstAttackByMe = true;
+    secondAttackPlanned = false;
+    roundEndMyHp = me.hp;
+    roundEndEnemyHp = enemy.hp;
+    roundEndMyMot = me.mot;
+    roundEndEnemyMot = enemy.mot;
     roundSent = false;
     roundComputed = false;
     // 若缓存的从机 ready 属于下一回合则保留，否则丢弃
@@ -467,7 +516,8 @@ battle_round_t BattleScene::computeAuthoritativeRound() {
     round.crits = (hostCrit ? 0x01 : 0x00) |
                   (clientCrit ? 0x02 : 0x00) |
                   (hostDodged ? 0x04 : 0x00) |
-                  (clientDodged ? 0x08 : 0x00);
+                  (clientDodged ? 0x08 : 0x00) |
+                  (hostFirst ? 0x10 : 0x00);
 
     myCrit = hostCrit;
     enemyCrit = clientCrit;
@@ -479,39 +529,72 @@ battle_round_t BattleScene::computeAuthoritativeRound() {
     return round;
 }
 
-void BattleScene::applyAuthoritativeRound(const battle_round_t& round) {
+void BattleScene::beginAuthoritativeRound(const battle_round_t& round) {
     // 本地 NPC 战没有经 BattleLink 设置 host 身份，统一按 host 视角（me=host, enemy=client）应用
     if (localNpcBattle || BattleLink::ins().isHost()) {
-        me.hp = round.host_hp;
-        enemy.hp = round.client_hp;
-        me.mot = round.host_mot;
-        enemy.mot = round.client_mot;
+        roundEndMyHp = round.host_hp;
+        roundEndEnemyHp = round.client_hp;
+        roundEndMyMot = round.host_mot;
+        roundEndEnemyMot = round.client_mot;
         myDmg = round.host_dmg;
         enemyDmg = round.client_dmg;
         myCrit = (round.crits & 0x01) != 0;
         enemyCrit = (round.crits & 0x02) != 0;
         myAttackDodged = (round.crits & 0x04) != 0;
         enemyAttackDodged = (round.crits & 0x08) != 0;
+        firstAttackByMe = (round.crits & 0x10) != 0;
     } else {
-        me.hp = round.client_hp;
-        enemy.hp = round.host_hp;
-        me.mot = round.client_mot;
-        enemy.mot = round.host_mot;
+        roundEndMyHp = round.client_hp;
+        roundEndEnemyHp = round.host_hp;
+        roundEndMyMot = round.client_mot;
+        roundEndEnemyMot = round.host_mot;
         myDmg = round.client_dmg;
         enemyDmg = round.host_dmg;
         myCrit = (round.crits & 0x02) != 0;
         enemyCrit = (round.crits & 0x01) != 0;
         myAttackDodged = (round.crits & 0x08) != 0;
         enemyAttackDodged = (round.crits & 0x04) != 0;
+        firstAttackByMe = (round.crits & 0x10) == 0;
     }
 
-    if (enemyDmg > 0) meShakeEndMs = Hal::ins().millis() + SHAKE_MS;
-    if (myDmg > 0) enemyShakeEndMs = Hal::ins().millis() + SHAKE_MS;
+    bool secondByMe = !firstAttackByMe;
+    secondAttackPlanned = attackExistsFor(secondByMe);
 
-    flashThisFrame = myCrit || enemyCrit;
+    state = State::ATTACK_ONE;
+    stateStartMs = Hal::ins().millis();
 
     Serial.printf("[BattleScene] round %d applied: hostDmg=%d clientDmg=%d hostHp=%d clientHp=%d\n",
                   roundNum, round.host_dmg, round.client_dmg, round.host_hp, round.client_hp);
+}
+
+bool BattleScene::attackExistsFor(bool byMe) const {
+    return byMe ? (myDmg > 0 || myAttackDodged || myCrit)
+                : (enemyDmg > 0 || enemyAttackDodged || enemyCrit);
+}
+
+bool BattleScene::isCurrentAttackByMe() const {
+    if (state == State::ATTACK_ONE) return firstAttackByMe;
+    if (state == State::ATTACK_TWO) return !firstAttackByMe;
+    return false;
+}
+
+void BattleScene::applyCurrentAttack() {
+    bool byMe = isCurrentAttackByMe();
+    if (byMe) {
+        if (myDmg > 0) {
+            enemy.hp -= myDmg;
+            if (enemy.hp < 0) enemy.hp = 0;
+            enemyShakeEndMs = Hal::ins().millis() + SHAKE_MS;
+        }
+        if (myCrit) flashThisFrame = true;
+    } else {
+        if (enemyDmg > 0) {
+            me.hp -= enemyDmg;
+            if (me.hp < 0) me.hp = 0;
+            meShakeEndMs = Hal::ins().millis() + SHAKE_MS;
+        }
+        if (enemyCrit) flashThisFrame = true;
+    }
 }
 
 void BattleScene::computeLocalWin() {
@@ -606,6 +689,60 @@ void BattleScene::drawConnecting() {
     PixelRenderer::drawPixelText(100, 80, buf, PixelRenderer::WHITE, 1);
 }
 
+void BattleScene::drawCombatantSprite(const Combatant& combatant, int centerX, int groundY,
+                                      bool faceRight, int8_t shakeX, int8_t shakeY, bool attacking) {
+    const HerculesAdultSprites::RleFrame* frames = HerculesAdultSprites::WALK_FRAMES;
+    const uint16_t* data = HerculesAdultSprites::WALK_RLE;
+    uint8_t frameCount = HerculesAdultSprites::WALK_FRAME_COUNT;
+    uint32_t durationMs = 1;
+    uint32_t elapsed = Hal::ins().millis() - stateStartMs;
+
+    if (attacking && elapsed < ATTACK_MS / 2) {
+        frames = HerculesAdultSprites::ATTACK_DOWN_FRAMES;
+        data = HerculesAdultSprites::ATTACK_DOWN_RLE;
+        frameCount = HerculesAdultSprites::ATTACK_DOWN_FRAME_COUNT;
+        durationMs = ATTACK_MS / 2;
+        centerX += faceRight ? -3 : 3;
+    } else if (attacking) {
+        frames = HerculesAdultSprites::ATTACK_UP_FRAMES;
+        data = HerculesAdultSprites::ATTACK_UP_RLE;
+        frameCount = HerculesAdultSprites::ATTACK_UP_FRAME_COUNT;
+        uint32_t attackElapsed = elapsed - ATTACK_MS / 2;
+        durationMs = ATTACK_MS / 2;
+        uint32_t phase = attackElapsed < durationMs ? attackElapsed : durationMs;
+        int lunge = (int)(phase * 14 / durationMs);
+        centerX += faceRight ? lunge : -lunge;
+        elapsed = attackElapsed;
+    }
+
+    uint8_t frameIndex = 0;
+    if (frameCount > 1) {
+        if (elapsed > durationMs) elapsed = durationMs;
+        frameIndex = (uint8_t)((elapsed * frameCount) / (durationMs + 1));
+        if (frameIndex >= frameCount) frameIndex = frameCount - 1;
+    }
+
+    uint16_t offset = pgm_read_word(&frames[frameIndex].offset);
+    uint16_t length = pgm_read_word(&frames[frameIndex].length);
+    uint8_t w = pgm_read_byte(&frames[frameIndex].width);
+    uint8_t h = pgm_read_byte(&frames[frameIndex].height);
+    float scale = 1.15f;
+    int drawW = (int)(w * scale);
+    int drawH = (int)(h * scale);
+    int drawX = centerX - drawW / 2 + shakeX;
+    int drawY = groundY - drawH + shakeY;
+
+    PixelRenderer::fillRect(centerX - 27 + shakeX, groundY + 2 + shakeY, 54, 3,
+                            PixelRenderer::rgb565(24, 24, 28));
+    uint16_t paletteColor = battlePaletteColor(combatant.palette);
+    PixelRenderer::drawRgb565RleMappedScaled(drawX, drawY, w, h,
+                                             data, offset, length, scale,
+                                             HerculesAdultSprites::PALETTE_KEY, paletteColor,
+                                             HerculesAdultSprites::PALETTE_KEY, paletteColor,
+                                             HerculesAdultSprites::PALETTE_KEY, paletteColor,
+                                             !faceRight);
+}
+
 void BattleScene::drawBattleField() {
     PixelRenderer::fillRect(0, 0, 240, 135, PixelRenderer::rgb565(20, 20, 30));
 
@@ -626,8 +763,13 @@ void BattleScene::drawBattleField() {
     snprintf(buf, sizeof(buf), "%s %d", UiStrings::BATTLE_ROUND, roundNum);
     PixelRenderer::drawPixelText(90, 5, buf, PixelRenderer::WHITE, 1);
 
+    bool meAttacking = (state == State::ATTACK_ONE || state == State::ATTACK_TWO) &&
+                       isCurrentAttackByMe();
+    bool enemyAttacking = (state == State::ATTACK_ONE || state == State::ATTACK_TWO) &&
+                          !isCurrentAttackByMe();
+
     // 我方（左侧）
-    PixelRenderer::fillRect(30 + meOffX, 35 + meOffY, 30, 20, me.palette == 0 ? PixelRenderer::BROWN : PixelRenderer::CREAM);
+    drawCombatantSprite(me, 58, 62, true, meOffX, meOffY, meAttacking);
     snprintf(buf, sizeof(buf), "%s:%d/%d", UiStrings::BATTLE_HP, me.hp, me.maxHp);
     PixelRenderer::drawPixelText(10, 60, buf, PixelRenderer::WHITE, 1);
     PixelRenderer::drawProgressBar(10, 72, 80, 6, (float)me.hp / me.maxHp,
@@ -637,7 +779,7 @@ void BattleScene::drawBattleField() {
     PixelRenderer::drawPixelText(10, 82, buf, PixelRenderer::WHITE, 1);
 
     // 敌方（右侧）
-    PixelRenderer::fillRect(180 + enemyOffX, 35 + enemyOffY, 30, 20, enemy.palette == 0 ? PixelRenderer::BROWN : PixelRenderer::CREAM);
+    drawCombatantSprite(enemy, 182, 62, false, enemyOffX, enemyOffY, enemyAttacking);
     snprintf(buf, sizeof(buf), "%s:%d/%d", UiStrings::BATTLE_HP, enemy.hp, enemy.maxHp);
     PixelRenderer::drawPixelText(150, 60, buf, PixelRenderer::WHITE, 1);
     PixelRenderer::drawProgressBar(150, 72, 80, 6, (float)enemy.hp / enemy.maxHp,
@@ -649,7 +791,11 @@ void BattleScene::drawBattleField() {
     switch (state) {
         case State::SYNCING: msg = "SYNC"; break;
         case State::CHARGE: msg = "CHARGE! A=boost"; break;
-        case State::CLASH: msg = "CLASH!"; break;
+        case State::CLASH: msg = "READY"; break;
+        case State::ATTACK_ONE:
+        case State::ATTACK_TWO:
+            msg = isCurrentAttackByMe() ? "ATTACK!" : "FOE ATK";
+            break;
         case State::ROUND_END:
             msg = myAttackDodged ? "MISS!" :
                   (enemyAttackDodged ? "DODGE!" :

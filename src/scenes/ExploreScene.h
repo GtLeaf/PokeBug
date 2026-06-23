@@ -37,14 +37,13 @@ private:
     // 轮次与收益
     uint8_t currentRound = 1;
     int totalSapGain = 0;
-    int totalWoodGain = 0;
     bool finalRecorded = false;
 
     // 当前事件
     enum class EventType {
         SAP,         // 发现树汁
         FOOD_SOURCE, // 发现食物源
-        WOOD,        // 发现腐木
+        WOOD,        // 发现木质环境资源，奖励树汁
         NPC,         // 遭遇对手
         RARE,        // 稀有事件
         NOTHING,     // 无事发生
@@ -86,6 +85,5 @@ private:
     static bool sSessionActive;
     static uint8_t sCurrentRound;
     static int sTotalSapGain;
-    static int sTotalWoodGain;
     static bool sFinalRecorded;
 };

@@ -21,6 +21,8 @@ private:
         ROUND_START,
         CHARGE,
         CLASH,
+        ATTACK_ONE,
+        ATTACK_TWO,
         ROUND_END,
         RESULT,
         DONE,
@@ -47,6 +49,12 @@ private:
     bool enemyCrit = false;
     bool enemyAttackDodged = false;
     bool flashThisFrame = false;
+    bool firstAttackByMe = true;
+    bool secondAttackPlanned = false;
+    int roundEndMyHp = 0;
+    int roundEndEnemyHp = 0;
+    uint8_t roundEndMyMot = 0;
+    uint8_t roundEndEnemyMot = 0;
 
     // 对战结果
     bool localWin = false;
@@ -84,17 +92,23 @@ private:
     bool buildSync();
     void startRound();
     battle_round_t computeAuthoritativeRound();
-    void applyAuthoritativeRound(const battle_round_t& round);
+    void beginAuthoritativeRound(const battle_round_t& round);
+    void applyCurrentAttack();
+    bool isCurrentAttackByMe() const;
+    bool attackExistsFor(bool byMe) const;
     void computeLocalWin();
     void computeAndSendResult();
     void applyBattleResult();
 
     void drawConnecting();
     void drawBattleField();
+    void drawCombatantSprite(const Combatant& combatant, int centerX, int groundY,
+                             bool faceRight, int8_t shakeX, int8_t shakeY, bool attacking);
     void drawResult();
 
     static constexpr uint32_t CHARGE_MS = 1200;
     static constexpr uint32_t CLASH_MS = 800;
+    static constexpr uint32_t ATTACK_MS = 700;
     static constexpr uint32_t ROUND_END_MS = 500;
     static constexpr uint32_t SHAKE_MS = 300;
     static constexpr int8_t  SHAKE_AMP = 3;

@@ -4,29 +4,34 @@
 
 namespace MainSceneAssets {
 
-extern const int MOSS_BG_W;
-extern const int MOSS_BG_H;
-extern const uint8_t MOSS_BG_INDEX[] PROGMEM;
-extern const uint16_t MOSS_BG_PALETTE[] PROGMEM;
+extern const int ROOM_FULL_W;
+extern const int ROOM_FULL_H;
+extern const uint8_t ROOM_FULL_INDEX[] PROGMEM;
+extern const uint16_t ROOM_FULL_PALETTE[] PROGMEM;
 
-extern const int MOSS_GROUND_W;
-extern const int MOSS_GROUND_H;
-extern const uint8_t MOSS_GROUND_INDEX[] PROGMEM;
-extern const uint16_t MOSS_GROUND_PALETTE[] PROGMEM;
+extern const int GIRL_ROOM_FULL_W;
+extern const int GIRL_ROOM_FULL_H;
+extern const uint8_t GIRL_ROOM_FULL_INDEX[] PROGMEM;
+extern const uint16_t GIRL_ROOM_FULL_PALETTE[] PROGMEM;
 
-extern const int MOSS_STATE_W;
-extern const int MOSS_STATE_H;
-extern const uint8_t MOSS_STATE_INDEX[] PROGMEM;
-extern const uint16_t MOSS_STATE_PALETTE[] PROGMEM;
+extern const int BOY_ROOM_FULL_W;
+extern const int BOY_ROOM_FULL_H;
+extern const uint8_t BOY_ROOM_FULL_INDEX[] PROGMEM;
+extern const uint16_t BOY_ROOM_FULL_PALETTE[] PROGMEM;
 
-extern const int BEGINNER_FULL_W;
-extern const int BEGINNER_FULL_H;
-extern const uint8_t BEGINNER_FULL_INDEX[] PROGMEM;
-extern const uint16_t BEGINNER_FULL_PALETTE[] PROGMEM;
+extern const int ENTOMOLOGIST_ROOM_FULL_W;
+extern const int ENTOMOLOGIST_ROOM_FULL_H;
+extern const uint8_t ENTOMOLOGIST_ROOM_FULL_INDEX[] PROGMEM;
+extern const uint16_t ENTOMOLOGIST_ROOM_FULL_PALETTE[] PROGMEM;
 
-extern const int CHILD_ROOM_FULL_W;
-extern const int CHILD_ROOM_FULL_H;
-extern const uint8_t CHILD_ROOM_FULL_INDEX[] PROGMEM;
-extern const uint16_t CHILD_ROOM_FULL_PALETTE[] PROGMEM;
+extern const int SCHOOL_DAY_FULL_W;
+extern const int SCHOOL_DAY_FULL_H;
+extern const uint8_t SCHOOL_DAY_FULL_INDEX[] PROGMEM;
+extern const uint16_t SCHOOL_DAY_FULL_PALETTE[] PROGMEM;
+
+extern const int SCHOOL_NIGHT_FULL_W;
+extern const int SCHOOL_NIGHT_FULL_H;
+extern const uint8_t SCHOOL_NIGHT_FULL_INDEX[] PROGMEM;
+extern const uint16_t SCHOOL_NIGHT_FULL_PALETTE[] PROGMEM;
 
 }

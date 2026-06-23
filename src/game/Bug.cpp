@@ -16,8 +16,9 @@ void Bug::initNew(uint64_t now) {
 
     for (int i = 0; i < (int)FoodType::COUNT; i++) foodCounts[i] = 0;
     foodCounts[(uint8_t)FoodType::DROP] = 6; // 初始 6 份 Drop
-    rottenWood = 0;
+    for (int i = 0; i < WoodTypeInfo::COUNT; i++) woodUnlocked[i] = 0;
     woodPlaced = false;
+    sleeping = false;
     foodInTray = false;
     trayFoodType = FoodType::DROP;
     foodAmount = 0;
@@ -152,8 +153,9 @@ void Bug::update(uint64_t now) {
 
 void Bug::updateHunger(uint64_t now, uint32_t deltaMs) {
     hungerDropAcc += deltaMs;
-    while (hungerDropAcc >= HUNGER_DROP_MS) {
-        hungerDropAcc -= HUNGER_DROP_MS;
+    uint32_t dropMs = sleeping ? HUNGER_DROP_MS * 3 : HUNGER_DROP_MS;
+    while (hungerDropAcc >= dropMs) {
+        hungerDropAcc -= dropMs;
         if (hunger > 0) {
             hunger--;
         }
@@ -229,7 +231,7 @@ void Bug::advanceStage(uint64_t now) {
             stage = Stage::PUPA;
             str += 1.0f;
             siz += 0.5f;
-            rottenWood = 1;
+            addRottenWood(1);
             break;
         case Stage::PUPA:
             stageStartTime += PUPA_DURATION_MS;
@@ -353,15 +355,7 @@ float Bug::getEnvMultiplier(int attrIndex) const {
 
     // 腐木加成（仅成虫）
     if (stage == Stage::ADULT && woodPlaced) {
-        int woodAttr = -1;
-        switch (woodStyle) {
-            case 0: woodAttr = 1; break; // Twig -> STR
-            case 1: woodAttr = 0; break; // Stack -> SIZ
-            case 2: woodAttr = 4; break; // Mossy -> SPI
-            case 3: woodAttr = 3; break; // Pale -> SPD
-            case 4: woodAttr = 2; break; // Hollow -> END
-            default: break;
-        }
+        int woodAttr = WoodTypeInfo::envAttribute((WoodType)woodStyle);
         if (woodAttr == attrIndex) mult *= 1.03f;
     }
 
@@ -404,7 +398,7 @@ void Bug::feed(FoodType type, uint64_t now) {
             absSiz = 0.5f; absStr = 0.5f; absEnd = 0.5f; absSpd = 1.0f; absSpi = 0.5f;
             break;
         case Stage::ADULT:
-            absSiz = 0.1f; absStr = 0.1f; absEnd = 0.1f; absSpd = 0.1f; absSpi = 0.1f;
+            absSiz = 0.15f; absStr = 0.15f; absEnd = 0.15f; absSpd = 0.15f; absSpi = 0.15f;
             break;
         default:
             return;
@@ -465,6 +459,7 @@ void Bug::feed(FoodType type, uint64_t now) {
 
 bool Bug::eatFromTray(uint64_t now, bool forceBite) {
     if (foodAmount == 0 || !foodInTray) return false;
+    if (hunger >= 100) return false;
 
     static constexpr uint32_t EAT_INTERVAL_MS = 2000;
     if (!forceBite && now - lastEatTime < EAT_INTERVAL_MS) return false;
@@ -475,6 +470,7 @@ bool Bug::eatFromTray(uint64_t now, bool forceBite) {
         hungry = hunger < 95;
         eatChance = 90;
     } else if (stage == Stage::JUVENILE || stage == Stage::ADULT) {
+        if (hunger >= 80) return false;
         hungry = hunger < 80;
         eatChance = 70;
     } else {
@@ -484,7 +480,7 @@ bool Bug::eatFromTray(uint64_t now, bool forceBite) {
     if (!forceBite && (!hungry || random(100) >= eatChance)) return false;
 
     foodAmount--;
-    hunger += 6;
+    hunger += 9;
     lastEatTime = now;
 
     // 实际属性增益
@@ -677,15 +673,82 @@ void Bug::removeFood(FoodType type, uint8_t amount) {
     }
 }
 
+bool Bug::isWoodUnlocked(uint8_t style) const {
+    if (style >= WoodTypeInfo::COUNT) return false;
+    return woodUnlocked[style] != 0;
+}
+
+uint8_t Bug::getWoodCount(uint8_t style) const {
+    return isWoodUnlocked(style) ? 1 : 0;
+}
+
+uint8_t Bug::getTotalWoodCount() const {
+    uint16_t total = 0;
+    for (int i = 0; i < WoodTypeInfo::COUNT; i++) {
+        if (woodUnlocked[i]) total++;
+    }
+    return total > 255 ? 255 : (uint8_t)total;
+}
+
+void Bug::addWood(uint8_t style, uint8_t amount) {
+    if (amount == 0) return;
+    if (style >= WoodTypeInfo::COUNT) style = 0;
+    woodUnlocked[style] = 1;
+}
+
+void Bug::removeWoodItem(uint8_t style, uint8_t amount) {
+    if (amount == 0) return;
+    if (style >= WoodTypeInfo::COUNT) return;
+    woodUnlocked[style] = 0;
+    if (woodStyle == style) woodPlaced = false;
+}
+
+uint8_t Bug::getItemCount(ItemId id) const {
+    switch (ItemCatalog::kind(id)) {
+        case ItemKind::FOOD:
+            return getFoodCount((FoodType)ItemCatalog::index(id));
+        case ItemKind::WOOD:
+            return getWoodCount(ItemCatalog::index(id));
+        default:
+            return 0;
+    }
+}
+
+bool Bug::addItem(ItemId id, uint8_t amount) {
+    if (amount == 0 || !ItemCatalog::isExchangeable(id)) return false;
+    switch (ItemCatalog::kind(id)) {
+        case ItemKind::FOOD:
+            addFood((FoodType)ItemCatalog::index(id), amount);
+            return true;
+        case ItemKind::WOOD:
+            addWood(ItemCatalog::index(id), amount);
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool Bug::removeItem(ItemId id, uint8_t amount) {
+    if (amount == 0 || getItemCount(id) < amount) return false;
+    switch (ItemCatalog::kind(id)) {
+        case ItemKind::FOOD:
+            removeFood((FoodType)ItemCatalog::index(id), amount);
+            return true;
+        case ItemKind::WOOD:
+            removeWoodItem(ItemCatalog::index(id), amount);
+            return true;
+        default:
+            return false;
+    }
+}
+
 void Bug::addRottenWood(uint8_t amount) {
-    uint16_t sum = rottenWood + amount;
-    if (sum > 99) sum = 99;
-    rottenWood = (uint8_t)sum;
+    addWood((uint8_t)WoodType::TWIG, amount);
 }
 
 bool Bug::placeWood() {
-    if (rottenWood == 0 || woodPlaced) return false;
-    rottenWood--;
+    if (woodStyle >= WoodTypeInfo::COUNT) woodStyle = 0;
+    if (!isWoodUnlocked(woodStyle) || woodPlaced) return false;
     woodPlaced = true;
     return true;
 }
@@ -713,25 +776,62 @@ void Bug::resetAfterDeath(uint64_t now) {
 }
 
 void Bug::release(uint64_t now) {
-    // 保留基因并小幅变异
-    auto mutate = [](uint8_t g) -> uint8_t {
-        if (random(100) < 5) {
-            int d = (g >> 4) + random(-2, 3);
-            int r = (g & 0x0F) + random(-2, 3);
-            if (d < 0) d = 0; if (d > 15) d = 15;
-            if (r < 0) r = 0; if (r > 15) r = 15;
-            return (uint8_t)((d << 4) | r);
-        }
-        return g;
+    auto clampNibble = [](int v) -> int {
+        if (v < 0) return 0;
+        if (v > 15) return 15;
+        return v;
     };
-    geneVIG = mutate(geneVIG);
-    geneATK = mutate(geneATK);
-    geneMNT = mutate(geneMNT);
-    geneEND = mutate(geneEND);
-    geneAPP = mutate(geneAPP);
 
+    auto achievedStage = [](float value, uint8_t cap) -> uint8_t {
+        if (cap == 0) return 0;
+        float ratio = value / (float)cap;
+        if (ratio >= 0.95f) return 4;
+        if (ratio >= 0.85f) return 3;
+        if (ratio >= 0.70f) return 2;
+        if (ratio >= 0.50f) return 1;
+        return 0;
+    };
+
+    auto inheritByAchievement = [&](uint8_t g, float value, uint8_t cap) -> uint8_t {
+        static const uint8_t IMPROVE_CHANCE[5] = {10, 35, 50, 65, 80};
+        static const uint8_t REGRESS_CHANCE[5] = {10, 8, 6, 5, 4};
+
+        uint8_t stageScore = achievedStage(value, cap);
+        int d = g >> 4;
+        int r = g & 0x0F;
+        uint8_t roll = (uint8_t)random(100);
+
+        if (roll < IMPROVE_CHANCE[stageScore]) {
+            uint8_t steps = 1;
+            if (stageScore >= 3 && (uint8_t)random(100) < 35) steps++;
+            if (stageScore >= 4 && (uint8_t)random(100) < 20) steps++;
+
+            while (steps-- > 0) {
+                if (d <= r || (uint8_t)random(100) < 65) d = clampNibble(d + 1);
+                else r = clampNibble(r + 1);
+            }
+        } else if (roll < IMPROVE_CHANCE[stageScore] + REGRESS_CHANCE[stageScore]) {
+            if (d > r || (uint8_t)random(100) < 50) d = clampNibble(d - 1);
+            else r = clampNibble(r - 1);
+        }
+
+        return (uint8_t)((d << 4) | r);
+    };
+
+    // 放生时只取“已达属性阶段分”作为遗传压力，而不是直接继承当前属性值。
+    uint8_t nextGeneVIG = inheritByAchievement(geneVIG, siz, sizCap());
+    uint8_t nextGeneATK = inheritByAchievement(geneATK, str, strCap());
+    uint8_t nextGeneMNT = inheritByAchievement(geneMNT, spi, spiCap());
+    uint8_t nextGeneEND = inheritByAchievement(geneEND, end, endCap());
+    uint8_t nextGeneAPP = inheritByAchievement(geneAPP, spd, spdCap());
     uint8_t prevGen = generation;
+
     initNew(now);
+    geneVIG = nextGeneVIG;
+    geneATK = nextGeneATK;
+    geneMNT = nextGeneMNT;
+    geneEND = nextGeneEND;
+    geneAPP = nextGeneAPP;
     generation = prevGen + 1;
     releaseCountTotal++; // 新虫继承累计放生次数（文档为累计纪念）
 }
@@ -773,8 +873,8 @@ void Bug::incrementCupStreak() {
 }
 
 // ---------- 存档格式 ----------
-// v8：新增探索/杯赛字段（releaseCountTotal, cupParticipated, cupBest, cupWins, cupLegendKills, achievementFlags, cupStreak）
-static constexpr uint8_t SAVE_VERSION = 8;
+// v9：腐木从单一 rottenWood 升级为按腐木种类解锁，支持交换/活动限定腐木
+static constexpr uint8_t SAVE_VERSION = 9;
 
 void Bug::save(uint8_t* buf, uint16_t& len) const {
     struct SaveData {
@@ -822,8 +922,10 @@ void Bug::save(uint8_t* buf, uint16_t& len) const {
         uint8_t cupLegendKills;
         uint16_t achievementFlags;
         uint8_t cupStreak;
+        uint8_t woodUnlocked[WoodTypeInfo::COUNT];
         uint8_t reserved[1];
     } __attribute__((packed));
+    static_assert(sizeof(SaveData) <= 192, "Bug save data exceeds SaveManager buffer");
 
     SaveData sd = {};
     sd.version = SAVE_VERSION;
@@ -838,7 +940,7 @@ void Bug::save(uint8_t* buf, uint16_t& len) const {
     sd.stage = (uint8_t)stage;
     sd.alive = alive ? 1 : 0;
     for (int i = 0; i < 6; i++) sd.foodCounts[i] = foodCounts[i];
-    sd.rottenWood = rottenWood;
+    sd.rottenWood = getTotalWoodCount(); // legacy total for diagnostics / downgrade reading
     sd.woodPlaced = woodPlaced ? 1 : 0;
     sd.foodInTray = foodInTray ? 1 : 0;
     sd.trayFoodType = (uint8_t)trayFoodType;
@@ -881,6 +983,7 @@ void Bug::save(uint8_t* buf, uint16_t& len) const {
     sd.cupLegendKills = cupLegendKills;
     sd.achievementFlags = achievementFlags;
     sd.cupStreak = cupStreak;
+    for (int i = 0; i < WoodTypeInfo::COUNT; i++) sd.woodUnlocked[i] = woodUnlocked[i] ? 1 : 0;
 
     memcpy(buf, &sd, sizeof(sd));
     len = sizeof(sd);
@@ -888,7 +991,7 @@ void Bug::save(uint8_t* buf, uint16_t& len) const {
 
 
 bool Bug::load(const uint8_t* buf, uint16_t len) {
-    struct SaveDataV8 {
+    struct SaveDataV9 {
         uint8_t version;
         uint8_t geneVIG, geneATK, geneMNT, geneEND, geneAPP;
         uint8_t siz, str, end, spd, spi;
@@ -933,8 +1036,10 @@ bool Bug::load(const uint8_t* buf, uint16_t len) {
         uint8_t cupLegendKills;
         uint16_t achievementFlags;
         uint8_t cupStreak;
+        uint8_t woodUnlocked[WoodTypeInfo::COUNT];
         uint8_t reserved[1];
     } __attribute__((packed));
+    static_assert(sizeof(SaveDataV9) <= 192, "Bug save data exceeds SaveManager buffer");
 
     struct SaveDataV7 {
         uint8_t version;
@@ -1043,15 +1148,23 @@ bool Bug::load(const uint8_t* buf, uint16_t len) {
         uint8_t reserved[2];
     } __attribute__((packed));
 
-    auto applyCommon = [this](const SaveDataV8& sd) {
+    auto applyCommon = [this](const SaveDataV9& sd) {
         geneVIG = sd.geneVIG; geneATK = sd.geneATK; geneMNT = sd.geneMNT; geneEND = sd.geneEND; geneAPP = sd.geneAPP;
         siz = sd.siz; str = sd.str; end = sd.end; spd = sd.spd; spi = sd.spi;
         mot = sd.mot; hunger = sd.hunger;
         stage = (Stage)sd.stage;
         alive = sd.alive != 0;
         for (int i = 0; i < 6; i++) foodCounts[i] = sd.foodCounts[i];
-        rottenWood = sd.rottenWood;
+        bool hasUnlockedWood = false;
+        for (int i = 0; i < WoodTypeInfo::COUNT; i++) {
+            woodUnlocked[i] = sd.woodUnlocked[i] > 0 ? 1 : 0;
+            if (woodUnlocked[i]) hasUnlockedWood = true;
+        }
+        if (!hasUnlockedWood && sd.rottenWood > 0) {
+            woodUnlocked[(uint8_t)WoodType::TWIG] = 1;
+        }
         woodPlaced = sd.woodPlaced != 0;
+        sleeping = false;
         foodInTray = sd.foodInTray != 0;
         trayFoodType = (FoodType)sd.trayFoodType;
         foodAmount = sd.foodAmount;
@@ -1100,14 +1213,23 @@ bool Bug::load(const uint8_t* buf, uint16_t len) {
     if (len < 1) return false;
     uint8_t ver = buf[0];
 
-    if (ver == SAVE_VERSION && len >= sizeof(SaveDataV8)) {
-        applyCommon(*reinterpret_cast<const SaveDataV8*>(buf));
+    if (ver == SAVE_VERSION && len >= sizeof(SaveDataV9)) {
+        applyCommon(*reinterpret_cast<const SaveDataV9*>(buf));
+        return true;
+    }
+
+    if (ver == 8 && len >= sizeof(SaveDataV9) - WoodTypeInfo::COUNT) {
+        SaveDataV9 tmp = {};
+        uint16_t copyLen = len < sizeof(SaveDataV9) ? len : sizeof(SaveDataV9);
+        memcpy(&tmp, buf, copyLen);
+        tmp.version = SAVE_VERSION;
+        applyCommon(tmp);
         return true;
     }
 
     if (ver == 7 && len >= sizeof(SaveDataV7)) {
         const SaveDataV7& sd = *reinterpret_cast<const SaveDataV7*>(buf);
-        SaveDataV8 tmp = {};
+        SaveDataV9 tmp = {};
         memcpy(&tmp, &sd, sizeof(SaveDataV7));
         tmp.version = SAVE_VERSION;
         // v7 没有探索/杯赛字段，保持默认 0
@@ -1124,7 +1246,7 @@ bool Bug::load(const uint8_t* buf, uint16_t len) {
 
     if (ver == 6 && len >= sizeof(SaveDataV6)) {
         const SaveDataV6& sd = *reinterpret_cast<const SaveDataV6*>(buf);
-        SaveDataV8 tmp = {};
+        SaveDataV9 tmp = {};
         memcpy(&tmp, &sd, sizeof(SaveDataV6));
         tmp.version = SAVE_VERSION;
         tmp.geneEND = 0x55;
@@ -1134,7 +1256,7 @@ bool Bug::load(const uint8_t* buf, uint16_t len) {
 
     if (ver == 5 && len >= sizeof(SaveDataV5)) {
         const SaveDataV5& sd = *reinterpret_cast<const SaveDataV5*>(buf);
-        SaveDataV8 tmp = {};
+        SaveDataV9 tmp = {};
         tmp.version = SAVE_VERSION;
         tmp.geneVIG = sd.geneVIG; tmp.geneATK = sd.geneATK; tmp.geneMNT = sd.geneMNT; tmp.geneAPP = sd.geneAPP;
         tmp.siz = sd.siz; tmp.str = sd.str; tmp.end = sd.end; tmp.spi = sd.spi;

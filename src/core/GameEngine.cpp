@@ -8,6 +8,7 @@
 #include "../scenes/BattleScene.h"
 #include "../scenes/ExploreScene.h"
 #include "../scenes/CupScene.h"
+#include "../game/ItemCatalog.h"
 
 GameEngine& GameEngine::ins() {
     static GameEngine instance;
@@ -20,8 +21,8 @@ uint32_t exploreCycleDayFromMs(uint64_t gameNowMs) {
     uint32_t calendarDay = (uint32_t)(gameNowMs / GameEngine::GAME_DAY_MS);
     uint8_t hour = (uint8_t)((gameNowMs % GameEngine::GAME_DAY_MS) / HOUR_MS);
 
-    // 探索日从早晨 06:00 开始。午夜到清晨仍属于前一轮夜晚，避免夜探结束后立刻刷新次数。
-    if (hour < 6 && calendarDay > 0) {
+    // 探索日从早晨 05:00 开始。午夜到清晨仍属于前一轮夜晚，避免夜探结束后立刻刷新次数。
+    if (hour < 5 && calendarDay > 0) {
         return calendarDay - 1;
     }
     return calendarDay;
@@ -172,11 +173,15 @@ void GameEngine::run() {
 
     idleTimer += frameElapsed;
 
-    // 更新虚拟时间与独角仙
-    uint32_t virtualElapsed = (uint32_t)(realElapsed * gameSpeed);
-    gameNow += virtualElapsed;
-    bug.update(gameNow);
-    syncExploreClock(true);
+    // 更新虚拟时间与独角仙。菜单/探索/Cup 等流程暂停游戏时间，
+    // 避免玩家停留在流程中时继续结算饥饿、成长和报名窗口。
+    bool gameTimePaused = isGameTimePausedScene();
+    if (!gameTimePaused) {
+        uint32_t virtualElapsed = (uint32_t)(realElapsed * gameSpeed);
+        gameNow += virtualElapsed;
+        bug.update(gameNow);
+        syncExploreClock(true);
+    }
 
     // 更新场景逻辑
     if (curScene) {
@@ -188,7 +193,9 @@ void GameEngine::run() {
     }
 
     // 杯赛周期检查（基于虚拟游戏时间）
-    checkCupCycle();
+    if (!gameTimePaused) {
+        checkCupCycle();
+    }
 
     // 自动保存
     if (realNow - lastSaveTime > AUTO_SAVE_MS) {
@@ -383,6 +390,21 @@ bool GameEngine::isBlockDeepSleepScene() const {
            curSceneID == SCENE_MENU;
 }
 
+bool GameEngine::isGameTimePausedScene() const {
+    switch (curSceneID) {
+        case SCENE_MENU:
+        case SCENE_INFO:
+        case SCENE_SETTINGS:
+        case SCENE_LOBBY:
+        case SCENE_EXPLORE:
+        case SCENE_CUP:
+        case SCENE_BATTLE:
+            return true;
+        default:
+            return false;
+    }
+}
+
 uint32_t GameEngine::targetFrameTime() const {
     if (systemState != SystemState::ACTIVE) {
         return IDLE_FRAME_MS;
@@ -418,34 +440,28 @@ void GameEngine::cycleMainSceneBg() {
 
 const char* GameEngine::getMainSceneBgName() const {
     switch (mainSceneBg) {
-        case BG_BEGINNER: return "Beginner";
-        case BG_CHILD_ROOM: return "Child";
+        case BG_BEGINNER: return "Girl";
+        case BG_CHILD_ROOM: return "Boy";
+        case BG_ENTOMOLOGIST: return "Lab";
+        case BG_SCHOOL: return "School";
         case BG_MOSS:
         default:
-            return "Moss";
+            return "Room";
     }
 }
 
 void GameEngine::setWoodStyle(uint8_t id) {
-    if (id >= 5) id = 0;
+    if (id >= WoodTypeInfo::COUNT) id = 0;
     woodStyle = id;
 }
 
 void GameEngine::cycleWoodStyle() {
     woodStyle++;
-    if (woodStyle >= 5) woodStyle = 0;
+    if (woodStyle >= WoodTypeInfo::COUNT) woodStyle = 0;
 }
 
 const char* GameEngine::getWoodStyleName() const {
-    switch (woodStyle) {
-        case 1: return "Stack";
-        case 2: return "Mossy";
-        case 3: return "Pale";
-        case 4: return "Hollow";
-        case 0:
-        default:
-            return "Twig";
-    }
+    return WoodTypeInfo::name((WoodType)woodStyle);
 }
 
 void GameEngine::setBowlStyle(uint8_t id) {
@@ -563,8 +579,8 @@ uint8_t GameEngine::naturalExploreTimeOfDay() const {
 uint8_t GameEngine::naturalExploreTimeOfDayFromMs(uint64_t gameNowMs) {
     static constexpr uint64_t HOUR_MS = 60ULL * 60 * 1000;
     uint64_t hour = (gameNowMs % GAME_DAY_MS) / HOUR_MS;
-    // 06:00-11:59 早晨，12:00-18:59 下午，19:00-05:59 夜晚
-    if (hour >= 6 && hour < 12) return TIME_MORNING;
+    // 05:00-11:59 早晨，12:00-18:59 下午，19:00-04:59 夜晚
+    if (hour >= 5 && hour < 12) return TIME_MORNING;
     if (hour >= 12 && hour < 19) return TIME_AFTERNOON;
     return TIME_EVENING;
 }
@@ -572,7 +588,7 @@ uint8_t GameEngine::naturalExploreTimeOfDayFromMs(uint64_t gameNowMs) {
 bool GameEngine::isExploreTimeAllowedFromMs(uint64_t gameNowMs) {
     static constexpr uint64_t HOUR_MS = 60ULL * 60 * 1000;
     uint64_t hour = (gameNowMs % GAME_DAY_MS) / HOUR_MS;
-    return hour >= 6;
+    return hour >= 5;
 }
 
 bool GameEngine::isExploreTimeAllowed() const {
@@ -639,12 +655,7 @@ bool GameEngine::isExploreLimitBypassed() {
 
 void GameEngine::recordExploreFinished() {
     if (exploreCountToday < EXPLORE_DAILY_LIMIT) exploreCountToday++;
-
-    static constexpr uint64_t EXPLORE_DURATION_MS = 3ULL * 60 * 60 * 1000;
-    gameNow += EXPLORE_DURATION_MS;
-    bug.update(gameNow);
-    exploreDay = exploreCycleDayFromMs(gameNow);
-    timeOfDay = naturalExploreTimeOfDay();
+    syncExploreClock(false);
     forceSave();
 }
 

@@ -82,7 +82,74 @@ void TerrariumScene::onEnter() {
     resetPressStart = 0;
     resetting = false;
 
-    // 初始化成虫状态
+    Bug& bug = GameEngine::ins().getBug();
+    const TerrariumViewState& saved = GameEngine::ins().getTerrariumViewState();
+    if (saved.valid && bug.getStage() == Stage::ADULT && !bug.isDead()) {
+        bugX = saved.bugX;
+        bugY = saved.bugY;
+        animFrame = saved.animFrame;
+        adultState = saved.adultState <= (uint8_t)AdultState::REST ?
+                     (AdultState)saved.adultState : AdultState::IDLE;
+        faceRight = saved.faceRight;
+        turnTargetFaceRight = saved.turnTargetFaceRight;
+        walkAfterTurn = saved.walkAfterTurn;
+        slideAfterTurn = saved.slideAfterTurn;
+        climbAfterTurn = saved.climbAfterTurn;
+        turnFrameIndex = saved.turnFrameIndex;
+        targetX = saved.targetX;
+        slideTargetX = saved.slideTargetX;
+        climbTargetX = saved.climbTargetX;
+        tiltHighSideIsRight = saved.tiltHighSideIsRight;
+        stateTimer = saved.stateTimer;
+        stateDuration = saved.stateDuration;
+        eatFrameInterval = saved.eatFrameInterval;
+        eatBitesThisSession = saved.eatBitesThisSession;
+        restResumeAllowedMs = saved.restResumeAllowedMs;
+        foodRefillGraceUntilMs = saved.foodRefillGraceUntilMs;
+        alertUntilMs = saved.alertUntilMs;
+        mind.resetActivityTimer(Hal::ins().millis());
+        return;
+    }
+
+    resetLocalViewState();
+}
+
+void TerrariumScene::onExit() {
+    Bug& bug = GameEngine::ins().getBug();
+    if (bug.getStage() == Stage::ADULT && !bug.isDead()) {
+        TerrariumViewState state;
+        state.bugX = bugX;
+        state.bugY = bugY;
+        state.animFrame = animFrame;
+        state.adultState = (uint8_t)adultState;
+        state.faceRight = faceRight;
+        state.turnTargetFaceRight = turnTargetFaceRight;
+        state.walkAfterTurn = walkAfterTurn;
+        state.slideAfterTurn = slideAfterTurn;
+        state.climbAfterTurn = climbAfterTurn;
+        state.turnFrameIndex = turnFrameIndex;
+        state.targetX = targetX;
+        state.slideTargetX = slideTargetX;
+        state.climbTargetX = climbTargetX;
+        state.tiltHighSideIsRight = tiltHighSideIsRight;
+        state.stateTimer = stateTimer;
+        state.stateDuration = stateDuration;
+        state.eatFrameInterval = eatFrameInterval;
+        state.eatBitesThisSession = eatBitesThisSession;
+        state.restResumeAllowedMs = restResumeAllowedMs;
+        state.foodRefillGraceUntilMs = foodRefillGraceUntilMs;
+        state.alertUntilMs = alertUntilMs;
+        GameEngine::ins().saveTerrariumViewState(state);
+    } else {
+        GameEngine::ins().clearTerrariumViewState();
+    }
+    bug.setSleeping(false);
+}
+
+void TerrariumScene::resetLocalViewState() {
+    bugX = 120;
+    bugY = 80;
+    animFrame = 0;
     adultState = AdultState::IDLE;
     faceRight = true;
     turnTargetFaceRight = true;
@@ -94,18 +161,21 @@ void TerrariumScene::onEnter() {
     slideTargetX = bugX;
     climbTargetX = bugX;
     tiltHighSideIsRight = true;
+    eatFrameInterval = 0;
+    eatBitesThisSession = 0;
+    restResumeAllowedMs = 0;
+    foodRefillGraceUntilMs = 0;
     alertUntilMs = 0;
     mind.resetActivityTimer(Hal::ins().millis());
     stateTimer = 0;
     setIdleDuration();
 }
 
-void TerrariumScene::onExit() {}
-
 SceneID TerrariumScene::update() {
     animFrame++;
 
     Bug& bug = GameEngine::ins().getBug();
+    bug.setSleeping(bug.getStage() == Stage::ADULT && adultState == AdultState::REST);
 
     // 更新甲虫心智（成虫期且存活）
     if (bug.getStage() == Stage::ADULT && !bug.isDead()) {
@@ -123,6 +193,8 @@ SceneID TerrariumScene::update() {
             if (resetPressStart == 0) resetPressStart = Hal::ins().millis();
             else if (Hal::ins().millis() - resetPressStart >= 3000) {
                 bug.resetAfterDeath(GameEngine::ins().getGameNow());
+                GameEngine::ins().clearTerrariumViewState();
+                resetLocalViewState();
                 resetPressStart = 0;
             }
         } else {
@@ -269,31 +341,50 @@ bool TerrariumScene::onButton(const ButtonEvent& ev) {
 void TerrariumScene::drawBackground() {
     if (GameEngine::ins().getMainSceneBg() == GameEngine::BG_BEGINNER) {
         PixelRenderer::drawIndexed8(0, 0,
-                                    MainSceneAssets::BEGINNER_FULL_W,
-                                    MainSceneAssets::BEGINNER_FULL_H,
-                                    MainSceneAssets::BEGINNER_FULL_INDEX,
-                                    MainSceneAssets::BEGINNER_FULL_PALETTE);
+                                    MainSceneAssets::GIRL_ROOM_FULL_W,
+                                    MainSceneAssets::GIRL_ROOM_FULL_H,
+                                    MainSceneAssets::GIRL_ROOM_FULL_INDEX,
+                                    MainSceneAssets::GIRL_ROOM_FULL_PALETTE);
         return;
     }
     if (GameEngine::ins().getMainSceneBg() == GameEngine::BG_CHILD_ROOM) {
         PixelRenderer::drawIndexed8(0, 0,
-                                    MainSceneAssets::CHILD_ROOM_FULL_W,
-                                    MainSceneAssets::CHILD_ROOM_FULL_H,
-                                    MainSceneAssets::CHILD_ROOM_FULL_INDEX,
-                                    MainSceneAssets::CHILD_ROOM_FULL_PALETTE);
+                                    MainSceneAssets::BOY_ROOM_FULL_W,
+                                    MainSceneAssets::BOY_ROOM_FULL_H,
+                                    MainSceneAssets::BOY_ROOM_FULL_INDEX,
+                                    MainSceneAssets::BOY_ROOM_FULL_PALETTE);
+        return;
+    }
+    if (GameEngine::ins().getMainSceneBg() == GameEngine::BG_ENTOMOLOGIST) {
+        PixelRenderer::drawIndexed8(0, 0,
+                                    MainSceneAssets::ENTOMOLOGIST_ROOM_FULL_W,
+                                    MainSceneAssets::ENTOMOLOGIST_ROOM_FULL_H,
+                                    MainSceneAssets::ENTOMOLOGIST_ROOM_FULL_INDEX,
+                                    MainSceneAssets::ENTOMOLOGIST_ROOM_FULL_PALETTE);
+        return;
+    }
+    if (GameEngine::ins().getMainSceneBg() == GameEngine::BG_SCHOOL) {
+        if (GameEngine::ins().isNight()) {
+            PixelRenderer::drawIndexed8(0, 0,
+                                        MainSceneAssets::SCHOOL_NIGHT_FULL_W,
+                                        MainSceneAssets::SCHOOL_NIGHT_FULL_H,
+                                        MainSceneAssets::SCHOOL_NIGHT_FULL_INDEX,
+                                        MainSceneAssets::SCHOOL_NIGHT_FULL_PALETTE);
+        } else {
+            PixelRenderer::drawIndexed8(0, 0,
+                                        MainSceneAssets::SCHOOL_DAY_FULL_W,
+                                        MainSceneAssets::SCHOOL_DAY_FULL_H,
+                                        MainSceneAssets::SCHOOL_DAY_FULL_INDEX,
+                                        MainSceneAssets::SCHOOL_DAY_FULL_PALETTE);
+        }
         return;
     }
 
     PixelRenderer::drawIndexed8(0, 0,
-                                MainSceneAssets::MOSS_BG_W,
-                                MainSceneAssets::MOSS_BG_H,
-                                MainSceneAssets::MOSS_BG_INDEX,
-                                MainSceneAssets::MOSS_BG_PALETTE);
-    PixelRenderer::drawIndexed8(0, 120,
-                                MainSceneAssets::MOSS_GROUND_W,
-                                MainSceneAssets::MOSS_GROUND_H,
-                                MainSceneAssets::MOSS_GROUND_INDEX,
-                                MainSceneAssets::MOSS_GROUND_PALETTE);
+                                MainSceneAssets::ROOM_FULL_W,
+                                MainSceneAssets::ROOM_FULL_H,
+                                MainSceneAssets::ROOM_FULL_INDEX,
+                                MainSceneAssets::ROOM_FULL_PALETTE);
 }
 
 void TerrariumScene::drawBug() {
@@ -387,7 +478,7 @@ void TerrariumScene::drawAdult(int x, int y, uint8_t palette) {
         frameIndex = 0;
         flipSprite = !faceRight;
     } else if (pokeThreatenEndMs != 0 && pokeReactionWasPoked && bug.getStage() == Stage::ADULT) {
-        // 戳反应：威吓动画，前 THREATEN_PLAY_MS 播放，之后保持最后一帧
+        // 戳反应：威吓正播、保持，结束前反向播放回站姿，避免直接跳回 walk。
         frames = HerculesAdultSprites::THREATEN_FRAMES;
         data = HerculesAdultSprites::THREATEN_RLE;
         frameCount = HerculesAdultSprites::THREATEN_FRAME_COUNT;
@@ -395,16 +486,30 @@ void TerrariumScene::drawAdult(int x, int y, uint8_t palette) {
         if (elapsed < THREATEN_PLAY_MS) {
             frameIndex = (elapsed * frameCount) / THREATEN_PLAY_MS;
             if (frameIndex >= frameCount) frameIndex = frameCount - 1;
-        } else {
+        } else if (elapsed < THREATEN_PLAY_MS + THREATEN_HOLD_MS) {
             frameIndex = frameCount - 1;
+        } else {
+            uint32_t returnElapsed = elapsed - THREATEN_PLAY_MS - THREATEN_HOLD_MS;
+            uint8_t reverseStep = (returnElapsed * frameCount) / THREATEN_RETURN_MS;
+            frameIndex = reverseStep >= frameCount ? 0 : (frameCount - 1 - reverseStep);
         }
         flipSprite = !faceRight;
     } else if (adultState == AdultState::REST) {
-        // 夜间休息：趴在腐木上，使用 reset 第 0 帧作为趴姿
-        frames = HerculesAdultSprites::RESET_FRAMES;
-        data = HerculesAdultSprites::RESET_RLE;
-        frameCount = HerculesAdultSprites::RESET_FRAME_COUNT;
-        frameIndex = 0;
+        // 夜间休息：先播放一次入睡 getDown，之后只循环 breath。
+        uint32_t getDownFrames = HerculesAdultSprites::SLEEP_GETDOWN_FRAME_COUNT *
+                                 REST_GETDOWN_FRAME_INTERVAL;
+        if (stateTimer < getDownFrames) {
+            frames = HerculesAdultSprites::SLEEP_GETDOWN_FRAMES;
+            data = HerculesAdultSprites::SLEEP_GETDOWN_RLE;
+            frameCount = HerculesAdultSprites::SLEEP_GETDOWN_FRAME_COUNT;
+            frameIndex = stateTimer / REST_GETDOWN_FRAME_INTERVAL;
+            if (frameIndex >= frameCount) frameIndex = frameCount - 1;
+        } else {
+            frames = HerculesAdultSprites::SLEEP_BREATH_FRAMES;
+            data = HerculesAdultSprites::SLEEP_BREATH_RLE;
+            frameCount = HerculesAdultSprites::SLEEP_BREATH_FRAME_COUNT;
+            frameIndex = ((stateTimer - getDownFrames) / REST_BREATH_FRAME_INTERVAL) % frameCount;
+        }
         flipSprite = !faceRight;
     } else if (adultState == AdultState::EAT) {
         // 进食动画
@@ -539,6 +644,20 @@ void TerrariumScene::updateAdultMovement() {
 
     switch (adultState) {
         case AdultState::IDLE:
+            if (foodRefillGraceUntilMs != 0) {
+                uint32_t nowMs = Hal::ins().millis();
+                if (bug.getHunger() < EAT_CONTINUE_HUNGER &&
+                    bug.hasFoodInTray() && bug.getFoodAmount() > 0 && abs(bugX - FOOD_X) <= 3) {
+                    foodRefillGraceUntilMs = 0;
+                    enterEat();
+                    break;
+                }
+                if (nowMs < foodRefillGraceUntilMs) {
+                    faceRight = false;
+                    break;
+                }
+                foodRefillGraceUntilMs = 0;
+            }
             // 静止后段偶尔张望。这里是每帧概率，20fps 下不能设得太高。
             if (stateTimer > (stateDuration * 2) / 3 &&
                 random(1000) < IDLE_LOOK_AROUND_CHANCE_PER_1000) {
@@ -556,7 +675,8 @@ void TerrariumScene::updateAdultMovement() {
                 }
                 switch (d) {
                     case Desire::EAT:
-                        if (bug.hasFoodInTray() && bug.getFoodAmount() > 0) {
+                        if (bug.getHunger() < EAT_CONTINUE_HUNGER &&
+                            bug.hasFoodInTray() && bug.getFoodAmount() > 0) {
                             startWalkTo(FOOD_X);
                         } else {
                             stateTimer = 0;
@@ -654,7 +774,8 @@ void TerrariumScene::updateAdultMovement() {
 
                 // 到达目标
                 if (abs(targetX - bugX) <= 2) {
-                    if (targetX == FOOD_X && bug.hasFoodInTray() && bug.getFoodAmount() > 0) {
+                    if (targetX == FOOD_X && bug.getHunger() < EAT_CONTINUE_HUNGER &&
+                        bug.hasFoodInTray() && bug.getFoodAmount() > 0) {
                         enterEat();
                     } else if (targetX == WOOD_REST_X && bug.isWoodPlaced()) {
                         enterRest();
@@ -716,7 +837,7 @@ void TerrariumScene::updateAdultMovement() {
             {
             // 面向食物盘（食物在左侧，所以朝左）
             faceRight = false;
-            // 第一口保证吃掉，后续再按饥饿程度和间隔自然继续。
+            // 第一口可绕过间隔，保证动画和咬食有反馈；满饱时 eatFromTray 不会扣食物。
             if (bug.eatFromTray(GameEngine::ins().getGameNow(), eatBitesThisSession == 0)) {
                 eatBitesThisSession++;
             }
@@ -729,6 +850,11 @@ void TerrariumScene::updateAdultMovement() {
             bool timedOut = stateTimer >= stateDuration;
             if (foodGone || satisfied || timedOut) {
                 mind.onAte(Hal::ins().millis());
+                if (foodGone && bug.getHunger() < EAT_CONTINUE_HUNGER) {
+                    foodRefillGraceUntilMs = Hal::ins().millis() + FOOD_REFILL_GRACE_MS;
+                } else {
+                    foodRefillGraceUntilMs = 0;
+                }
                 adultState = AdultState::IDLE;
                 stateTimer = 0;
                 setIdleDuration();
@@ -832,8 +958,6 @@ void TerrariumScene::drawStatusBar() {
     int timeW = canvas.textWidth(clockBuf);
     int timeX = Hal::DISPLAY_W - timeW - 4;
     int timeY = HUD_Y;
-    PixelRenderer::drawPixelText(timeX + 1, timeY + 1, clockBuf, PixelRenderer::BLACK, fs);
-    PixelRenderer::drawPixelText(timeX, timeY, clockBuf, PixelRenderer::WHITE, fs);
 
     uint8_t mot = bug.getMot();
     static const uint16_t HEART_MASK[9] = {
@@ -856,6 +980,24 @@ void TerrariumScene::drawStatusBar() {
     int fillRows = (mot * totalRows + 50) / 100;
     if (fillRows < 1 && mot > 0) fillRows = 1;
     if (fillRows > totalRows) fillRows = totalRows;
+
+    int barY = iconY + ICON_SIZE + 3;
+    int barH = 4;
+    int panelX = (timeX < heartX ? timeX : heartX) - 4;
+    if (panelX < 0) panelX = 0;
+    int panelY = 0;
+    int panelW = Hal::DISPLAY_W - panelX;
+    int panelH = barY + barH + 3;
+    for (int y = panelY; y < panelY + panelH; y++) {
+        for (int x = panelX; x < panelX + panelW; x++) {
+            if (((x + y) & 1) == 0) {
+                PixelRenderer::fillRect(x, y, 1, 1, PixelRenderer::BLACK);
+            }
+        }
+    }
+
+    PixelRenderer::drawPixelText(timeX + 1, timeY + 1, clockBuf, PixelRenderer::BLACK, fs);
+    PixelRenderer::drawPixelText(timeX, timeY, clockBuf, PixelRenderer::WHITE, fs);
 
     for (int row = 0; row < totalRows; row++) {
         uint16_t mask = HEART_MASK[row];
@@ -900,7 +1042,7 @@ void TerrariumScene::drawStatusBar() {
                       (bug.getHunger() > 20 ? PixelRenderer::YELLOW : PixelRenderer::RED);
     int barX = heartX;
     int barW = (weatherX + ICON_SIZE) - heartX;
-    PixelRenderer::drawProgressBar(barX, iconY + ICON_SIZE + 3, barW, 4, bug.getHunger() / 100.0f, hColor, PixelRenderer::GRAY);
+    PixelRenderer::drawProgressBar(barX, barY, barW, barH, bug.getHunger() / 100.0f, hColor, PixelRenderer::GRAY);
 }
 
 void TerrariumScene::drawDeathScreen() {

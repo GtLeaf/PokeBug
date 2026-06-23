@@ -46,7 +46,8 @@ void BugMind::computeDesires(uint8_t hunger, uint8_t mot, bool isNight,
 
     // ---- 基础欲望分数 ----
     uint16_t baseScores[(uint8_t)Desire::COUNT] = {0};
-    baseScores[(uint8_t)Desire::EAT]    = foodAvailable ? hungerNeed : 0;
+    bool sated = hunger >= 80;
+    baseScores[(uint8_t)Desire::EAT]    = foodAvailable ? (sated ? 5 : hungerNeed) : 0;
     baseScores[(uint8_t)Desire::REST]   = energyNeed;
     baseScores[(uint8_t)Desire::WANDER] = curiosityNeed;
     baseScores[(uint8_t)Desire::HIDE]   = safetyNeed;
@@ -55,7 +56,7 @@ void BugMind::computeDesires(uint8_t hunger, uint8_t mot, bool isNight,
     // ---- 当前欲望惯性与随机噪声（饱和计算，避免 uint8_t 回绕） ----
     for (int i = 0; i < (int)Desire::COUNT; i++) {
         uint16_t score = baseScores[i];
-        if (i == (int)topDesire_) score += INERTIA_BONUS;
+        if (i == (int)topDesire_ && !(sated && i == (int)Desire::EAT)) score += INERTIA_BONUS;
         score += (uint16_t)random(RANDOM_NOISE_MAX);
         desireScores[i] = clamp(score);
     }

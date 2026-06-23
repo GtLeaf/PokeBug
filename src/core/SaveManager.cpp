@@ -2,6 +2,10 @@
 #include <Preferences.h>
 #include <Arduino.h>
 
+namespace {
+constexpr size_t BUG_SAVE_MAX_BYTES = 192;
+}
+
 SaveManager& SaveManager::ins() {
     static SaveManager instance;
     return instance;
@@ -15,7 +19,7 @@ bool SaveManager::load(Bug& bug) {
     }
 
     uint8_t ver = prefs.getUChar(KEY_VER, 0);
-    if (ver != SAVE_VERSION && ver != 7 && ver != 6 && ver != 5) {
+    if (ver != SAVE_VERSION && ver != 8 && ver != 7 && ver != 6 && ver != 5) {
         Serial.printf("[Save] Version mismatch: stored=%d expected=%d\n", ver, SAVE_VERSION);
         prefs.end();
         return false;
@@ -23,8 +27,8 @@ bool SaveManager::load(Bug& bug) {
 
     size_t len = prefs.getBytesLength(KEY_BUG);
     bool ok = false;
-    if (len > 0 && len <= 128) {
-        uint8_t buf[128];
+    if (len > 0 && len <= BUG_SAVE_MAX_BYTES) {
+        uint8_t buf[BUG_SAVE_MAX_BYTES];
         prefs.getBytes(KEY_BUG, buf, len);
         if (bug.load(buf, (uint16_t)len)) {
             Serial.printf("[Save] Bug loaded: %u bytes\n", len);
@@ -56,7 +60,7 @@ bool SaveManager::save(const Bug& bug) {
 
     prefs.putUChar(KEY_VER, SAVE_VERSION);
 
-    uint8_t buf[128];
+    uint8_t buf[BUG_SAVE_MAX_BYTES];
     uint16_t len = 0;
     bug.save(buf, len);
     if (len > 0) {

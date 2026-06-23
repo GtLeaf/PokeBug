@@ -57,7 +57,7 @@ private:
     static constexpr const char* KEY_EXPLORE_DAY   = "explore_day";
     static constexpr const char* KEY_EXPLORE_TOD   = "explore_tod";
     static constexpr const char* KEY_EXPLORE_COUNT = "explore_count";
-    static constexpr uint8_t SAVE_VERSION = 8;
+    static constexpr uint8_t SAVE_VERSION = 9;
 
     bool isSaving = false;  // 防并发写入锁
 };

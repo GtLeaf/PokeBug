@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <cstdint>
 #include "FoodType.h"
+#include "ItemCatalog.h"
 
 // 生命周期阶段
 enum class Stage {
@@ -105,13 +106,24 @@ public:
     void addFood(FoodType type, uint8_t amount);
     void removeFood(FoodType type, uint8_t amount);
     uint8_t getTotalFoodCount() const;
+    uint8_t getItemCount(ItemId id) const;
+    bool addItem(ItemId id, uint8_t amount);
+    bool removeItem(ItemId id, uint8_t amount);
+    bool addItem(const ItemStack& item) { return addItem(item.id, item.amount); }
+    bool removeItem(const ItemStack& item) { return removeItem(item.id, item.amount); }
+    void setSleeping(bool sleepingNow) { sleeping = sleepingNow; }
     bool isWoodPlaced() const { return woodPlaced; }
     bool hasFoodInTray() const { return foodInTray; }
     FoodType getFoodInTrayType() const { return trayFoodType; }
     uint8_t getFoodAmount() const { return foodAmount; }
     bool placeWood();              // 放置腐木到缸内
     void removeWood() { woodPlaced = false; }
-    uint8_t getRottenWood() const { return rottenWood; }
+    bool isWoodUnlocked(uint8_t style) const;
+    uint8_t getWoodCount(uint8_t style) const;
+    uint8_t getTotalWoodCount() const;
+    uint8_t getRottenWood() const { return getTotalWoodCount(); }
+    void addWood(uint8_t style, uint8_t amount = 1);
+    void removeWoodItem(uint8_t style, uint8_t amount = 1);
     void addRottenWood(uint8_t amount = 1);
 
     // 环境加成
@@ -196,8 +208,9 @@ private:
 
     static constexpr uint8_t MAX_FOOD_COUNT = 255;
     uint8_t foodCounts[(uint8_t)FoodType::COUNT] = {0}; // 背包中各食物数量
-    uint8_t rottenWood = 0;
+    uint8_t woodUnlocked[WoodTypeInfo::COUNT] = {0};    // 各腐木是否已解锁
     bool woodPlaced = false;
+    bool sleeping = false;
     bool foodInTray = false;
     FoodType trayFoodType = FoodType::DROP;
     uint8_t foodAmount = 0;        // 盘中食物剩余口数

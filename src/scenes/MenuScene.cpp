@@ -340,10 +340,14 @@ void MenuScene::executeSelection() {
 
     if (mode == Mode::WOOD) {
         if (selected >= 0 && selected < WOOD_ITEM_COUNT - 1) {
+            if (!bug.isWoodUnlocked((uint8_t)selected)) {
+                showToast(UiStrings::WOOD_NEED_ROTTEN);
+                return;
+            }
             GameEngine::ins().setWoodStyle((uint8_t)selected);
             bug.setWood(GameEngine::ins().getWoodStyle());
             saveSettingsNow();
-            // 若腐木尚未放置且背包有货，自动放置以便主界面立刻显示
+            // 若腐木尚未放置且已解锁，自动放置以便主界面立刻显示
             if (!bug.isWoodPlaced() && !bug.placeWood()) {
                 showToast(UiStrings::WOOD_NEED_ROTTEN);
             }
@@ -961,10 +965,17 @@ void MenuScene::drawWoodLayout() {
         if (y + ROW_H < LIST_Y_START || y > LIST_BOTTOM) continue;
 
         bool isSelected = (i == selected);
-        uint16_t color = isSelected ? PixelRenderer::YELLOW : PixelRenderer::WHITE;
+        bool isStyle = (i < WOOD_ITEM_COUNT - 1);
+        bool unlocked = isStyle && bug.isWoodUnlocked((uint8_t)i);
+        uint16_t color;
+        if (isSelected) {
+            color = (!isStyle || unlocked) ? PixelRenderer::YELLOW : PixelRenderer::rgb565(180, 180, 0);
+        } else {
+            color = (!isStyle || unlocked) ? PixelRenderer::WHITE : PixelRenderer::GRAY;
+        }
 
         const char* label;
-        if (i < WOOD_ITEM_COUNT - 1) {
+        if (isStyle) {
             label = WoodAssets::NAME[i];
         } else {
             label = UiStrings::BACK;
@@ -974,7 +985,7 @@ void MenuScene::drawWoodLayout() {
 
         // 当前腐木风格菱形标记
         int currentStyle = GameEngine::ins().getWoodStyle();
-        if (i < WOOD_ITEM_COUNT - 1 && i == currentStyle) {
+        if (isStyle && i == currentStyle && unlocked) {
             int cx = TEXT_X - 8;
             int cy = textY + (int)(4 * fs);
             canvas.fillTriangle(cx, cy - 3, cx + 3, cy, cx, cy + 3, PixelRenderer::CYAN);
@@ -987,6 +998,7 @@ void MenuScene::drawWoodLayout() {
     // ---- 右侧详情面板 ----
     if (selected >= 0 && selected < WOOD_ITEM_COUNT - 1) {
         int idx = selected;
+        bool unlocked = bug.isWoodUnlocked((uint8_t)idx);
 
         uint16_t woodOffset = pgm_read_word(&WoodAssets::SPRITE_FRAMES[idx].offset);
         uint16_t woodLength = pgm_read_word(&WoodAssets::SPRITE_FRAMES[idx].length);
@@ -995,9 +1007,8 @@ void MenuScene::drawWoodLayout() {
         int iconH = (int)(WoodAssets::FRAME_H * iconScale);
 
         const char* name = WoodAssets::NAME[idx];
-        uint8_t woodCount = bug.getRottenWood();
         char storageBuf[16];
-        snprintf(storageBuf, sizeof(storageBuf), "x %d", woodCount);
+        snprintf(storageBuf, sizeof(storageBuf), "%s", bug.isWoodUnlocked((uint8_t)idx) ? "Unlocked" : "Locked");
 
         canvas.setTextSize(fs);
         int nameW = canvas.textWidth(name);
@@ -1022,26 +1033,36 @@ void MenuScene::drawWoodLayout() {
                                            WoodAssets::FRAME_H,
                                            WoodAssets::SPRITE_RLE,
                                            woodOffset, woodLength, iconScale, false);
+        if (!unlocked) {
+            for (int yy = 0; yy < iconH; yy++) {
+                for (int xx = 0; xx < iconW; xx++) {
+                    if (((xx + yy) & 1) == 0) {
+                        PixelRenderer::fillRect(iconX + xx, iconY + yy, 1, 1, PixelRenderer::GRAY);
+                    }
+                }
+            }
+        }
 
         // 名字在右上，库存在右下
-        PixelRenderer::drawPixelText(textX, nameY, name, PixelRenderer::WHITE, fs);
+        PixelRenderer::drawPixelText(textX, nameY, name, unlocked ? PixelRenderer::WHITE : PixelRenderer::GRAY, fs);
         PixelRenderer::drawPixelText(textX, storageY, storageBuf,
-                                     woodCount > 0 ? PixelRenderer::CREAM : PixelRenderer::GRAY, fs);
+                                     unlocked ? PixelRenderer::CREAM : PixelRenderer::GRAY, fs);
 
         // 描述：三行，底部留出第三行空间
         int descX = RIGHT_X + 2;
         int descY = iconY + iconH + 12;
+        uint16_t descColor = unlocked ? PixelRenderer::CREAM : PixelRenderer::GRAY;
         PixelRenderer::drawPixelText(descX, descY,
                                      WoodAssets::DESC_LINE1[idx],
-                                     PixelRenderer::CREAM, fs);
+                                     descColor, fs);
         descY += (int)(12 * fs);
         PixelRenderer::drawPixelText(descX, descY,
                                      WoodAssets::DESC_LINE2[idx],
-                                     PixelRenderer::CREAM, fs);
+                                     descColor, fs);
         descY += (int)(12 * fs);
         PixelRenderer::drawPixelText(descX, descY,
                                      WoodAssets::DESC_LINE3[idx],
-                                     PixelRenderer::CREAM, fs);
+                                     descColor, fs);
     } else {
         PixelRenderer::drawPixelText(RIGHT_X + 20, 62, "back to box",
                                      PixelRenderer::GRAY, fs);
