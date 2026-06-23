@@ -4,13 +4,13 @@
 
 namespace HerculesAdultSprites {
 
-static constexpr uint16_t MAX_FRAME_W = 76;
-static constexpr uint16_t MAX_FRAME_H = 52;
-static constexpr uint8_t BASE_SCALE_PERCENT = 144;
+static constexpr uint16_t MAX_FRAME_W = 91;
+static constexpr uint16_t MAX_FRAME_H = 62;
+static constexpr uint8_t BASE_SCALE_PERCENT = 173;
 static constexpr uint8_t RUNTIME_MAX_SCALE_PERCENT = 120;
-static constexpr uint8_t TERRARIUM_EDGE_HALF_W = 46;
-static constexpr uint8_t TERRARIUM_MIN_X = 46;
-static constexpr uint8_t TERRARIUM_MAX_X = 194;
+static constexpr uint8_t TERRARIUM_EDGE_HALF_W = 55;
+static constexpr uint8_t TERRARIUM_MIN_X = 55;
+static constexpr uint8_t TERRARIUM_MAX_X = 185;
 
 static constexpr uint16_t PALETTE_KEY = 0xF800;
 

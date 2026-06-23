@@ -33,6 +33,7 @@ public:
     SceneID update() override;
     void render() override;
     bool onButton(const ButtonEvent& ev) override;
+    void persistViewState();
 
 private:
     int bugX = 120;

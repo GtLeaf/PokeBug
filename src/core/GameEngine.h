@@ -1,6 +1,7 @@
 #pragma once
 #include "Scene.h"
 #include "SaveManager.h"
+#include "TerrariumViewState.h"
 #include "../game/Bug.h"
 #include "../hardware/Hal.h"
 #include "../hardware/PixelRenderer.h"
@@ -40,32 +41,6 @@ struct NpcBattleResult {
     bool fromExplore = false;
     bool fromCup = false;
     bool spiBoosted = false;
-};
-
-// 培养缸主界面的运行时表现状态。随场景切换保留，不写入 NVS 存档。
-struct TerrariumViewState {
-    bool valid = false;
-    int bugX = 120;
-    int bugY = 80;
-    uint32_t animFrame = 0;
-    uint8_t adultState = 0;
-    bool faceRight = true;
-    bool turnTargetFaceRight = true;
-    bool walkAfterTurn = false;
-    bool slideAfterTurn = false;
-    bool climbAfterTurn = false;
-    uint8_t turnFrameIndex = 0;
-    int targetX = 120;
-    int slideTargetX = 120;
-    int climbTargetX = 120;
-    bool tiltHighSideIsRight = true;
-    uint32_t stateTimer = 0;
-    uint32_t stateDuration = 0;
-    uint8_t eatFrameInterval = 0;
-    uint8_t eatBitesThisSession = 0;
-    uint32_t restResumeAllowedMs = 0;
-    uint32_t foodRefillGraceUntilMs = 0;
-    uint32_t alertUntilMs = 0;
 };
 
 // 游戏引擎 — 主循环 + 场景调度
@@ -110,7 +85,7 @@ public:
     }
     void clearTerrariumViewState() { terrariumViewState = TerrariumViewState(); }
 
-    // 游戏速度（0.5 / 1 / 2 / 4 / 8… 影响虚拟时间）
+    // 游戏速度（1 / 2 / 4 / 8… 影响虚拟时间）
     float getGameSpeed() const { return gameSpeed; }
     void setGameSpeed(float speed) { gameSpeed = speed; }
 

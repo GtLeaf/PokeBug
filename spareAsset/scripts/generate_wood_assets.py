@@ -18,9 +18,23 @@ GENERATED = SPARE / "generated/src_assets"
 # Size policy. Change only these values for future global resizing.
 ADULT_REFERENCE_W = 58
 ADULT_REFERENCE_H = 39
-WOOD_SCALE = 1.5
+WOOD_SCALE = 1.8
 TARGET_W = ceil(ADULT_REFERENCE_W * WOOD_SCALE)
 TARGET_H = ceil(ADULT_REFERENCE_H * WOOD_SCALE)
+
+WOOD_NAMES = ["Twig", "Stack", "Mossy", "Pale", "Hollow"]
+WOOD_DESC_LINE1 = [
+    "Twisted fibers,", "Layered and solid,", "Damp and calming,",
+    "Light and porous,", "Hollow wood,"
+]
+WOOD_DESC_LINE2 = [
+    "sharpen its", "encourages", "soothes the",
+    "keeps it", "builds tough"
+]
+WOOD_DESC_LINE3 = [
+    "grip.", "steady bulk.", "mind.",
+    "swift.", "resilience."
+]
 
 
 def rgb565(r, g, b):
@@ -139,6 +153,10 @@ def fmt(vals):
     )
 
 
+def c_string_array(values):
+    return ", ".join(f'"{v}"' for v in values)
+
+
 def write_preview(frames):
     sheet = Image.new("RGBA", (TARGET_W * len(frames), TARGET_H), (0, 0, 0, 0))
     for i, frame in enumerate(frames):
@@ -156,13 +174,27 @@ namespace WoodAssets {{
 
 static constexpr uint8_t FRAME_W = {TARGET_W};
 static constexpr uint8_t FRAME_H = {TARGET_H};
+static constexpr uint8_t SPRITE_COUNT = {len(frames)};
+
+// 腐木风格名称与描述（暗示属性倾向，不直接展示增益）
+static constexpr const char* NAME[SPRITE_COUNT] = {{
+    {c_string_array(WOOD_NAMES)}
+}};
+static constexpr const char* DESC_LINE1[SPRITE_COUNT] = {{
+    {c_string_array(WOOD_DESC_LINE1)}
+}};
+static constexpr const char* DESC_LINE2[SPRITE_COUNT] = {{
+    {c_string_array(WOOD_DESC_LINE2)}
+}};
+static constexpr const char* DESC_LINE3[SPRITE_COUNT] = {{
+    {c_string_array(WOOD_DESC_LINE3)}
+}};
 
 struct RleFrame {{
     uint16_t offset;
     uint16_t length;
 }};
 
-extern const uint8_t SPRITE_COUNT;
 extern const RleFrame SPRITE_FRAMES[] PROGMEM;
 extern const uint16_t SPRITE_RLE[] PROGMEM;
 
@@ -177,7 +209,6 @@ extern const uint16_t SPRITE_RLE[] PROGMEM;
         metas.append((len(data), len(enc)))
         data.extend(enc)
     cpp = ['#include "WoodAssets.h"', "", "namespace WoodAssets {", ""]
-    cpp.append(f"const uint8_t SPRITE_COUNT = {len(frames)};")
     cpp.append("const RleFrame SPRITE_FRAMES[] PROGMEM = {")
     for off, length in metas:
         cpp.append(f"    {{ {off}, {length} }},")

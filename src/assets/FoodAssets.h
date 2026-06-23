@@ -4,8 +4,8 @@
 
 namespace FoodAssets {
 
-static constexpr uint8_t FRAME_W = 29;
-static constexpr uint8_t FRAME_H = 14;
+static constexpr uint8_t FRAME_W = 35;
+static constexpr uint8_t FRAME_H = 17;
 
 struct RleFrame {
     uint16_t offset;

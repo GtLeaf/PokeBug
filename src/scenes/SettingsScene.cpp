@@ -206,11 +206,12 @@ void SettingsScene::adjustBrightness(int delta) {
 
 void SettingsScene::cycleGameSpeed() {
     float sp = GameEngine::ins().getGameSpeed();
+    // 0.5x 档位已移除，旧存档按一次后进入 1x 循环
     if (sp < 0.6f)       GameEngine::ins().setGameSpeed(1.0f);
     else if (sp < 1.1f)  GameEngine::ins().setGameSpeed(2.0f);
     else if (sp < 2.1f)  GameEngine::ins().setGameSpeed(4.0f);
     else if (sp < 4.1f)  GameEngine::ins().setGameSpeed(8.0f);
-    else                 GameEngine::ins().setGameSpeed(0.5f);
+    else                 GameEngine::ins().setGameSpeed(1.0f);
     saveSettingsNow();
 }
 

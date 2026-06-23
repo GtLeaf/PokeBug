@@ -24,8 +24,8 @@ GENERATED = SPARE / "generated/src_assets"
 # and a backup copy under spareAsset/generated/src_assets/.
 
 # Size policy. Change these two values to resize every bowl style together.
-BOWL_FRAME_W = 43
-BOWL_FRAME_H = 22
+BOWL_FRAME_W = 52
+BOWL_FRAME_H = 27
 
 BOWL_NAMES = ["Low", "Block", "Root"]
 BOWL_DESC_LINE1 = ["Shallow and easy,", "Raised edges,", "Carved like bark,"]

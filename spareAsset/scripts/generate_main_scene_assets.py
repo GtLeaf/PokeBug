@@ -14,7 +14,8 @@ SOURCES = [
     ("ROOM_FULL", ROOT / "spareAsset/origin/bg/room.png", 240, 135),
     ("GIRL_ROOM_FULL", ROOT / "spareAsset/origin/bg/room_girl.png", 240, 135),
     ("BOY_ROOM_FULL", ROOT / "spareAsset/origin/bg/boy_room.png", 240, 135),
-    ("ENTOMOLOGIST_ROOM_FULL", ROOT / "spareAsset/origin/bg/entomologist_room.png", 240, 135),
+    ("ENTOMOLOGIST_ROOM_DAY_FULL", ROOT / "spareAsset/origin/bg/entomologist_room/entomologist_room_day.png", 240, 135),
+    ("ENTOMOLOGIST_ROOM_NIGHT_FULL", ROOT / "spareAsset/origin/bg/entomologist_room/entomologist_room_night.png", 240, 135),
     ("SCHOOL_DAY_FULL", ROOT / "spareAsset/origin/bg/school/school_day.png", 240, 135),
     ("SCHOOL_NIGHT_FULL", ROOT / "spareAsset/origin/bg/school/school_night.png", 240, 135),
 ]

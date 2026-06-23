@@ -4,6 +4,50 @@
 
 namespace {
 constexpr size_t BUG_SAVE_MAX_BYTES = 192;
+constexpr uint8_t TERRARIUM_VIEW_SAVE_VERSION = 1;
+
+struct TerrariumViewSaveData {
+    uint8_t version;
+    uint8_t valid;
+    int16_t bugX;
+    int16_t bugY;
+    uint32_t animFrame;
+    uint8_t adultState;
+    uint8_t flags;
+    uint8_t turnFrameIndex;
+    int16_t targetX;
+    int16_t slideTargetX;
+    int16_t climbTargetX;
+    uint32_t stateTimer;
+    uint32_t stateDuration;
+    uint8_t eatFrameInterval;
+    uint8_t eatBitesThisSession;
+    uint32_t restResumeAllowedMs;
+    uint32_t foodRefillGraceUntilMs;
+    uint32_t alertUntilMs;
+} __attribute__((packed));
+
+static_assert(sizeof(TerrariumViewSaveData) <= 64, "Terrarium view save data too large");
+
+uint8_t packTerrariumFlags(const TerrariumViewState& state) {
+    uint8_t flags = 0;
+    if (state.faceRight) flags |= 1 << 0;
+    if (state.turnTargetFaceRight) flags |= 1 << 1;
+    if (state.walkAfterTurn) flags |= 1 << 2;
+    if (state.slideAfterTurn) flags |= 1 << 3;
+    if (state.climbAfterTurn) flags |= 1 << 4;
+    if (state.tiltHighSideIsRight) flags |= 1 << 5;
+    return flags;
+}
+
+void unpackTerrariumFlags(uint8_t flags, TerrariumViewState& state) {
+    state.faceRight = (flags & (1 << 0)) != 0;
+    state.turnTargetFaceRight = (flags & (1 << 1)) != 0;
+    state.walkAfterTurn = (flags & (1 << 2)) != 0;
+    state.slideAfterTurn = (flags & (1 << 3)) != 0;
+    state.climbAfterTurn = (flags & (1 << 4)) != 0;
+    state.tiltHighSideIsRight = (flags & (1 << 5)) != 0;
+}
 }
 
 SaveManager& SaveManager::ins() {
@@ -148,6 +192,95 @@ void SaveManager::clearExploreGlobal() {
         prefs.remove(KEY_EXPLORE_DAY);
         prefs.remove(KEY_EXPLORE_TOD);
         prefs.remove(KEY_EXPLORE_COUNT);
+        prefs.end();
+    }
+}
+
+bool SaveManager::saveTerrariumViewState(const TerrariumViewState& state) {
+    Preferences prefs;
+    if (!prefs.begin(NAMESPACE, false)) return false;
+
+    if (!state.valid) {
+        prefs.remove(KEY_TERRARIUM_VIEW);
+        prefs.end();
+        return true;
+    }
+
+    TerrariumViewSaveData sd = {};
+    sd.version = TERRARIUM_VIEW_SAVE_VERSION;
+    sd.valid = state.valid ? 1 : 0;
+    sd.bugX = (int16_t)state.bugX;
+    sd.bugY = (int16_t)state.bugY;
+    sd.animFrame = state.animFrame;
+    sd.adultState = state.adultState;
+    sd.flags = packTerrariumFlags(state);
+    sd.turnFrameIndex = state.turnFrameIndex;
+    sd.targetX = (int16_t)state.targetX;
+    sd.slideTargetX = (int16_t)state.slideTargetX;
+    sd.climbTargetX = (int16_t)state.climbTargetX;
+    sd.stateTimer = state.stateTimer;
+    sd.stateDuration = state.stateDuration;
+    sd.eatFrameInterval = state.eatFrameInterval;
+    sd.eatBitesThisSession = state.eatBitesThisSession;
+    sd.restResumeAllowedMs = state.restResumeAllowedMs;
+    sd.foodRefillGraceUntilMs = state.foodRefillGraceUntilMs;
+    sd.alertUntilMs = state.alertUntilMs;
+
+    prefs.putBytes(KEY_TERRARIUM_VIEW, &sd, sizeof(sd));
+    prefs.end();
+    Serial.printf("[Save] Terrarium view saved: state=%u x=%d faceRight=%d\n",
+                  state.adultState, state.bugX, state.faceRight ? 1 : 0);
+    return true;
+}
+
+bool SaveManager::loadTerrariumViewState(TerrariumViewState& state) {
+    Preferences prefs;
+    if (!prefs.begin(NAMESPACE, true)) return false;
+
+    size_t len = prefs.getBytesLength(KEY_TERRARIUM_VIEW);
+    if (len != sizeof(TerrariumViewSaveData)) {
+        prefs.end();
+        state = TerrariumViewState();
+        return false;
+    }
+
+    TerrariumViewSaveData sd = {};
+    prefs.getBytes(KEY_TERRARIUM_VIEW, &sd, sizeof(sd));
+    prefs.end();
+
+    if (sd.version != TERRARIUM_VIEW_SAVE_VERSION || sd.valid == 0) {
+        state = TerrariumViewState();
+        return false;
+    }
+
+    state = TerrariumViewState();
+    state.valid = true;
+    state.bugX = sd.bugX;
+    state.bugY = sd.bugY;
+    state.animFrame = sd.animFrame;
+    state.adultState = sd.adultState;
+    unpackTerrariumFlags(sd.flags, state);
+    state.turnFrameIndex = sd.turnFrameIndex;
+    state.targetX = sd.targetX;
+    state.slideTargetX = sd.slideTargetX;
+    state.climbTargetX = sd.climbTargetX;
+    state.stateTimer = sd.stateTimer;
+    state.stateDuration = sd.stateDuration;
+    state.eatFrameInterval = sd.eatFrameInterval;
+    state.eatBitesThisSession = sd.eatBitesThisSession;
+    state.restResumeAllowedMs = sd.restResumeAllowedMs;
+    state.foodRefillGraceUntilMs = sd.foodRefillGraceUntilMs;
+    state.alertUntilMs = sd.alertUntilMs;
+
+    Serial.printf("[Save] Terrarium view loaded: state=%u x=%d faceRight=%d\n",
+                  state.adultState, state.bugX, state.faceRight ? 1 : 0);
+    return true;
+}
+
+void SaveManager::clearTerrariumViewState() {
+    Preferences prefs;
+    if (prefs.begin(NAMESPACE, false)) {
+        prefs.remove(KEY_TERRARIUM_VIEW);
         prefs.end();
     }
 }

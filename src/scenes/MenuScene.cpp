@@ -754,10 +754,11 @@ void MenuScene::drawFoodLayout() {
         FoodType ft = (FoodType)selected;
         int idx = selected;
 
-        // 食物 icon：2x 放大，放在容器左侧
+        // 菜单预览保持独立视觉大小，不跟随主界面食物资源放大。
         uint16_t foodOffset = pgm_read_word(&FoodAssets::SPRITE_FRAMES[idx].offset);
         uint16_t foodLength = pgm_read_word(&FoodAssets::SPRITE_FRAMES[idx].length);
-        int iconScale = 2;
+        static constexpr float FOOD_MENU_ICON_SCALE = 2.0f / 1.2f;
+        float iconScale = FOOD_MENU_ICON_SCALE;
         int iconW = (int)(FoodAssets::FRAME_W * iconScale);
         int iconH = (int)(FoodAssets::FRAME_H * iconScale);
 
@@ -880,7 +881,8 @@ void MenuScene::drawBowlLayout() {
 
         uint16_t bowlOffset = pgm_read_word(&BowlAssets::SPRITE_FRAMES[idx].offset);
         uint16_t bowlLength = pgm_read_word(&BowlAssets::SPRITE_FRAMES[idx].length);
-        int iconScale = 2;
+        static constexpr float BOWL_MENU_ICON_SCALE = 2.0f / 1.5f;
+        float iconScale = BOWL_MENU_ICON_SCALE;
         int iconW = (int)(BowlAssets::FRAME_W * iconScale);
         int iconH = (int)(BowlAssets::FRAME_H * iconScale);
 
@@ -1002,7 +1004,8 @@ void MenuScene::drawWoodLayout() {
 
         uint16_t woodOffset = pgm_read_word(&WoodAssets::SPRITE_FRAMES[idx].offset);
         uint16_t woodLength = pgm_read_word(&WoodAssets::SPRITE_FRAMES[idx].length);
-        float iconScale = 1.0f;
+        static constexpr float WOOD_ICON_SCALE = 1.0f / 1.5f;
+        float iconScale = WOOD_ICON_SCALE;
         int iconW = (int)(WoodAssets::FRAME_W * iconScale);
         int iconH = (int)(WoodAssets::FRAME_H * iconScale);
 
@@ -1033,15 +1036,6 @@ void MenuScene::drawWoodLayout() {
                                            WoodAssets::FRAME_H,
                                            WoodAssets::SPRITE_RLE,
                                            woodOffset, woodLength, iconScale, false);
-        if (!unlocked) {
-            for (int yy = 0; yy < iconH; yy++) {
-                for (int xx = 0; xx < iconW; xx++) {
-                    if (((xx + yy) & 1) == 0) {
-                        PixelRenderer::fillRect(iconX + xx, iconY + yy, 1, 1, PixelRenderer::GRAY);
-                    }
-                }
-            }
-        }
 
         // 名字在右上，库存在右下
         PixelRenderer::drawPixelText(textX, nameY, name, unlocked ? PixelRenderer::WHITE : PixelRenderer::GRAY, fs);

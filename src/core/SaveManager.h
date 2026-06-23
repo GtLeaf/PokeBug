@@ -1,5 +1,6 @@
 #pragma once
 #include "../game/Bug.h"
+#include "TerrariumViewState.h"
 
 // ============================================================
 // 存档管理器 — 封装 Preferences (NVS) 存储
@@ -36,6 +37,11 @@ public:
     bool loadExploreGlobal(uint32_t& day, uint8_t& timeOfDay, uint8_t& countToday);
     void clearExploreGlobal();
 
+    // 培养缸当前表现状态（成虫位置、朝向、动作等）
+    bool saveTerrariumViewState(const TerrariumViewState& state);
+    bool loadTerrariumViewState(TerrariumViewState& state);
+    void clearTerrariumViewState();
+
 private:
     SaveManager() = default;
 
@@ -57,6 +63,7 @@ private:
     static constexpr const char* KEY_EXPLORE_DAY   = "explore_day";
     static constexpr const char* KEY_EXPLORE_TOD   = "explore_tod";
     static constexpr const char* KEY_EXPLORE_COUNT = "explore_count";
+    static constexpr const char* KEY_TERRARIUM_VIEW = "terr_view";
     static constexpr uint8_t SAVE_VERSION = 9;
 
     bool isSaving = false;  // 防并发写入锁

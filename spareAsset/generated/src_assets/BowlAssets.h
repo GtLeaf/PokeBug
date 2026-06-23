@@ -4,8 +4,8 @@
 
 namespace BowlAssets {
 
-static constexpr uint8_t FRAME_W = 43;
-static constexpr uint8_t FRAME_H = 22;
+static constexpr uint8_t FRAME_W = 52;
+static constexpr uint8_t FRAME_H = 27;
 static constexpr uint8_t SPRITE_COUNT = 3;
 
 // 食物盘风格名称与描述

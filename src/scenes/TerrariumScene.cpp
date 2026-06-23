@@ -115,6 +115,11 @@ void TerrariumScene::onEnter() {
 }
 
 void TerrariumScene::onExit() {
+    persistViewState();
+    GameEngine::ins().getBug().setSleeping(false);
+}
+
+void TerrariumScene::persistViewState() {
     Bug& bug = GameEngine::ins().getBug();
     if (bug.getStage() == Stage::ADULT && !bug.isDead()) {
         TerrariumViewState state;
@@ -143,7 +148,6 @@ void TerrariumScene::onExit() {
     } else {
         GameEngine::ins().clearTerrariumViewState();
     }
-    bug.setSleeping(false);
 }
 
 void TerrariumScene::resetLocalViewState() {
@@ -356,11 +360,19 @@ void TerrariumScene::drawBackground() {
         return;
     }
     if (GameEngine::ins().getMainSceneBg() == GameEngine::BG_ENTOMOLOGIST) {
-        PixelRenderer::drawIndexed8(0, 0,
-                                    MainSceneAssets::ENTOMOLOGIST_ROOM_FULL_W,
-                                    MainSceneAssets::ENTOMOLOGIST_ROOM_FULL_H,
-                                    MainSceneAssets::ENTOMOLOGIST_ROOM_FULL_INDEX,
-                                    MainSceneAssets::ENTOMOLOGIST_ROOM_FULL_PALETTE);
+        if (GameEngine::ins().isNight()) {
+            PixelRenderer::drawIndexed8(0, 0,
+                                        MainSceneAssets::ENTOMOLOGIST_ROOM_NIGHT_FULL_W,
+                                        MainSceneAssets::ENTOMOLOGIST_ROOM_NIGHT_FULL_H,
+                                        MainSceneAssets::ENTOMOLOGIST_ROOM_NIGHT_FULL_INDEX,
+                                        MainSceneAssets::ENTOMOLOGIST_ROOM_NIGHT_FULL_PALETTE);
+        } else {
+            PixelRenderer::drawIndexed8(0, 0,
+                                        MainSceneAssets::ENTOMOLOGIST_ROOM_DAY_FULL_W,
+                                        MainSceneAssets::ENTOMOLOGIST_ROOM_DAY_FULL_H,
+                                        MainSceneAssets::ENTOMOLOGIST_ROOM_DAY_FULL_INDEX,
+                                        MainSceneAssets::ENTOMOLOGIST_ROOM_DAY_FULL_PALETTE);
+        }
         return;
     }
     if (GameEngine::ins().getMainSceneBg() == GameEngine::BG_SCHOOL) {

@@ -52,7 +52,7 @@ ACTION_NAMES = [source["name"] for source in ACTION_SOURCES]
 # numbers are based on WALK as the body-size reference; do not make every frame
 # independently fill the canvas, or low/raised poses will look like different
 # sized beetles.
-ADULT_BASE_SCALE = 1.44
+ADULT_BASE_SCALE = 1.73
 ADULT_RUNTIME_MAX_SCALE = 1.20
 SCREEN_WIDTH = 240
 
@@ -77,13 +77,19 @@ BASE_POLICY = {
 #
 # Usage:
 # 1. Art can keep using the current full-color beetle PNGs.
-# 2. Only the red palette/marking region is classified before resizing. The
-#    beetle body, shadows, outline, legs, and gradients remain original art.
-# 3. After resizing, palette pixels are normalized to exact #ff0000
-#    (RGB565 0xF800). Runtime code can then replace only this palette key.
+# 2. Only the deliberate palette-red source pixels are classified before
+#    resizing. Current exported art stores the #ff0000 guide as very close reds
+#    like #ff1d06, so the seed rule requires a very strong red channel with low
+#    G/B. Beetle body, shadows, outline, legs, gradients, and red-brown
+#    antialiasing remain original art.
+# 3. After resizing, the exact-red mask is also resized softly so sampled
+#    palette pixels do not become blurry/near-red. Those pixels are normalized
+#    back to exact #ff0000 (RGB565 0xF800), and runtime code replaces only this
+#    palette key.
 # 4. To tune future art, edit classify_pixel() below and rerun:
 #       python3 spareAsset/scripts/generate_hercules_adult_sprites.py
 PALETTE_RGB = (255, 0, 0, 255)
+PALETTE_SOFT_MASK_THRESHOLD = 4
 
 CLASS_NONE = 0
 CLASS_PALETTE = 1
@@ -108,15 +114,16 @@ def is_bg(r, g, b, a, bg):
 def classify_pixel(r, g, b, a):
     """Return palette class for one visible source pixel.
 
-    The thresholds catch exact #ff0000 plus nearby antialiased red pixels from
-    the source PNG. All non-red pixels stay as original art.
+    Palette control is deliberate: only the near-#ff0000 guide color is treated
+    as a runtime replaceable palette key. A later local edge pass recovers
+    one-pixel sampled fringes that touch confirmed palette pixels.
+    Use the soft mask after scaling to recover sampled pixels around those key
+    pixels.
     """
     if a < 80:
         return CLASS_NONE
 
-    # Red palette/marking region. This catches exact #ff0000 plus the nearby
-    # reds created by source antialiasing.
-    if r >= 170 and g <= 95 and b <= 80 and r > g * 1.6 and r > b * 1.6:
+    if r >= 240 and g <= 45 and b <= 14:
         return CLASS_PALETTE
 
     return CLASS_NONE
@@ -223,10 +230,21 @@ def trim_alpha(im):
     return im.crop(bbox) if bbox else Image.new("RGBA", (1, 1), (0, 0, 0, 0))
 
 
-def apply_palette_key(img, class_img):
+def palette_mask_from_classes(class_img):
+    return class_img.point(lambda v: 255 if v == CLASS_PALETTE else 0)
+
+
+def is_palette_edge_pixel(r, g, b, a):
+    if a < 80:
+        return False
+    return r >= 170 and g <= 95 and b <= 80 and r > g * 1.6 and r > b * 1.6
+
+
+def apply_palette_key(img, class_img, soft_palette_mask):
     keyed = img.copy()
     pix = keyed.load()
     class_pix = class_img.load()
+    soft_pix = soft_palette_mask.load()
     for y in range(keyed.height):
         for x in range(keyed.width):
             if pix[x, y][3] < 80:
@@ -234,6 +252,26 @@ def apply_palette_key(img, class_img):
             cls = class_pix[x, y]
             if cls == CLASS_PALETTE:
                 pix[x, y] = PALETTE_RGB
+                continue
+            r, g, b, a = pix[x, y]
+            if soft_pix[x, y] >= PALETTE_SOFT_MASK_THRESHOLD and is_palette_edge_pixel(r, g, b, a):
+                pix[x, y] = PALETTE_RGB
+    edge_points = []
+    for y in range(keyed.height):
+        for x in range(keyed.width):
+            r, g, b, a = pix[x, y]
+            if not is_palette_edge_pixel(r, g, b, a):
+                continue
+            for ny in range(max(0, y - 1), min(keyed.height, y + 2)):
+                for nx in range(max(0, x - 1), min(keyed.width, x + 2)):
+                    if pix[nx, ny] == PALETTE_RGB:
+                        edge_points.append((x, y))
+                        break
+                else:
+                    continue
+                break
+    for x, y in edge_points:
+        pix[x, y] = PALETTE_RGB
     return keyed
 
 
@@ -251,10 +289,12 @@ def build_frame(name, frame_index, raw_crop, raw_classes, source_label, scale):
         Image.Resampling.LANCZOS,
     )
     resized_classes = class_crop.resize(resized.size, Image.Resampling.NEAREST)
+    resized_soft_palette = palette_mask_from_classes(class_crop).resize(resized.size, Image.Resampling.LANCZOS)
     bbox = resized.getbbox()
     resized = resized.crop(bbox) if bbox else resized
     resized_classes = resized_classes.crop(bbox) if bbox else resized_classes
-    keyed = apply_palette_key(resized, resized_classes)
+    resized_soft_palette = resized_soft_palette.crop(bbox) if bbox else resized_soft_palette
+    keyed = apply_palette_key(resized, resized_classes, resized_soft_palette)
     keyed.save(EXTRACTED / f"{name.lower()}_{frame_index}.png")
     palette_pixels = sum(1 for v in image_data(resized_classes) if v == CLASS_PALETTE)
     print(

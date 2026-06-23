@@ -95,6 +95,7 @@ private:
     void beginAuthoritativeRound(const battle_round_t& round);
     void applyCurrentAttack();
     bool isCurrentAttackByMe() const;
+    bool isCurrentAttackCritical() const;
     bool attackExistsFor(bool byMe) const;
     void computeLocalWin();
     void computeAndSendResult();
@@ -103,7 +104,8 @@ private:
     void drawConnecting();
     void drawBattleField();
     void drawCombatantSprite(const Combatant& combatant, int centerX, int groundY,
-                             bool faceRight, int8_t shakeX, int8_t shakeY, bool attacking);
+                             bool faceRight, int8_t shakeX, int8_t shakeY,
+                             bool attacking, bool critical);
     void drawResult();
 
     static constexpr uint32_t CHARGE_MS = 1200;

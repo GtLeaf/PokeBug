@@ -24,8 +24,8 @@ GENERATED = SPARE / "generated/src_assets"
 # and a backup copy under spareAsset/generated/src_assets/.
 
 # Size policy. Change these two values to resize every food style together.
-FOOD_FRAME_W = 29
-FOOD_FRAME_H = 14
+FOOD_FRAME_W = 35
+FOOD_FRAME_H = 17
 
 
 def rgb565(r, g, b):

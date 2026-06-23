@@ -37,10 +37,17 @@ void GameEngine::begin() {
         Serial.println("[Engine] No save found, creating new bug");
         bug.initNew(0);
         gameNow = 0;
+        SaveManager::ins().clearTerrariumViewState();
     } else {
         gameNow = bug.getLastUpdateTime();
         Serial.printf("[Engine] Bug loaded, stage=%d alive=%d gameNow=%llu\n",
                       (int)bug.getStage(), bug.isAlive(), gameNow);
+        if (bug.getStage() == Stage::ADULT && bug.isAlive()) {
+            SaveManager::ins().loadTerrariumViewState(terrariumViewState);
+        } else {
+            terrariumViewState = TerrariumViewState();
+            SaveManager::ins().clearTerrariumViewState();
+        }
     }
 
     // 加载设置
@@ -413,7 +420,11 @@ uint32_t GameEngine::targetFrameTime() const {
 }
 
 void GameEngine::forceSave() {
+    if (curSceneID == SCENE_TERRARIUM && curScene) {
+        static_cast<TerrariumScene*>(curScene)->persistViewState();
+    }
     SaveManager::ins().save(bug);
+    SaveManager::ins().saveTerrariumViewState(terrariumViewState);
     saveExploreGlobal();
 }
 

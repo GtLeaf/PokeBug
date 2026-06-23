@@ -1,6 +1,7 @@
 #include "PixelRenderer.h"
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 LGFX_Sprite* PixelRenderer::canvas = nullptr;
 float PixelRenderer::contentFontScale = 1.0f;
@@ -231,8 +232,12 @@ void PixelRenderer::drawRgb565RleMappedScaled(int x, int y, int w, int h,
     if (outW <= 0) outW = 1;
     if (outH <= 0) outH = 1;
 
-    uint16_t* buf = (uint16_t*)malloc((size_t)w * h * sizeof(uint16_t));
-    if (!buf) {
+    size_t pixelCount = (size_t)w * h;
+    uint16_t* buf = (uint16_t*)malloc(pixelCount * sizeof(uint16_t));
+    uint8_t* opaque = (uint8_t*)calloc(pixelCount, sizeof(uint8_t));
+    if (!buf || !opaque) {
+        if (buf) free(buf);
+        if (opaque) free(opaque);
         drawRgb565RleMapped(x, y, w, h, data, offset, length,
                             keyMain, targetMain,
                             keyShadow, targetShadow,
@@ -257,6 +262,7 @@ void PixelRenderer::drawRgb565RleMappedScaled(int x, int y, int w, int h,
 
         for (uint16_t i = 0; i < run && idx < length && pixel < total; ++i, ++pixel) {
             buf[pixel] = mapColor(pgm_read_word(&data[offset + idx++]));
+            opaque[pixel] = 1;
         }
     }
 
@@ -267,10 +273,14 @@ void PixelRenderer::drawRgb565RleMappedScaled(int x, int y, int w, int h,
             int srcCol = (int)(col / scale);
             if (srcCol >= w) srcCol = w - 1;
             int finalCol = flipX ? (w - 1 - srcCol) : srcCol;
-            canvas->drawPixel(x + col, y + row, buf[srcRow * w + finalCol]);
+            size_t srcIndex = (size_t)srcRow * w + finalCol;
+            if (opaque[srcIndex]) {
+                canvas->drawPixel(x + col, y + row, buf[srcIndex]);
+            }
         }
     }
 
+    free(opaque);
     free(buf);
 }
 
@@ -320,8 +330,12 @@ void PixelRenderer::drawRgb565RleScaled(int x, int y, int w, int h,
     if (outW <= 0) outW = 1;
     if (outH <= 0) outH = 1;
 
-    uint16_t* buf = (uint16_t*)malloc((size_t)w * h * sizeof(uint16_t));
-    if (!buf) {
+    size_t pixelCount = (size_t)w * h;
+    uint16_t* buf = (uint16_t*)malloc(pixelCount * sizeof(uint16_t));
+    uint8_t* opaque = (uint8_t*)calloc(pixelCount, sizeof(uint8_t));
+    if (!buf || !opaque) {
+        if (buf) free(buf);
+        if (opaque) free(opaque);
         drawRgb565Rle(x, y, w, h, data, offset, length, flipX);
         return;
     }
@@ -342,6 +356,7 @@ void PixelRenderer::drawRgb565RleScaled(int x, int y, int w, int h,
 
         for (uint16_t i = 0; i < run && idx < length && pixel < total; ++i, ++pixel) {
             buf[pixel] = pgm_read_word(&data[offset + idx++]);
+            opaque[pixel] = 1;
         }
     }
 
@@ -352,10 +367,14 @@ void PixelRenderer::drawRgb565RleScaled(int x, int y, int w, int h,
             int srcCol = (int)(col / scale);
             if (srcCol >= w) srcCol = w - 1;
             int finalCol = flipX ? (w - 1 - srcCol) : srcCol;
-            canvas->drawPixel(x + col, y + row, buf[srcRow * w + finalCol]);
+            size_t srcIndex = (size_t)srcRow * w + finalCol;
+            if (opaque[srcIndex]) {
+                canvas->drawPixel(x + col, y + row, buf[srcIndex]);
+            }
         }
     }
 
+    free(opaque);
     free(buf);
 }
 

@@ -13,14 +13,89 @@ static uint8_t battleStatWithHunger(float value, uint8_t hunger) {
     return (uint8_t)stat;
 }
 
+static uint16_t mixBattleRgb565(uint16_t base, uint16_t mix, float mixRatio) {
+    if (mixRatio < 0.0f) mixRatio = 0.0f;
+    if (mixRatio > 1.0f) mixRatio = 1.0f;
+    uint8_t baseR = (base >> 11) & 0x1F;
+    uint8_t baseG = (base >> 5) & 0x3F;
+    uint8_t baseB = base & 0x1F;
+    uint8_t mixR = (mix >> 11) & 0x1F;
+    uint8_t mixG = (mix >> 5) & 0x3F;
+    uint8_t mixB = mix & 0x1F;
+    uint8_t r = (uint8_t)(baseR * (1.0f - mixRatio) + mixR * mixRatio);
+    uint8_t g = (uint8_t)(baseG * (1.0f - mixRatio) + mixG * mixRatio);
+    uint8_t b = (uint8_t)(baseB * (1.0f - mixRatio) + mixB * mixRatio);
+    return (uint16_t)((r << 11) | (g << 5) | b);
+}
+
+static uint16_t brightenBattleRgb565(uint16_t color, float factor) {
+    uint8_t r = (color >> 11) & 0x1F;
+    uint8_t g = (color >> 5) & 0x3F;
+    uint8_t b = color & 0x1F;
+    uint16_t rr = (uint16_t)(r * factor);
+    uint16_t gg = (uint16_t)(g * factor);
+    uint16_t bb = (uint16_t)(b * factor);
+    if (rr > 0x1F) rr = 0x1F;
+    if (gg > 0x3F) gg = 0x3F;
+    if (bb > 0x1F) bb = 0x1F;
+    return (uint16_t)((rr << 11) | (gg << 5) | bb);
+}
+
+static uint16_t battleHueMain(Temperament temperament) {
+    switch (temperament) {
+        case Temperament::BRUTE:     return 0xF800; // 深红
+        case Temperament::SWIFT:     return 0x6B7D; // 灰蓝
+        case Temperament::GIANT:     return 0xFD20; // 橙褐
+        case Temperament::RESILIENT: return 0xFE00; // 金色
+        case Temperament::BALANCED:  return 0xFFFF; // 白/浅灰
+        case Temperament::SPIRIT:    return 0x07E0; // 青绿
+    }
+    return 0xF800;
+}
+
+static uint16_t battleDepthColor(Temperament temperament, float ratio) {
+    if (ratio < 0.0f) ratio = 0.0f;
+    if (ratio > 1.0f) ratio = 1.0f;
+    uint16_t base = battleHueMain(temperament);
+    if (ratio < 0.25f) {
+        return mixBattleRgb565(mixBattleRgb565(base, PixelRenderer::GRAY, 0.5f), PixelRenderer::WHITE, 0.3f);
+    }
+    if (ratio < 0.50f) {
+        return mixBattleRgb565(base, PixelRenderer::GRAY, 0.3f);
+    }
+    if (ratio < 0.75f) {
+        return base;
+    }
+    return brightenBattleRgb565(base, 1.25f);
+}
+
+static uint8_t battlePaletteCode(Temperament temperament, float depth) {
+    uint8_t t = (uint8_t)temperament;
+    if (t > (uint8_t)Temperament::SPIRIT) t = (uint8_t)Temperament::SPIRIT;
+    if (depth < 0.0f) depth = 0.0f;
+    if (depth > 1.0f) depth = 1.0f;
+    uint8_t bucket = (uint8_t)(depth * 4.0f);
+    if (bucket > 3) bucket = 3;
+    return (uint8_t)(0x80 | (bucket << 3) | t);
+}
+
 static uint16_t battlePaletteColor(uint8_t palette) {
+    if (palette & 0x80) {
+        uint8_t t = palette & 0x07;
+        if (t > (uint8_t)Temperament::SPIRIT) t = (uint8_t)Temperament::SPIRIT;
+        uint8_t bucket = (palette >> 3) & 0x03;
+        float depth = (bucket + 0.5f) / 4.0f;
+        return battleDepthColor((Temperament)t, depth);
+    }
+
+    // 旧 0-3 调色板 fallback，仅用于旧存档/NPC 随机色。
     switch (palette & 0x03) {
-        case 1: return 0x07E0; // green
-        case 2: return 0xFE00; // gold
-        case 3: return 0xE71C; // pale violet
+        case 1: return 0x07E0;
+        case 2: return 0xFE00;
+        case 3: return 0xE71C;
         case 0:
         default:
-            return 0xF800;     // red
+            return 0xF800;
     }
 }
 
@@ -118,7 +193,7 @@ void BattleScene::initFromBug() {
     me.spi = (uint8_t)roundf(bug.getSpi());
     me.spd = (uint8_t)roundf(bug.getSpd());
     me.mot = bug.getMot();
-    me.palette = bug.getPaletteId();
+    me.palette = battlePaletteCode(bug.getTemperament(), bug.getAdultDepth());
     me.maxHp = BattleCalc::computeHp(me);
     me.hp = me.maxHp;
 
@@ -137,7 +212,7 @@ bool BattleScene::buildSync() {
     sync.spd = (uint8_t)roundf(bug.getSpd());
     sync.motivation = bug.getMot();
     sync.hunger = hunger;
-    sync.palette_id = bug.getPaletteId();
+    sync.palette_id = battlePaletteCode(bug.getTemperament(), bug.getAdultDepth());
     return BattleLink::ins().sendSync(sync);
 }
 
@@ -578,6 +653,10 @@ bool BattleScene::isCurrentAttackByMe() const {
     return false;
 }
 
+bool BattleScene::isCurrentAttackCritical() const {
+    return isCurrentAttackByMe() ? myCrit : enemyCrit;
+}
+
 void BattleScene::applyCurrentAttack() {
     bool byMe = isCurrentAttackByMe();
     if (byMe) {
@@ -690,7 +769,8 @@ void BattleScene::drawConnecting() {
 }
 
 void BattleScene::drawCombatantSprite(const Combatant& combatant, int centerX, int groundY,
-                                      bool faceRight, int8_t shakeX, int8_t shakeY, bool attacking) {
+                                      bool faceRight, int8_t shakeX, int8_t shakeY,
+                                      bool attacking, bool critical) {
     const HerculesAdultSprites::RleFrame* frames = HerculesAdultSprites::WALK_FRAMES;
     const uint16_t* data = HerculesAdultSprites::WALK_RLE;
     uint8_t frameCount = HerculesAdultSprites::WALK_FRAME_COUNT;
@@ -702,7 +782,9 @@ void BattleScene::drawCombatantSprite(const Combatant& combatant, int centerX, i
         data = HerculesAdultSprites::ATTACK_DOWN_RLE;
         frameCount = HerculesAdultSprites::ATTACK_DOWN_FRAME_COUNT;
         durationMs = ATTACK_MS / 2;
-        centerX += faceRight ? -3 : 3;
+        if (critical) {
+            centerX += faceRight ? -3 : 3;
+        }
     } else if (attacking) {
         frames = HerculesAdultSprites::ATTACK_UP_FRAMES;
         data = HerculesAdultSprites::ATTACK_UP_RLE;
@@ -710,8 +792,10 @@ void BattleScene::drawCombatantSprite(const Combatant& combatant, int centerX, i
         uint32_t attackElapsed = elapsed - ATTACK_MS / 2;
         durationMs = ATTACK_MS / 2;
         uint32_t phase = attackElapsed < durationMs ? attackElapsed : durationMs;
-        int lunge = (int)(phase * 14 / durationMs);
-        centerX += faceRight ? lunge : -lunge;
+        if (critical) {
+            int lunge = (int)(phase * 14 / durationMs);
+            centerX += faceRight ? lunge : -lunge;
+        }
         elapsed = attackElapsed;
     }
 
@@ -726,7 +810,7 @@ void BattleScene::drawCombatantSprite(const Combatant& combatant, int centerX, i
     uint16_t length = pgm_read_word(&frames[frameIndex].length);
     uint8_t w = pgm_read_byte(&frames[frameIndex].width);
     uint8_t h = pgm_read_byte(&frames[frameIndex].height);
-    float scale = 1.15f;
+    float scale = 1.0f;
     int drawW = (int)(w * scale);
     int drawH = (int)(h * scale);
     int drawX = centerX - drawW / 2 + shakeX;
@@ -767,9 +851,12 @@ void BattleScene::drawBattleField() {
                        isCurrentAttackByMe();
     bool enemyAttacking = (state == State::ATTACK_ONE || state == State::ATTACK_TWO) &&
                           !isCurrentAttackByMe();
+    bool currentAttackCritical = (state == State::ATTACK_ONE || state == State::ATTACK_TWO) &&
+                                 isCurrentAttackCritical();
 
     // 我方（左侧）
-    drawCombatantSprite(me, 58, 62, true, meOffX, meOffY, meAttacking);
+    drawCombatantSprite(me, 58, 62, true, meOffX, meOffY,
+                        meAttacking, meAttacking && currentAttackCritical);
     snprintf(buf, sizeof(buf), "%s:%d/%d", UiStrings::BATTLE_HP, me.hp, me.maxHp);
     PixelRenderer::drawPixelText(10, 60, buf, PixelRenderer::WHITE, 1);
     PixelRenderer::drawProgressBar(10, 72, 80, 6, (float)me.hp / me.maxHp,
@@ -779,7 +866,8 @@ void BattleScene::drawBattleField() {
     PixelRenderer::drawPixelText(10, 82, buf, PixelRenderer::WHITE, 1);
 
     // 敌方（右侧）
-    drawCombatantSprite(enemy, 182, 62, false, enemyOffX, enemyOffY, enemyAttacking);
+    drawCombatantSprite(enemy, 182, 62, false, enemyOffX, enemyOffY,
+                        enemyAttacking, enemyAttacking && currentAttackCritical);
     snprintf(buf, sizeof(buf), "%s:%d/%d", UiStrings::BATTLE_HP, enemy.hp, enemy.maxHp);
     PixelRenderer::drawPixelText(150, 60, buf, PixelRenderer::WHITE, 1);
     PixelRenderer::drawProgressBar(150, 72, 80, 6, (float)enemy.hp / enemy.maxHp,
