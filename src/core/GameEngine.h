@@ -14,6 +14,8 @@ enum class LobbyMode {
     LOBBY_DEFAULT,
     LOBBY_CREATE,
     LOBBY_SEARCH,
+    LOBBY_GIFT_SEND,
+    LOBBY_GIFT_RECEIVE,
 };
 
 // 本地 NPC 对战上下文：由 MenuScene/ExploreScene/CupScene 写入，BattleScene 读取
@@ -182,6 +184,17 @@ public:
     LobbyMode getLobbyMode() const { return lobbyMode; }
     void setLobbyMode(LobbyMode m) { lobbyMode = m; }
 
+    // 礼物大厅暂存道具。当前菜单只写入 food，后续可扩展到 ItemCatalog 支持的其它可交换道具。
+    void setPendingGiftItem(ItemId id, uint8_t amount) {
+        pendingGiftItem.id = id;
+        pendingGiftItem.amount = amount;
+    }
+    ItemStack getPendingGiftItem() const { return pendingGiftItem; }
+    void clearPendingGiftItem() {
+        pendingGiftItem.id = 0;
+        pendingGiftItem.amount = 0;
+    }
+
     // 本地 NPC 对战上下文
     PendingNpcBattle& pendingNpcBattle() { return npcBattle; }
     void clearPendingNpcBattle() { npcBattle.active = false; }
@@ -206,10 +219,10 @@ public:
     CupCycleState getCupCycleState() const { return cupCycleState; }
     void setCupCycleState(CupCycleState s) { cupCycleState = s; }
 
-    // 杯赛周期：7 游戏天一届，1 游戏天报名
+    // 杯赛周期：7 游戏天一届，前 3 游戏天报名
     static constexpr uint64_t GAME_DAY_MS = 24ULL * 60 * 60 * 1000;
     static constexpr uint64_t CUP_CYCLE_MS = 7 * GAME_DAY_MS;
-    static constexpr uint64_t CUP_REGISTER_MS = 1 * GAME_DAY_MS;
+    static constexpr uint64_t CUP_REGISTER_MS = 3 * GAME_DAY_MS;
 
     // 当前是否在探索/对战/杯赛等不可进入 Deep Sleep 的场景
     bool isBlockDeepSleepScene() const;
@@ -256,6 +269,7 @@ private:
     uint32_t exploreDay = 0;
 
     LobbyMode lobbyMode = LobbyMode::LOBBY_DEFAULT;
+    ItemStack pendingGiftItem;
     PendingNpcBattle npcBattle;
     NpcBattleResult npcResult;
 

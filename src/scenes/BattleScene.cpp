@@ -137,7 +137,10 @@ void BattleScene::onEnter() {
     roundSent = false;
     resultSent = false;
     roundComputed = false;
-    hasPendingClientReady = false;
+    motUpdatePending = false;
+    motUpdateInFlight = false;
+    motUpdateRound = 0;
+    motUpdateValue = 0;
     meShakeEndMs = 0;
     enemyShakeEndMs = 0;
     firstAttackByMe = true;
@@ -152,8 +155,17 @@ void BattleScene::onEnter() {
     enemyRealGauge = 0.0f;
     lastGaugeUpdateMs = 0;
     gaugeReadySinceMs = 0;
-    clientReadyReceived = false;
+    btnAHoldStartMs = 0;
+    btnAHoldReturned = false;
+    rhythmWindowCount = 0;
+    rhythmWindowIndex = 0;
+    myAttackOpportunity = 1;
+    rhythmPressedThisOpportunity = false;
+    rhythmRawAPrev = Hal::ins().btnA_raw();
+    rhythmFeedback = RhythmFeedback::NONE;
+    rhythmFeedbackUntilMs = 0;
     initFromBug();
+    generateRhythmWindows();
 
     // 检查是否有本地 NPC 对战请求
     PendingNpcBattle& pending = GameEngine::ins().pendingNpcBattle();
@@ -224,6 +236,25 @@ bool BattleScene::buildSync() {
 }
 
 SceneID BattleScene::update() {
+    // 备用：直接检测 A 键持续按住 800ms 返回主菜单（兜底 ButtonDispatcher 长按偶发失效）
+    uint32_t rawNow = Hal::ins().millis();
+    bool rawA = Hal::ins().btnA_raw();
+    if (rawA) {
+        if (btnAHoldStartMs == 0) btnAHoldStartMs = rawNow;
+        else if (!btnAHoldReturned && rawNow - btnAHoldStartMs >= 800) {
+            btnAHoldReturned = true;
+            Serial.printf("[BattleScene] A hold fallback -> return scene %d\n", returnScene);
+            nextScene = returnScene;
+        }
+    } else {
+        btnAHoldStartMs = 0;
+        btnAHoldReturned = false;
+    }
+    if (state == State::GAUGE_FILLING && rawA && !rhythmRawAPrev) {
+        handleRhythmButtonPress(rawNow);
+    }
+    rhythmRawAPrev = rawA;
+
     if (!localNpcBattle) {
         BattleLink::ins().update();
     }
@@ -320,38 +351,25 @@ SceneID BattleScene::update() {
             }
 
             if (BattleLink::ins().isHost()) {
-                // 主机：gauge 触发且拿到从机 MOT 后，计算一次 ATB 行动并下发
+                // 主机：ATB 时机完全由主机推进；ready 只作为从机节奏输入后的 MOT 更新。
                 battle_ready_t ready;
-                bool gotReady = false;
-                if (hasPendingClientReady && pendingClientReady.round_num == roundNum) {
-                    ready = pendingClientReady;
-                    hasPendingClientReady = false;
-                    gotReady = true;
-                } else if (BattleLink::ins().takeReceivedReady(ready)) {
-                    gotReady = true;
-                }
-
-                if (gotReady) {
+                if (BattleLink::ins().takeReceivedReady(ready)) {
                     if (ready.round_num == roundNum) {
                         enemy.mot = ready.my_mot;
-                        clientReadyReceived = true;
-                    } else if (ready.round_num > roundNum) {
-                        pendingClientReady = ready;
-                        hasPendingClientReady = true;
-                        Serial.printf("[BattleScene] host ready future got=%d expected=%d, buffered\n",
-                                      ready.round_num, roundNum);
+                        Serial.printf("[BattleScene] host applied client rhythm mot=%d round=%d\n",
+                                      enemy.mot, roundNum);
                     } else {
-                        Serial.printf("[BattleScene] host ready round mismatch got=%d expected=%d\n",
+                        Serial.printf("[BattleScene] host ignored stale rhythm got=%d expected=%d\n",
                                       ready.round_num, roundNum);
                     }
                 }
 
-                if (!roundComputed && clientReadyReceived && tryComputeRound()) {
+                if (!roundComputed && tryComputeRound()) {
                     roundComputed = true;
                     Serial.printf("[BattleScene] host round %d computed\n", roundNum);
                 }
 
-                // 已拿到从机 MOT 并计算出回合，持续重试发送直到 ACK 成功
+                // 主机已计算出权威行动，持续重试发送直到 ACK 成功
                 if (roundComputed && !roundSent && !BattleLink::ins().isSending()) {
                     if (BattleLink::ins().takeLastSendSuccess()) {
                         beginAuthoritativeRound(hostRound);
@@ -364,19 +382,8 @@ SceneID BattleScene::update() {
                     }
                 }
             } else {
-                // 从机：本地 gauge 到达行动点后发送本回合 MOT（含加油），等待主机下发行动
-                if (gaugeReady && !roundSent) {
-                    battle_ready_t ready;
-                    ready.type = MSG_BATTLE_READY;
-                    ready.round_num = (uint8_t)roundNum;
-                    ready.my_mot = me.mot;
-                    if (BattleLink::ins().sendReady(ready)) {
-                        roundSent = true;
-                        Serial.printf("[BattleScene] client round %d ready sent mot=%d\n", roundNum, me.mot);
-                    } else {
-                        Serial.println("[BattleScene] client sendReady failed, retry");
-                    }
-                }
+                // 从机：不再用本地 gauge 决定行动，只上报节奏输入后的 MOT 并等待主机 round。
+                processMotUpdate();
 
                 battle_round_t round;
                 if (BattleLink::ins().takeReceivedRound(round)) {
@@ -392,17 +399,19 @@ SceneID BattleScene::update() {
             }
 
             if (gaugeReadySinceMs != 0 && now - gaugeReadySinceMs >= ROUND_TIMEOUT_MS) {
-                Serial.printf("[BattleScene] round %d timeout -> NO FOE\n", roundNum);
-                noOpponent = true;
-                state = State::DONE;
+                Serial.printf("[BattleScene] round %d timeout -> TIMEOUT\n", roundNum);
+                computeLocalWin();
+                state = State::TIMEOUT;
+                stateStartMs = Hal::ins().millis();
             }
             break;
         }
 
         case State::ATTACK_ONE: {
             if (Hal::ins().millis() - stateStartMs >= ATTACK_MS) {
+                bool attackByMe = isCurrentAttackByMe();
                 applyCurrentAttack();
-                // 攻击期间双方 gauge 保持冻结，不重置
+                resetGaugeAfterAction(attackByMe);
 
                 if (secondAttackPlanned) {
                     state = State::ATTACK_TWO;
@@ -412,7 +421,6 @@ SceneID BattleScene::update() {
                     enemy.hp = roundEndEnemyHp;
                     me.mot = roundEndMyMot;
                     enemy.mot = roundEndEnemyMot;
-                    resetGaugeAfterAction();
                     state = State::ROUND_END;
                     stateStartMs = Hal::ins().millis();
                 }
@@ -422,12 +430,13 @@ SceneID BattleScene::update() {
 
         case State::ATTACK_TWO: {
             if (Hal::ins().millis() - stateStartMs >= ATTACK_MS) {
+                bool attackByMe = isCurrentAttackByMe();
                 applyCurrentAttack();
                 me.hp = roundEndMyHp;
                 enemy.hp = roundEndEnemyHp;
                 me.mot = roundEndMyMot;
                 enemy.mot = roundEndEnemyMot;
-                resetGaugeAfterAction();
+                resetGaugeAfterAction(attackByMe);
                 state = State::ROUND_END;
                 stateStartMs = Hal::ins().millis();
             }
@@ -483,9 +492,20 @@ SceneID BattleScene::update() {
                 }
             }
             if (Hal::ins().millis() - stateStartMs >= RESULT_TIMEOUT_MS) {
-                Serial.println("[BattleScene] result timeout -> DONE");
+                Serial.println("[BattleScene] result timeout -> TIMEOUT");
+                computeLocalWin();
+                state = State::TIMEOUT;
+                stateStartMs = Hal::ins().millis();
+            }
+            break;
+        }
+
+        case State::TIMEOUT: {
+            if (Hal::ins().millis() - stateStartMs >= TIMEOUT_NOTICE_MS) {
                 applyBattleResult();
                 state = State::DONE;
+                stateStartMs = Hal::ins().millis();
+                Serial.printf("[BattleScene] timeout notice done -> DONE localWin=%d\n", localWin);
             }
             break;
         }
@@ -516,7 +536,6 @@ void BattleScene::startRound(bool resetGauge) {
     stateStartMs = Hal::ins().millis();
     lastGaugeUpdateMs = stateStartMs;
     gaugeReadySinceMs = 0;
-    roundBoosted = false;
     myDmg = 0;
     enemyDmg = 0;
     myCrit = false;
@@ -531,17 +550,16 @@ void BattleScene::startRound(bool resetGauge) {
     roundEndEnemyMot = enemy.mot;
     roundSent = false;
     roundComputed = false;
-    clientReadyReceived = false;
     if (resetGauge) {
         myGauge = 0.0f;
         enemyGauge = 0.0f;
         myRealGauge = 0.0f;
         enemyRealGauge = 0.0f;
     }
-    // 若缓存的从机 ready 属于下一回合则保留，否则丢弃
-    if (hasPendingClientReady && pendingClientReady.round_num != roundNum) {
-        hasPendingClientReady = false;
+    if (motUpdatePending && motUpdateRound != roundNum && !motUpdateInFlight) {
+        motUpdatePending = false;
     }
+    refreshRhythmWindow();
     Serial.printf("[BattleScene] round %d start\n", roundNum);
 }
 
@@ -589,14 +607,158 @@ void BattleScene::enterAttackOne() {
     else enemyGauge = 1.0f;
 }
 
-void BattleScene::resetGaugeAfterAction() {
-    if (firstAttackByMe) {
+void BattleScene::resetGaugeAfterAction(bool byMe) {
+    if (byMe) {
         myGauge = 0.0f;
         myRealGauge = 0.0f;
     } else {
         enemyGauge = 0.0f;
         enemyRealGauge = 0.0f;
     }
+}
+
+void BattleScene::queueMotUpdate() {
+    if (localNpcBattle || BattleLink::ins().isHost()) return;
+    motUpdatePending = true;
+    motUpdateInFlight = false;
+    motUpdateRound = (uint8_t)roundNum;
+    motUpdateValue = me.mot;
+    processMotUpdate();
+}
+
+void BattleScene::processMotUpdate() {
+    if (localNpcBattle || BattleLink::ins().isHost()) return;
+
+    if (motUpdateInFlight && !BattleLink::ins().isSending()) {
+        bool ok = BattleLink::ins().takeLastSendSuccess();
+        motUpdateInFlight = false;
+        if (ok) {
+            motUpdatePending = false;
+            Serial.printf("[BattleScene] client rhythm mot update acked round=%d mot=%d\n",
+                          motUpdateRound, motUpdateValue);
+            return;
+        }
+        Serial.println("[BattleScene] client rhythm mot update failed, retry");
+    }
+
+    if (!motUpdatePending || motUpdateInFlight || BattleLink::ins().isSending()) return;
+    if (motUpdateRound != (uint8_t)roundNum) {
+        motUpdatePending = false;
+        return;
+    }
+
+    battle_ready_t ready;
+    ready.type = MSG_BATTLE_READY;
+    ready.round_num = motUpdateRound;
+    ready.my_mot = motUpdateValue;
+    if (BattleLink::ins().sendReady(ready)) {
+        motUpdateInFlight = true;
+        Serial.printf("[BattleScene] client rhythm mot update sent round=%d mot=%d\n",
+                      motUpdateRound, motUpdateValue);
+    }
+}
+
+void BattleScene::generateRhythmWindows() {
+    rhythmWindowCount = 0;
+    rhythmWindowIndex = 0;
+    myAttackOpportunity = 1;
+    rhythmPressedThisOpportunity = false;
+
+    uint8_t opportunity = (uint8_t)random(RHYTHM_INTERVAL_MIN, RHYTHM_INTERVAL_MAX + 1);
+    const int minStart = TEMPO_BAR_W * RHYTHM_ZONE_MIN_PCT / 100;
+    const int maxEnd = TEMPO_BAR_W * RHYTHM_ZONE_MAX_PCT / 100;
+
+    while (opportunity <= MAX_ROUNDS && rhythmWindowCount < 6) {
+        uint8_t width = (uint8_t)random(RHYTHM_ZONE_W_MIN, RHYTHM_ZONE_W_MAX + 1);
+        int maxStart = maxEnd - width;
+        if (maxStart < minStart) maxStart = minStart;
+
+        RhythmWindow& window = rhythmWindows[rhythmWindowCount++];
+        window.opportunity = opportunity;
+        window.widthPx = width;
+        window.startPx = (uint8_t)random(minStart, maxStart + 1);
+
+        opportunity = (uint8_t)(opportunity +
+                                random(RHYTHM_INTERVAL_MIN, RHYTHM_INTERVAL_MAX + 1));
+    }
+
+    refreshRhythmWindow();
+}
+
+void BattleScene::refreshRhythmWindow() {
+    while (rhythmWindowIndex < rhythmWindowCount &&
+           rhythmWindows[rhythmWindowIndex].opportunity < myAttackOpportunity) {
+        rhythmWindowIndex++;
+    }
+}
+
+const BattleScene::RhythmWindow* BattleScene::currentRhythmWindow() const {
+    if (rhythmWindowIndex >= rhythmWindowCount) return nullptr;
+    const RhythmWindow& window = rhythmWindows[rhythmWindowIndex];
+    return window.opportunity == myAttackOpportunity ? &window : nullptr;
+}
+
+bool BattleScene::isRhythmWindowActive() const {
+    return currentRhythmWindow() != nullptr && !rhythmPressedThisOpportunity;
+}
+
+void BattleScene::showRhythmFeedback(RhythmFeedback feedback, uint32_t nowMs) {
+    rhythmFeedback = feedback;
+    rhythmFeedbackUntilMs = nowMs + RHYTHM_FEEDBACK_MS;
+}
+
+void BattleScene::handleRhythmButtonPress(uint32_t nowMs) {
+    const RhythmWindow* window = currentRhythmWindow();
+    if (rhythmPressedThisOpportunity) return;
+
+    rhythmPressedThisOpportunity = true;
+
+    int markerPx = (int)(tempoProgress(true) * TEMPO_BAR_W + 0.5f);
+    RhythmFeedback feedback = RhythmFeedback::MISS;
+    uint8_t boost = RHYTHM_BOOST_MISS;
+    int startPx = -1;
+    int endPx = -1;
+
+    if (window != nullptr) {
+        startPx = window->startPx;
+        endPx = startPx + window->widthPx;
+        int centerPx = startPx + window->widthPx / 2;
+        int perfectHalfPx = window->widthPx / 5;
+        if (perfectHalfPx < 2) perfectHalfPx = 2;
+
+        if (markerPx >= startPx && markerPx <= endPx) {
+            int dist = markerPx - centerPx;
+            if (dist < 0) dist = -dist;
+            if (dist <= perfectHalfPx) {
+                feedback = RhythmFeedback::PERFECT;
+                boost = RHYTHM_BOOST_PERFECT;
+            } else {
+                feedback = RhythmFeedback::GREAT;
+                boost = RHYTHM_BOOST_GREAT;
+            }
+        }
+    }
+
+    uint16_t mot = (uint16_t)me.mot + boost;
+    me.mot = mot > 100 ? 100 : (uint8_t)mot;
+    queueMotUpdate();
+    if (window != nullptr) {
+        showRhythmFeedback(feedback, nowMs);
+    }
+    Serial.printf("[BattleScene] rhythm %d opportunity=%d marker=%d zone=%d-%d mot+%d -> %d\n",
+                  (int)feedback, myAttackOpportunity, markerPx, startPx, endPx, boost, me.mot);
+}
+
+void BattleScene::finishMyAttackOpportunity() {
+    const RhythmWindow* window = currentRhythmWindow();
+    if (window != nullptr) {
+        rhythmWindowIndex++;
+    }
+    if (myAttackOpportunity < 255) {
+        myAttackOpportunity++;
+    }
+    rhythmPressedThisOpportunity = false;
+    refreshRhythmWindow();
 }
 
 battle_round_t BattleScene::computeAuthoritativeRound() {
@@ -608,6 +770,10 @@ battle_round_t BattleScene::computeAuthoritativeRound() {
     bool hostDodged = false, clientDodged = false;
     round.host_dmg = 0;
     round.client_dmg = 0;
+    round.host_gauge = (uint8_t)(myRealGauge * 100.0f + 0.5f);
+    round.client_gauge = (uint8_t)(enemyRealGauge * 100.0f + 0.5f);
+    if (round.host_gauge > 100) round.host_gauge = 100;
+    if (round.client_gauge > 100) round.client_gauge = 100;
 
     // 行动判定：谁的 ATB gauge 先满谁行动；同时满时 SPD 高者优先。
     bool hostReady = myRealGauge >= 1.0f;
@@ -636,8 +802,8 @@ battle_round_t BattleScene::computeAuthoritativeRound() {
     round.host_hp = (uint8_t)hostHp;
     round.client_hp = (uint8_t)clientHp;
 
-    int hostMotLoss = BattleCalc::computeMotLoss(me.spi);
-    int clientMotLoss = BattleCalc::computeMotLoss(enemy.spi);
+    int hostMotLoss = BattleCalc::computeMotLoss(me.spi, me.mot);
+    int clientMotLoss = BattleCalc::computeMotLoss(enemy.spi, enemy.mot);
     int hostMot = (int)me.mot - hostMotLoss;
     int clientMot = (int)enemy.mot - clientMotLoss;
     if (hostMot < 0) hostMot = 0;
@@ -689,13 +855,24 @@ void BattleScene::beginAuthoritativeRound(const battle_round_t& round) {
         firstAttackByMe = (round.crits & 0x10) == 0;
     }
 
+    float hostGauge = round.host_gauge / 100.0f;
+    float clientGauge = round.client_gauge / 100.0f;
+    if (localNpcBattle || BattleLink::ins().isHost()) {
+        myRealGauge = myGauge = hostGauge;
+        enemyRealGauge = enemyGauge = clientGauge;
+    } else {
+        myRealGauge = myGauge = clientGauge;
+        enemyRealGauge = enemyGauge = hostGauge;
+    }
+
     bool secondByMe = !firstAttackByMe;
     secondAttackPlanned = attackExistsFor(secondByMe);
 
     enterAttackOne();
 
-    Serial.printf("[BattleScene] round %d applied: hostDmg=%d clientDmg=%d hostHp=%d clientHp=%d\n",
-                  roundNum, round.host_dmg, round.client_dmg, round.host_hp, round.client_hp);
+    Serial.printf("[BattleScene] round %d applied: hostDmg=%d clientDmg=%d hostHp=%d clientHp=%d hGauge=%d cGauge=%d\n",
+                  roundNum, round.host_dmg, round.client_dmg, round.host_hp, round.client_hp,
+                  round.host_gauge, round.client_gauge);
 }
 
 bool BattleScene::attackExistsFor(bool byMe) const {
@@ -722,6 +899,7 @@ void BattleScene::applyCurrentAttack() {
             enemyShakeEndMs = Hal::ins().millis() + SHAKE_MS;
         }
         if (myCrit) flashThisFrame = true;
+        finishMyAttackOpportunity();
     } else {
         if (enemyDmg > 0) {
             me.hp -= enemyDmg;
@@ -777,17 +955,13 @@ void BattleScene::applyBattleResult() {
 
 bool BattleScene::onButton(const ButtonEvent& ev) {
     if (ev.action == BtnAction::LONG_PRESS) {
-        nextScene = SCENE_TERRARIUM;
+        Serial.printf("[BattleScene] long press btn=%d -> return scene %d\n", ev.btn, returnScene);
+        nextScene = returnScene;
         return true;
     }
 
     if (state == State::GAUGE_FILLING && ev.action == BtnAction::PRESSED && ev.btn == 0) {
-        if (!roundBoosted) {
-            roundBoosted = true;
-            me.mot += 15;
-            if (me.mot > 100) me.mot = 100;
-            Serial.println("[BattleScene] A pressed, MOT +15");
-        }
+        handleRhythmButtonPress(Hal::ins().millis());
         return true;
     }
 
@@ -893,23 +1067,36 @@ float BattleScene::tempoProgress(bool forMe) const {
 }
 
 void BattleScene::drawTempoBar() {
-    static constexpr int LABEL_X = 8;
-    static constexpr int BAR_X = 50;
-    static constexpr int BAR_Y = 124;
-    static constexpr int BAR_W = 152;
-    static constexpr int BAR_H = 5;
-    static constexpr int ICON_Y = BAR_Y + 2;
+    PixelRenderer::drawPixelText(TEMPO_LABEL_X, TEMPO_BAR_Y - 3, "TEMPO", PixelRenderer::GRAY, 1);
+    PixelRenderer::fillRect(TEMPO_BAR_X, TEMPO_BAR_Y, TEMPO_BAR_W, TEMPO_BAR_H,
+                            PixelRenderer::rgb565(30, 30, 36));
+    PixelRenderer::fillRect(TEMPO_BAR_X, TEMPO_BAR_Y + 2, TEMPO_BAR_W, 1,
+                            PixelRenderer::rgb565(72, 72, 82));
 
-    PixelRenderer::drawPixelText(LABEL_X, BAR_Y - 3, "TEMPO", PixelRenderer::GRAY, 1);
-    PixelRenderer::fillRect(BAR_X, BAR_Y, BAR_W, BAR_H, PixelRenderer::rgb565(30, 30, 36));
-    PixelRenderer::fillRect(BAR_X, BAR_Y + 2, BAR_W, 1, PixelRenderer::rgb565(72, 72, 82));
-    PixelRenderer::fillRect(BAR_X + BAR_W, BAR_Y - 1, 2, BAR_H + 2, PixelRenderer::CREAM);
+    if (isRhythmWindowActive()) {
+        const RhythmWindow* window = currentRhythmWindow();
+        int zoneX = TEMPO_BAR_X + window->startPx;
+        int perfectHalfPx = window->widthPx / 5;
+        if (perfectHalfPx < 2) perfectHalfPx = 2;
+        int centerX = zoneX + window->widthPx / 2;
+        uint16_t barBase = PixelRenderer::rgb565(30, 30, 36);
+        uint16_t zoneColor = mixBattleRgb565(barBase, PixelRenderer::ORANGE, 0.45f);
+        uint16_t perfectColor = mixBattleRgb565(barBase, PixelRenderer::YELLOW, 0.58f);
+        PixelRenderer::fillRect(zoneX, TEMPO_BAR_Y - 1, window->widthPx,
+                                TEMPO_BAR_H + 2, zoneColor);
+        PixelRenderer::fillRect(centerX - perfectHalfPx, TEMPO_BAR_Y - 1,
+                                perfectHalfPx * 2 + 1, TEMPO_BAR_H + 2,
+                                perfectColor);
+    }
+
+    PixelRenderer::fillRect(TEMPO_BAR_X + TEMPO_BAR_W, TEMPO_BAR_Y - 1, 2,
+                            TEMPO_BAR_H + 2, PixelRenderer::CREAM);
 
     auto drawMarker = [&](bool mine, float progress, int yOffset) {
         if (progress < 0.0f) progress = 0.0f;
         if (progress > 1.0f) progress = 1.0f;
-        int x = BAR_X + (int)(progress * BAR_W);
-        int y = ICON_Y + yOffset;
+        int x = TEMPO_BAR_X + (int)(progress * TEMPO_BAR_W);
+        int y = TEMPO_ICON_Y + yOffset;
         uint16_t color = mine ? PixelRenderer::CYAN : PixelRenderer::rgb565(230, 90, 100);
         PixelRenderer::fillRect(x - 3, y - 2, 7, 5, color);
         PixelRenderer::fillRect(x - 2, y - 1, 5, 3, brightenBattleRgb565(color, 1.25f));
@@ -968,21 +1155,59 @@ void BattleScene::drawBattleField() {
 
     // 中间状态提示
     const char* msg = "";
-    switch (state) {
-        case State::SYNCING: msg = "SYNC"; break;
-        case State::GAUGE_FILLING: msg = "CHARGE! A=boost"; break;
-        case State::ATTACK_ONE:
-        case State::ATTACK_TWO:
-            msg = isCurrentAttackByMe() ? "ATTACK!" : "FOE ATK";
-            break;
-        case State::ROUND_END:
-            msg = myAttackDodged ? "MISS!" :
-                  (enemyAttackDodged ? "DODGE!" :
-                   (myCrit ? "CRIT!" : (enemyCrit ? "OUCH!" : "")));
-            break;
-        default: break;
+    uint16_t msgColor = PixelRenderer::YELLOW;
+    float msgScale = 1;
+    bool msgBold = false;
+    int msgX = 80;
+    int msgY = 100;
+    if (now < rhythmFeedbackUntilMs && rhythmFeedback != RhythmFeedback::NONE) {
+        switch (rhythmFeedback) {
+            case RhythmFeedback::PERFECT:
+                msg = "PERFECT!";
+                msgColor = PixelRenderer::YELLOW;
+                break;
+            case RhythmFeedback::GREAT:
+                msg = "GREAT!";
+                msgColor = PixelRenderer::CYAN;
+                break;
+            case RhythmFeedback::MISS:
+                msg = "MISS!";
+                msgColor = PixelRenderer::GRAY;
+                break;
+            case RhythmFeedback::NONE:
+            default:
+                break;
+        }
+    } else {
+        switch (state) {
+            case State::SYNCING: msg = "SYNC"; break;
+            case State::GAUGE_FILLING: msg = isRhythmWindowActive() ? "TIMING!" : "CHARGE"; break;
+            case State::ATTACK_ONE:
+            case State::ATTACK_TWO:
+                msg = isCurrentAttackByMe() ? "ATTACK!" : "FOE ATK";
+                msgX = isCurrentAttackByMe() ? 34 : 154;
+                msgY = 24;
+                break;
+            case State::ROUND_END:
+                msg = myAttackDodged ? "MISS!" :
+                      (enemyAttackDodged ? "DODGE!" :
+                       (myCrit ? "CRIT!" : (enemyCrit ? "OUCH!" : "")));
+                break;
+            case State::TIMEOUT:
+                msg = "TIME OUT";
+                msgColor = PixelRenderer::RED;
+                msgScale = 2;
+                msgBold = true;
+                msgX = 64;
+                msgY = 94;
+                break;
+            default: break;
+        }
     }
-    PixelRenderer::drawPixelText(80, 100, msg, PixelRenderer::YELLOW, 1);
+    PixelRenderer::drawPixelText(msgX, msgY, msg, msgColor, msgScale);
+    if (msgBold) {
+        PixelRenderer::drawPixelText(msgX + 1, msgY, msg, msgColor, msgScale);
+    }
 
     // 暴击闪屏（仅一帧）
     if (flashThisFrame) {

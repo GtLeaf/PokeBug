@@ -308,6 +308,49 @@ void Bug::debugSetStage(Stage nextStage, uint64_t now) {
     clampAttributes();
 }
 
+void Bug::debugSetTemperament(Temperament nextTemperament) {
+    if ((uint8_t)nextTemperament >= 6) return;
+    temperament = nextTemperament;
+    clampAttributes();
+}
+
+float Bug::debugGetAttr(uint8_t index) const {
+    switch (index) {
+        case 0: return siz;
+        case 1: return str;
+        case 2: return end;
+        case 3: return spd;
+        case 4: return spi;
+        default: return 1.0f;
+    }
+}
+
+uint8_t Bug::debugGetAttrCap(uint8_t index) const {
+    switch (index) {
+        case 0: return sizCap();
+        case 1: return strCap();
+        case 2: return endCap();
+        case 3: return spdCap();
+        case 4: return spiCap();
+        default: return 1;
+    }
+}
+
+void Bug::debugSetAttr(uint8_t index, float value) {
+    if (value < 1.0f) value = 1.0f;
+    uint8_t cap = debugGetAttrCap(index);
+    if (value > cap) value = (float)cap;
+    switch (index) {
+        case 0: siz = value; break;
+        case 1: str = value; break;
+        case 2: end = value; break;
+        case 3: spd = value; break;
+        case 4: spi = value; break;
+        default: return;
+    }
+    clampAttributes();
+}
+
 Temperament Bug::determineTemperament(uint64_t now) {
     uint64_t totalDuration = now - eggStartTime;
     if (totalDuration == 0) totalDuration = 1;

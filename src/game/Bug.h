@@ -70,6 +70,10 @@ public:
     bool canAdvanceStage(uint64_t now) const;
     void advanceStage(uint64_t now);
     void debugSetStage(Stage nextStage, uint64_t now);
+    void debugSetTemperament(Temperament nextTemperament);
+    float debugGetAttr(uint8_t index) const;
+    uint8_t debugGetAttrCap(uint8_t index) const;
+    void debugSetAttr(uint8_t index, float value);
 
     // ---------- 属性查询 ----------
     float getSiz() const { return siz; }

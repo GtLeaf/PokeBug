@@ -3,9 +3,12 @@
 #include "../core/UiStrings.h"
 #include "../hardware/Hal.h"
 #include "../hardware/PixelRenderer.h"
+#include "../game/ItemCatalog.h"
+#include <cstring>
 
 void LobbyScene::onEnter() {
     state = State::MODE_SELECT;
+    purpose = Purpose::BATTLE;
     selectedMode = Mode::NONE;
     roomId = 0;
     stateStartMs = Hal::ins().millis();
@@ -13,9 +16,12 @@ void LobbyScene::onEnter() {
     selectedRoomIdx = 0;
     roomCount = 0;
     messageText = nullptr;
+    messageReturnToMenu = false;
+    giftSendStarted = false;
+    messageBuf[0] = '\0';
     BattleLink::ins().begin();
 
-    // 由 Fight 子菜单指定入口模式时直接跳转
+    // 由菜单指定入口模式时直接跳转
     LobbyMode startMode = GameEngine::ins().getLobbyMode();
     GameEngine::ins().setLobbyMode(LobbyMode::LOBBY_DEFAULT);
     switch (startMode) {
@@ -24,6 +30,19 @@ void LobbyScene::onEnter() {
             break;
         case LobbyMode::LOBBY_SEARCH:
             enterSearchScanning();
+            break;
+        case LobbyMode::LOBBY_GIFT_SEND:
+            purpose = Purpose::GIFT_SEND;
+            if (validatePendingGift()) {
+                enterSearchScanning();
+            } else {
+                enterMessage(UiStrings::GIFT_NO_FOOD, true);
+            }
+            break;
+        case LobbyMode::LOBBY_GIFT_RECEIVE:
+            purpose = Purpose::GIFT_RECEIVE;
+            GameEngine::ins().clearPendingGiftItem();
+            enterHostWaiting();
             break;
         default:
             enterModeSelect();
@@ -49,14 +68,21 @@ SceneID LobbyScene::update() {
                 // 接受加入，设置对端为主机身份
                 BattleLink::ins().setBattlePeer(req.mac, true);
                 BattleLink::ins().sendJoinAck(true, req.mac);
-                Serial.printf("[Lobby] host accepted joiner %02X:%02X, goto battle\n",
-                              req.mac[0], req.mac[5]);
-                nextScene = SCENE_BATTLE;
-                return nextScene;
+                if (purpose == Purpose::GIFT_RECEIVE) {
+                    Serial.printf("[Lobby] gift receiver accepted sender %02X:%02X\n",
+                                  req.mac[0], req.mac[5]);
+                    BattleLink::ins().stopRoom();
+                    enterGiftWaiting();
+                } else {
+                    Serial.printf("[Lobby] host accepted joiner %02X:%02X, goto battle\n",
+                                  req.mac[0], req.mac[5]);
+                    nextScene = SCENE_BATTLE;
+                    return nextScene;
+                }
             }
             if (now - stateStartMs >= HOST_TIMEOUT_MS) {
                 Serial.println("[Lobby] host timeout");
-                enterMessage(UiStrings::MSG_NO_ONE_JOINED);
+                enterMessage(UiStrings::MSG_NO_ONE_JOINED, isGiftPurpose());
             }
             break;
         }
@@ -70,7 +96,7 @@ SceneID LobbyScene::update() {
             if (now - stateStartMs >= SEARCH_SCAN_MS) {
                 roomCount = BattleLink::ins().getRoomListCount();
                 if (roomCount == 0) {
-                    enterMessage(UiStrings::LOBBY_NO_ROOMS);
+                    enterMessage(UiStrings::LOBBY_NO_ROOMS, isGiftPurpose());
                 } else {
                     selectedRoomIdx = 0;
                     enterSearchList();
@@ -97,25 +123,78 @@ SceneID LobbyScene::update() {
                     uint8_t hostMac[6];
                     memcpy(hostMac, ack.host_mac, 6);
                     BattleLink::ins().setBattlePeer(hostMac, false);
-                    Serial.printf("[Lobby] joined room, host=%02X:%02X, goto battle\n",
-                                  hostMac[0], hostMac[5]);
-                    nextScene = SCENE_BATTLE;
-                    return nextScene;
+                    if (purpose == Purpose::GIFT_SEND) {
+                        Serial.printf("[Lobby] joined gift room, host=%02X:%02X\n",
+                                      hostMac[0], hostMac[5]);
+                        enterGiftSending();
+                    } else {
+                        Serial.printf("[Lobby] joined room, host=%02X:%02X, goto battle\n",
+                                      hostMac[0], hostMac[5]);
+                        nextScene = SCENE_BATTLE;
+                        return nextScene;
+                    }
                 } else {
                     Serial.println("[Lobby] join rejected");
-                    enterMessage(UiStrings::MSG_REJECTED);
+                    enterMessage(UiStrings::MSG_REJECTED, isGiftPurpose());
                 }
                 break;
             }
             if (now - stateStartMs >= JOIN_TIMEOUT_MS) {
                 Serial.println("[Lobby] join timeout");
-                enterMessage(UiStrings::MSG_JOIN_TIMEOUT);
+                enterMessage(UiStrings::MSG_JOIN_TIMEOUT, isGiftPurpose());
+            }
+            break;
+        }
+
+        case State::GIFT_WAITING: {
+            gift_item_t gift;
+            if (BattleLink::ins().takeReceivedGift(gift)) {
+                if (ItemCatalog::kind(gift.item_id) != ItemKind::FOOD) {
+                    enterMessage(UiStrings::GIFT_UNSUPPORTED, true);
+                } else if (GameEngine::ins().getBug().addItem(gift.item_id, gift.amount)) {
+                    GameEngine::ins().forceSave();
+                    formatGiftMessage(UiStrings::GIFT_RECEIVED, gift.item_id, gift.amount);
+                    enterMessage(messageBuf, true);
+                } else {
+                    enterMessage(UiStrings::GIFT_UNSUPPORTED, true);
+                }
+            } else if (now - stateStartMs >= GIFT_TIMEOUT_MS) {
+                enterMessage(UiStrings::MSG_JOIN_TIMEOUT, true);
+            }
+            break;
+        }
+
+        case State::GIFT_SENDING: {
+            ItemStack gift = GameEngine::ins().getPendingGiftItem();
+            if (!giftSendStarted && !BattleLink::ins().isSending()) {
+                if (!validatePendingGift()) {
+                    enterMessage(UiStrings::GIFT_NO_FOOD, true);
+                } else if (BattleLink::ins().sendGiftItem(gift.id, gift.amount)) {
+                    giftSendStarted = true;
+                }
+            } else if (giftSendStarted && !BattleLink::ins().isSending()) {
+                bool ok = BattleLink::ins().takeLastSendSuccess();
+                if (ok && GameEngine::ins().getBug().removeItem(gift.id, gift.amount)) {
+                    GameEngine::ins().forceSave();
+                    GameEngine::ins().clearPendingGiftItem();
+                    formatGiftMessage(UiStrings::GIFT_SENT, gift.id, gift.amount);
+                    enterMessage(messageBuf, true);
+                } else {
+                    enterMessage(UiStrings::GIFT_SEND_FAILED, true);
+                }
+            }
+            if (state == State::GIFT_SENDING && now - stateStartMs >= GIFT_TIMEOUT_MS) {
+                enterMessage(UiStrings::GIFT_SEND_FAILED, true);
             }
             break;
         }
 
         case State::MESSAGE: {
             if (now - stateStartMs >= MESSAGE_MS) {
+                if (messageReturnToMenu) {
+                    nextScene = SCENE_MENU;
+                    return nextScene;
+                }
                 enterModeSelect();
             }
             break;
@@ -135,6 +214,8 @@ void LobbyScene::render() {
         case State::SEARCH_SCANNING: drawSearchScanning(); break;
         case State::SEARCH_LIST:     drawSearchList(); break;
         case State::JOINING:         drawJoining(); break;
+        case State::GIFT_WAITING:    drawGiftWaiting(); break;
+        case State::GIFT_SENDING:    drawGiftSending(); break;
         case State::MESSAGE:         drawMessage(); break;
     }
 }
@@ -170,7 +251,8 @@ bool LobbyScene::onButton(const ButtonEvent& ev) {
     } else if (state == State::SEARCH_SCANNING) {
         // 搜索过程中按 B 取消，回到模式选择（默认选中 SEARCH）
         if (ev.btn == 1) {
-            enterModeSelect(Mode::SEARCH);
+            if (isGiftPurpose()) nextScene = SCENE_MENU;
+            else enterModeSelect(Mode::SEARCH);
             return true;
         }
     } else if (state == State::SEARCH_LIST) {
@@ -197,6 +279,7 @@ bool LobbyScene::onButton(const ButtonEvent& ev) {
 // ============================================================
 void LobbyScene::enterModeSelect(Mode defaultMode) {
     state = State::MODE_SELECT;
+    purpose = Purpose::BATTLE;
     selectedMode = defaultMode;
     BattleLink::ins().stopRoom();
     stateStartMs = Hal::ins().millis();
@@ -211,20 +294,40 @@ LobbyScene::Mode LobbyScene::nextMode(Mode m) {
     }
 }
 
+bool LobbyScene::isGiftPurpose() const {
+    return purpose == Purpose::GIFT_SEND || purpose == Purpose::GIFT_RECEIVE;
+}
+
+uint8_t LobbyScene::roomPurpose() const {
+    return isGiftPurpose() ? ROOM_PURPOSE_GIFT : ROOM_PURPOSE_BATTLE;
+}
+
+bool LobbyScene::validatePendingGift() {
+    ItemStack gift = GameEngine::ins().getPendingGiftItem();
+    if (gift.amount == 0) return false;
+    if (ItemCatalog::kind(gift.id) != ItemKind::FOOD) return false;
+    return GameEngine::ins().getBug().getItemCount(gift.id) >= gift.amount;
+}
+
+void LobbyScene::formatGiftMessage(const char* prefix, uint16_t itemId, uint8_t amount) {
+    snprintf(messageBuf, sizeof(messageBuf), "%s %s x%u",
+             prefix, ItemCatalog::name(itemId), amount);
+}
+
 void LobbyScene::enterHostWaiting() {
     state = State::HOST_WAITING;
     roomId = (uint8_t)random(1, 256);
-    BattleLink::ins().startRoomHost(roomId);
+    BattleLink::ins().startRoomHost(roomId, roomPurpose());
     stateStartMs = Hal::ins().millis();
-    Serial.printf("[Lobby] hosting room %d\n", roomId);
+    Serial.printf("[Lobby] hosting room %d purpose=%d\n", roomId, roomPurpose());
 }
 
 void LobbyScene::enterSearchScanning() {
     state = State::SEARCH_SCANNING;
-    BattleLink::ins().startRoomSearch();
+    BattleLink::ins().startRoomSearch(roomPurpose());
     stateStartMs = Hal::ins().millis();
     lastScanLogMs = 0;
-    Serial.println("[Lobby] start scanning");
+    Serial.printf("[Lobby] start scanning purpose=%d\n", roomPurpose());
 }
 
 void LobbyScene::enterSearchList() {
@@ -246,9 +349,23 @@ void LobbyScene::enterJoining(uint8_t idx) {
     Serial.printf("[Lobby] joining room %d idx=%d\n", entry->room_id, idx);
 }
 
-void LobbyScene::enterMessage(const char* text) {
+void LobbyScene::enterGiftWaiting() {
+    state = State::GIFT_WAITING;
+    stateStartMs = Hal::ins().millis();
+    Serial.println("[Lobby] waiting gift item");
+}
+
+void LobbyScene::enterGiftSending() {
+    state = State::GIFT_SENDING;
+    giftSendStarted = false;
+    stateStartMs = Hal::ins().millis();
+    Serial.println("[Lobby] sending gift item");
+}
+
+void LobbyScene::enterMessage(const char* text, bool returnToMenu) {
     state = State::MESSAGE;
     messageText = text;
+    messageReturnToMenu = returnToMenu;
     stateStartMs = Hal::ins().millis();
     Serial.printf("[Lobby] message: %s\n", text);
 }
@@ -291,7 +408,11 @@ void LobbyScene::drawListItem(int y, const char* text, bool selected, bool last)
 }
 
 void LobbyScene::drawModeSelect() {
-    const char* items[3] = { "Create Room", "Search Room", "Back" };
+    const char* items[3] = {
+        UiStrings::MENU_FIGHT_CREATE,
+        UiStrings::MENU_FIGHT_SEARCH,
+        UiStrings::BACK,
+    };
     uint8_t cursor = 0;
     if (selectedMode == Mode::SEARCH) cursor = 1;
     else if (selectedMode == Mode::BACK) cursor = 2;
@@ -300,7 +421,8 @@ void LobbyScene::drawModeSelect() {
 
 void LobbyScene::drawHostWaiting() {
     PixelRenderer::fillRect(0, 0, Hal::DISPLAY_W, Hal::DISPLAY_H, PixelRenderer::BLACK);
-    PixelRenderer::drawPixelText(80, 25, UiStrings::LOBBY_ROOM, PixelRenderer::WHITE, 2);
+    const char* title = isGiftPurpose() ? UiStrings::GIFT_RECEIVE_TITLE : UiStrings::LOBBY_ROOM;
+    PixelRenderer::drawPixelText(80, 25, title, PixelRenderer::WHITE, 2);
 
     char buf[16];
     snprintf(buf, sizeof(buf), "%03d", roomId);
@@ -308,13 +430,15 @@ void LobbyScene::drawHostWaiting() {
 
     uint32_t elapsed = Hal::ins().millis() - stateStartMs;
     int dots = (elapsed / 500) % 4;
-    snprintf(buf, sizeof(buf), "%s%.*s", UiStrings::LOBBY_WAITING, dots, "...");
+    const char* waitText = isGiftPurpose() ? UiStrings::GIFT_WAITING : UiStrings::LOBBY_WAITING;
+    snprintf(buf, sizeof(buf), "%s%.*s", waitText, dots, "...");
     PixelRenderer::drawPixelText(75, 100, buf, PixelRenderer::WHITE, 1);
 }
 
 void LobbyScene::drawSearchScanning() {
     PixelRenderer::fillRect(0, 0, Hal::DISPLAY_W, Hal::DISPLAY_H, PixelRenderer::BLACK);
-    PixelRenderer::drawPixelText(70, 50, UiStrings::LOBBY_SCANNING, PixelRenderer::WHITE, 2);
+    const char* text = isGiftPurpose() ? UiStrings::GIFT_RECEIVE_TITLE : UiStrings::LOBBY_SCANNING;
+    PixelRenderer::drawPixelText(70, 50, text, PixelRenderer::WHITE, 2);
     uint32_t elapsed = Hal::ins().millis() - stateStartMs;
     int dots = (elapsed / 500) % 4;
     char buf[12];
@@ -338,12 +462,33 @@ void LobbyScene::drawSearchList() {
         snprintf(buf[i], sizeof(buf[i]), "%s %03d", UiStrings::LOBBY_ROOM, entry ? entry->room_id : 0);
         items[i] = buf[i];
     }
-    drawSettingsStyleList(UiStrings::LOBBY_SELECT_ROOM, items, roomCount, selectedRoomIdx);
+    drawSettingsStyleList(isGiftPurpose() ? UiStrings::GIFT_RECEIVE_TITLE : UiStrings::LOBBY_SELECT_ROOM,
+                          items, roomCount, selectedRoomIdx);
 }
 
 void LobbyScene::drawJoining() {
     PixelRenderer::fillRect(0, 0, Hal::DISPLAY_W, Hal::DISPLAY_H, PixelRenderer::BLACK);
     PixelRenderer::drawPixelText(70, 50, UiStrings::LOBBY_JOINING, PixelRenderer::WHITE, 2);
+    uint32_t elapsed = Hal::ins().millis() - stateStartMs;
+    int dots = (elapsed / 500) % 4;
+    char buf[12];
+    snprintf(buf, sizeof(buf), "%.*s", dots, "...");
+    PixelRenderer::drawPixelText(110, 80, buf, PixelRenderer::WHITE, 1);
+}
+
+void LobbyScene::drawGiftWaiting() {
+    PixelRenderer::fillRect(0, 0, Hal::DISPLAY_W, Hal::DISPLAY_H, PixelRenderer::BLACK);
+    PixelRenderer::drawPixelText(70, 50, UiStrings::GIFT_WAITING, PixelRenderer::WHITE, 2);
+    uint32_t elapsed = Hal::ins().millis() - stateStartMs;
+    int dots = (elapsed / 500) % 4;
+    char buf[12];
+    snprintf(buf, sizeof(buf), "%.*s", dots, "...");
+    PixelRenderer::drawPixelText(110, 80, buf, PixelRenderer::WHITE, 1);
+}
+
+void LobbyScene::drawGiftSending() {
+    PixelRenderer::fillRect(0, 0, Hal::DISPLAY_W, Hal::DISPLAY_H, PixelRenderer::BLACK);
+    PixelRenderer::drawPixelText(75, 50, UiStrings::GIFT_SENDING, PixelRenderer::WHITE, 2);
     uint32_t elapsed = Hal::ins().millis() - stateStartMs;
     int dots = (elapsed / 500) % 4;
     char buf[12];

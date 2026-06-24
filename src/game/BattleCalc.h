@@ -46,11 +46,17 @@ public:
                                 attacker.mot);
     }
 
-    // 每回合 MOT 自然衰减
-    static int computeMotLoss(uint8_t spi) {
+    // 每回合 MOT 自然衰减。MOT 越低越抗衰减，避免低斗志时继续快速见底。
+    static int computeMotLoss(uint8_t spi, uint8_t mot) {
         int loss = (int)roundf(9.0f - spi / 3.0f);
         if (loss < 2) loss = 2;
         if (loss > 9) loss = 9;
+        if (mot < 30) {
+            loss = (int)roundf(loss * 0.5f);
+        } else if (mot < 50) {
+            loss = (int)roundf(loss * 0.8f);
+        }
+        if (loss < 1) loss = 1;
         return loss;
     }
 

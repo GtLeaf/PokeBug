@@ -18,24 +18,32 @@ enum BattleMsgType : uint8_t {
     MSG_ROOM_ADVERT   = 8,   // 房主广播房间
     MSG_JOIN_REQ      = 9,   // 加入者请求加入
     MSG_JOIN_ACK      = 10,  // 房主确认/拒绝加入
-    MSG_BATTLE_READY  = 11,  // 从机汇报本回合 MOT（含加油）
+    MSG_BATTLE_READY  = 11,  // 从机汇报节奏输入后的 MOT
+    MSG_GIFT_ITEM     = 12,  // 礼物道具
     MSG_ACK           = 0x80,
 };
 
-static constexpr uint8_t BATTLE_PROTOCOL_VERSION = 2;
+static constexpr uint8_t BATTLE_PROTOCOL_VERSION = 3;
 
-// 房间广播包 8 bytes
+enum RoomPurpose : uint8_t {
+    ROOM_PURPOSE_BATTLE = 0,
+    ROOM_PURPOSE_GIFT   = 1,
+};
+
+// 房间广播包 9 bytes
 struct __attribute__((packed)) room_advert_t {
     uint8_t type;
     uint8_t mac[6];
     uint8_t room_id;
+    uint8_t purpose;
 };
 
-// 加入请求包 8 bytes
+// 加入请求包 9 bytes
 struct __attribute__((packed)) join_req_t {
     uint8_t type;
     uint8_t mac[6];
     uint8_t room_id;
+    uint8_t purpose;
 };
 
 // 加入确认包 14 bytes
@@ -46,12 +54,12 @@ struct __attribute__((packed)) join_ack_t {
     uint8_t accepted;  // 1=接受，0=拒绝
 };
 
-// 从机准备包 4 bytes（上报本回合 MOT，含加油）
+// 从机节奏更新包 4 bytes（玩家按 A 后上报本机当前 MOT；不再驱动 ATB 时机）
 struct __attribute__((packed)) battle_ready_t {
     uint8_t type;           // MSG_BATTLE_READY
     uint8_t version;        // BATTLE_PROTOCOL_VERSION
-    uint8_t round_num;
-    uint8_t my_mot;         // 从机本回合 MOT
+    uint8_t round_num;      // 产生输入时的主机回合号，过期则丢弃
+    uint8_t my_mot;         // 从机当前 MOT（含节奏加成）
 };
 
 // 属性同步包 10 bytes
@@ -68,7 +76,7 @@ struct __attribute__((packed)) battle_sync_t {
     uint8_t palette_id;
 };
 
-// 回合结果包 10 bytes（主机 authoritative，包含双方状态）
+// 回合结果包 12 bytes（主机 authoritative，包含双方状态与 ATB 快照）
 struct __attribute__((packed)) battle_round_t {
     uint8_t type;           // MSG_BATTLE_ROUND
     uint8_t version;        // BATTLE_PROTOCOL_VERSION
@@ -80,6 +88,8 @@ struct __attribute__((packed)) battle_round_t {
     uint8_t host_mot;       // 主机本回合后 MOT
     uint8_t client_mot;     // 从机本回合后 MOT
     uint8_t crits;          // bit0=主机暴击, bit1=从机暴击, bit2=主机攻击被闪避, bit3=从机攻击被闪避, bit4=主机先手
+    uint8_t host_gauge;     // 主机权威 ATB 快照，0-100
+    uint8_t client_gauge;   // 从机权威 ATB 快照，0-100
 };
 
 // 结算包 3 bytes
@@ -87,6 +97,15 @@ struct __attribute__((packed)) battle_result_t {
     uint8_t type;
     uint8_t version;        // BATTLE_PROTOCOL_VERSION
     uint8_t win;  // 发送方视角：1=胜，0=负
+};
+
+// 礼物包 7 bytes：item_id 使用 ItemCatalog 编码，当前 UI 只允许 Food。
+struct __attribute__((packed)) gift_item_t {
+    uint8_t type;
+    uint8_t version;        // BATTLE_PROTOCOL_VERSION
+    uint16_t transfer_id;   // 同一 peer 下用于重试去重
+    uint16_t item_id;
+    uint8_t amount;
 };
 
 // 确认包 2 bytes
@@ -101,6 +120,7 @@ public:
     struct RoomEntry {
         uint8_t mac[6];
         uint8_t room_id;
+        uint8_t purpose;
         uint32_t lastSeenMs;
     };
 
@@ -112,9 +132,9 @@ public:
 
     // ========== 房间阶段 ==========
     // 创建房间：开始广播 MSG_ROOM_ADVERT
-    void startRoomHost(uint8_t roomId);
+    void startRoomHost(uint8_t roomId, uint8_t purpose = ROOM_PURPOSE_BATTLE);
     // 搜索房间：开始监听 MSG_ROOM_ADVERT
-    void startRoomSearch();
+    void startRoomSearch(uint8_t purpose = ROOM_PURPOSE_BATTLE);
     // 停止房间广播/搜索
     void stopRoom();
 
@@ -143,12 +163,14 @@ public:
     bool sendReady(const battle_ready_t& ready);
     bool sendRound(const battle_round_t& round);
     bool sendResult(bool win);
+    bool sendGiftItem(uint16_t itemId, uint8_t amount);
 
     // 取出接收到的数据（非阻塞，取一次后清空）
     bool takeReceivedSync(battle_sync_t& out);
     bool takeReceivedReady(battle_ready_t& out);
     bool takeReceivedRound(battle_round_t& out);
     bool takeReceivedResult(bool& outWin);
+    bool takeReceivedGift(gift_item_t& out);
 
     // 当前发送是否完成/成功
     bool isSending() const { return sendState == SendState::SENDING; }
@@ -179,6 +201,7 @@ private:
     enum class RoomState { IDLE, HOSTING, SEARCHING };
     RoomState roomState = RoomState::IDLE;
     uint8_t hostedRoomId = 0;
+    uint8_t roomPurpose = ROOM_PURPOSE_BATTLE;
     uint32_t lastRoomAdvertMs = 0;
     RoomEntry roomList[MAX_ROOM_LIST];
 
@@ -214,6 +237,11 @@ private:
     join_ack_t pendingJoinAckData;
     bool pendingReady = false;
     battle_ready_t pendingReadyData;
+    bool pendingGift = false;
+    gift_item_t pendingGiftData;
+    bool lastGiftSeen = false;
+    uint8_t lastGiftPeerMac[6] = {0};
+    uint16_t lastGiftTransferId = 0;
 
     // 待发送 ACK
     bool pendingAck = false;
@@ -242,6 +270,7 @@ private:
     void handleSync(const uint8_t* mac, const battle_sync_t& sync);
     void handleRound(const uint8_t* mac, const battle_round_t& round);
     void handleResult(const uint8_t* mac, const battle_result_t& result);
+    void handleGiftItem(const uint8_t* mac, const gift_item_t& gift);
     void handleAck(const uint8_t* mac, const ack_msg_t& ack);
 
     void queueAck(const uint8_t mac[6], uint8_t ackedType);

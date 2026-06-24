@@ -20,9 +20,18 @@ private:
         SEARCH_SCANNING, // 正在搜索房间
         SEARCH_LIST,     // 显示房间列表
         JOINING,         // 已发送加入请求，等待确认
+        GIFT_WAITING,    // 收礼方已连接，等待礼物包
+        GIFT_SENDING,    // 送礼方已连接，发送礼物包
         MESSAGE,         // 显示提示信息（如拒绝、超时）
     };
     State state = State::MODE_SELECT;
+
+    enum class Purpose {
+        BATTLE,
+        GIFT_SEND,
+        GIFT_RECEIVE,
+    };
+    Purpose purpose = Purpose::BATTLE;
 
     enum class Mode {
         NONE,
@@ -38,28 +47,40 @@ private:
     uint8_t selectedRoomIdx = 0;     // 列表中选中的房间索引
     uint8_t roomCount = 0;           // 上次扫描到的房间数
     const char* messageText = nullptr; // MESSAGE 状态要显示的文本
+    bool messageReturnToMenu = false;
+    bool giftSendStarted = false;
+    char messageBuf[40] = {0};
 
     void enterModeSelect(Mode defaultMode = Mode::CREATE);
     void enterHostWaiting();
     void enterSearchScanning();
     void enterSearchList();
     void enterJoining(uint8_t idx);
-    void enterMessage(const char* text);
+    void enterGiftWaiting();
+    void enterGiftSending();
+    void enterMessage(const char* text, bool returnToMenu = false);
 
     void drawModeSelect();
     void drawHostWaiting();
     void drawSearchScanning();
     void drawSearchList();
     void drawJoining();
+    void drawGiftWaiting();
+    void drawGiftSending();
     void drawMessage();
 
     void drawSettingsStyleList(const char* title, const char* const* items, uint8_t count, uint8_t cursor);
     void drawListItem(int y, const char* text, bool selected, bool last);
 
     static Mode nextMode(Mode m);
+    bool isGiftPurpose() const;
+    uint8_t roomPurpose() const;
+    bool validatePendingGift();
+    void formatGiftMessage(const char* prefix, uint16_t itemId, uint8_t amount);
 
     static constexpr uint32_t HOST_TIMEOUT_MS = 30000;
     static constexpr uint32_t SEARCH_SCAN_MS = 1500;
     static constexpr uint32_t JOIN_TIMEOUT_MS = 5000;
+    static constexpr uint32_t GIFT_TIMEOUT_MS = 6000;
     static constexpr uint32_t MESSAGE_MS = 1500;
 };

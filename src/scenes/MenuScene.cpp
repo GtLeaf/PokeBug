@@ -5,19 +5,25 @@
 #include "../hardware/Hal.h"
 #include "../hardware/PixelRenderer.h"
 #include "../game/FoodType.h"
+#include "../game/ItemCatalog.h"
 #include "../assets/FoodAssets.h"
 #include "../assets/WoodAssets.h"
 #include "../assets/BowlAssets.h"
 #include "../assets/MenuAssets.h"
+#include "../game/NpcGenerator.h"
 
 int MenuScene::lastSelected = 0;
 int MenuScene::lastBoxSelected = 0;
 int MenuScene::lastWoodSelected = 0;
 int MenuScene::lastBowlSelected = 0;
 int MenuScene::lastFoodSelected = 0;
+int MenuScene::lastSocialSelected = 0;
+int MenuScene::lastGiftSelected = 0;
 int MenuScene::lastFightSelected = 0;
 int MenuScene::lastExploreSelected = 0;
 int MenuScene::lastDebugSelected = 0;
+int MenuScene::lastDebugStateSelected = 0;
+int MenuScene::lastDebugAttrSelected = 0;
 
 void MenuScene::onEnter() {
     mode = Mode::MAIN;
@@ -28,6 +34,15 @@ void MenuScene::onEnter() {
         selected = lastSelected;
     }
     animSelected = (float)selected;
+
+    // Debug 阶段切换索引初始化为当前甲虫阶段
+    debugStageIndex = (int)GameEngine::ins().getBug().getStage();
+    if (debugStageIndex < 0) debugStageIndex = 0;
+    if (debugStageIndex > 4) debugStageIndex = 4;
+    debugTemperIndex = (int)GameEngine::ins().getBug().getTemperament();
+    if (debugTemperIndex < 0) debugTemperIndex = 0;
+    if (debugTemperIndex > 5) debugTemperIndex = 5;
+    attrEditActive = false;
 }
 
 void MenuScene::onExit() {
@@ -44,12 +59,20 @@ void MenuScene::onExit() {
         lastWoodSelected = selected;
     } else if (mode == Mode::BOX) {
         lastBoxSelected = selected;
+    } else if (mode == Mode::SOCIAL) {
+        lastSocialSelected = selected;
+    } else if (mode == Mode::GIFT) {
+        lastGiftSelected = selected;
     } else if (mode == Mode::FIGHT) {
         lastFightSelected = selected;
     } else if (mode == Mode::EXPLORE) {
         lastExploreSelected = selected;
     } else if (mode == Mode::DEBUG) {
         lastDebugSelected = selected;
+    } else if (mode == Mode::DEBUG_STATE) {
+        lastDebugStateSelected = selected;
+    } else if (mode == Mode::DEBUG_ATTR) {
+        lastDebugAttrSelected = selected;
     } else {
         lastSelected = selected;
     }
@@ -92,14 +115,19 @@ void MenuScene::render() {
         drawWoodLayout();
     } else if (mode == Mode::BOWL) {
         drawBowlLayout();
-    } else if (mode == Mode::FIGHT) {
-        drawFightList();
+    } else if (mode == Mode::SOCIAL || mode == Mode::GIFT || mode == Mode::FIGHT ||
+               mode == Mode::DEBUG_STATE || mode == Mode::DEBUG_ATTR) {
+        drawSimpleList();
     } else if (mode == Mode::EXPLORE) {
         drawExploreList();
     } else if (mode == Mode::DEBUG) {
         drawDebugList();
     } else {
         drawList();
+    }
+
+    if (attrEditActive) {
+        drawAttrEditDialog();
     }
 
     drawToast();
@@ -166,10 +194,9 @@ void MenuScene::drawList() {
         int y = CENTER_Y + (int)(rawOffset * SPACING);
 
         bool isSelected = (fabsf(rawOffset) < 0.5f);
-        bool cupAvailable = !(mode == Mode::FIGHT && i == FIGHT_CUP) || isCupAvailable();
         float relScale = isSelected ? 1.15f : 1.0f;
-        uint16_t boxColor = (isSelected && cupAvailable) ? PixelRenderer::YELLOW : PixelRenderer::GRAY;
-        uint16_t descColor = (isSelected && cupAvailable) ? PixelRenderer::WHITE : PixelRenderer::GRAY;
+        uint16_t boxColor = isSelected ? PixelRenderer::YELLOW : PixelRenderer::GRAY;
+        uint16_t descColor = isSelected ? PixelRenderer::WHITE : PixelRenderer::GRAY;
 
         int leftW = BOX_W;
         int iconIndex = i;
@@ -210,41 +237,33 @@ void MenuScene::drawList() {
     }
 }
 
-void MenuScene::drawFightList() {
-    const char* items[FIGHT_ITEM_COUNT] = {
-        UiStrings::MENU_FIGHT_CUP,
-        UiStrings::MENU_FIGHT_CREATE,
-        UiStrings::MENU_FIGHT_SEARCH,
-        UiStrings::BACK,
-    };
-
+void MenuScene::drawSimpleList() {
     float fs = PixelRenderer::getContentFontScale();
     int rowStep = (int)(14 * fs);
     int startY = 8;
     int sepGap = (int)(4 * fs);
+    int count = itemCount();
 
-    for (int i = 0; i < FIGHT_ITEM_COUNT; i++) {
+    for (int i = 0; i < count; i++) {
         int y = startY + i * rowStep;
-        bool available = (i != FIGHT_CUP) || isCupAvailable();
 
-        uint16_t color;
-        if (i == selected) {
-            color = available ? PixelRenderer::YELLOW : PixelRenderer::rgb565(180, 180, 0);
-        } else {
-            color = available ? PixelRenderer::WHITE : PixelRenderer::GRAY;
-        }
+        uint16_t color = (i == selected) ? PixelRenderer::YELLOW : PixelRenderer::WHITE;
 
         if (i == selected) {
-            uint16_t markColor = available ? PixelRenderer::YELLOW : PixelRenderer::GRAY;
-            PixelRenderer::fillRect(4, y, 4, (int)(8 * fs), markColor);
+            PixelRenderer::fillRect(4, y, 4, (int)(8 * fs), PixelRenderer::YELLOW);
         }
 
-        PixelRenderer::drawPixelText(14, y, items[i], color, fs);
+        char label[24];
+        PixelRenderer::drawPixelText(14, y, itemLabel(i, label, sizeof(label)), color, fs);
 
-        if (i < FIGHT_ITEM_COUNT - 1) {
+        if (i < count - 1) {
             PixelRenderer::fillRect(4, y + rowStep - sepGap, Hal::DISPLAY_W - 8, 1, PixelRenderer::GRAY);
         }
     }
+}
+
+void MenuScene::drawFightList() {
+    drawSimpleList();
 }
 
 void MenuScene::drawExploreList() {
@@ -259,8 +278,9 @@ void MenuScene::drawExploreList() {
     for (int i = 0; i < EXPLORE_ITEM_COUNT; i++) {
         int y = startY + i * rowStep;
         bool isBack = (i == LOCATION_BACK);
-        bool forbidden = !isBack && night && (i == LOCATION_BACK_HILL);
-        bool disabled = (!isBack && !exploreAvailable) || forbidden;
+        bool isCup = (i == LOCATION_CUP);
+        bool forbidden = !isBack && !isCup && night && (i == LOCATION_BACK_HILL);
+        bool disabled = isCup ? !isCupAvailable() : ((!isBack && !exploreAvailable) || forbidden);
         uint16_t color = disabled ? PixelRenderer::GRAY : PixelRenderer::WHITE;
         if (i == selected) color = disabled ? PixelRenderer::rgb565(180, 180, 0) : PixelRenderer::YELLOW;
 
@@ -304,9 +324,56 @@ void MenuScene::drawDebugList() {
     }
 }
 
+void MenuScene::drawAttrEditDialog() {
+    LGFX_Sprite& canvas = Hal::ins().canvas();
+    float fs = PixelRenderer::getContentFontScale();
+
+    int boxW = 154;
+    int boxH = 70;
+    int boxX = (Hal::DISPLAY_W - boxW) / 2;
+    int boxY = (Hal::DISPLAY_H - boxH) / 2;
+    PixelRenderer::fillRect(boxX, boxY, boxW, boxH, PixelRenderer::rgb565(12, 12, 18));
+    canvas.drawRect(boxX, boxY, boxW, boxH, PixelRenderer::WHITE);
+
+    char title[24];
+    snprintf(title, sizeof(title), "%s %.0f/%u",
+             attrName(attrEditIndex), attrEditValue,
+             GameEngine::ins().getBug().debugGetAttrCap(attrEditIndex));
+    canvas.setTextSize(fs);
+    int titleW = canvas.textWidth(title);
+    PixelRenderer::drawPixelText(boxX + (boxW - titleW) / 2, boxY + 10,
+                                 title, PixelRenderer::WHITE, fs);
+
+    static constexpr int BTN_COUNT = 3;
+    const char* labels[BTN_COUNT] = {"-", "+", "yes"};
+    int btnW[BTN_COUNT] = {34, 34, 46};
+    int gap = 8;
+    int totalW = btnW[0] + btnW[1] + btnW[2] + gap * 2;
+    int x = boxX + (boxW - totalW) / 2;
+    int y = boxY + 42;
+    int btnH = 18;
+    for (int i = 0; i < BTN_COUNT; i++) {
+        bool focused = (i == attrEditButton);
+        uint16_t border = focused ? PixelRenderer::YELLOW : PixelRenderer::GRAY;
+        uint16_t text = focused ? PixelRenderer::YELLOW : PixelRenderer::WHITE;
+        PixelRenderer::fillRect(x, y, btnW[i], btnH, PixelRenderer::rgb565(24, 24, 30));
+        canvas.drawRect(x, y, btnW[i], btnH, border);
+        canvas.setTextSize(fs);
+        int tw = canvas.textWidth(labels[i]);
+        PixelRenderer::drawPixelText(x + (btnW[i] - tw) / 2,
+                                     y + (btnH - (int)(8 * fs)) / 2,
+                                     labels[i], text, fs);
+        x += btnW[i] + gap;
+    }
+}
+
 bool MenuScene::onButton(const ButtonEvent& ev) {
     if (sleepTransitionActive) {
         return true;
+    }
+
+    if (attrEditActive) {
+        return handleAttrEditButton(ev);
     }
 
     // Toast 激活时任意按键关闭弹窗
@@ -348,12 +415,18 @@ bool MenuScene::onButton(const ButtonEvent& ev) {
                 enterMode(Mode::BOX);
             } else if (mode == Mode::BOX) {
                 enterMode(Mode::MAIN);
+            } else if (mode == Mode::GIFT) {
+                enterMode(Mode::SOCIAL);
             } else if (mode == Mode::FIGHT) {
+                enterMode(Mode::SOCIAL);
+            } else if (mode == Mode::SOCIAL) {
                 enterMode(Mode::MAIN);
             } else if (mode == Mode::EXPLORE) {
                 enterMode(Mode::MAIN);
             } else if (mode == Mode::DEBUG) {
                 enterMode(Mode::MAIN);
+            } else if (mode == Mode::DEBUG_STATE || mode == Mode::DEBUG_ATTR) {
+                enterMode(Mode::DEBUG);
             } else {
                 nextScene = SCENE_TERRARIUM;
             }
@@ -478,21 +551,40 @@ void MenuScene::executeSelection() {
         return;
     }
 
-    if (mode == Mode::FIGHT) {
-        if (selected == FIGHT_CUP) {
-            Bug& bug = GameEngine::ins().getBug();
-            if (bug.getStage() != Stage::ADULT) {
-                showToast(UiStrings::CUP_NEED_ADULT);
-            } else if (bug.isDead()) {
-                showToast(UiStrings::CUP_BEETLE_DIED);
-            } else if (bug.getHunger() < 30) {
-                showToast(UiStrings::CUP_NEED_HUNGER);
-            } else if (GameEngine::ins().getCupCycleState() != GameEngine::CupCycleState::REGISTER_OPEN) {
-                showToast(UiStrings::CUP_NOT_OPEN);
-            } else {
-                nextScene = SCENE_CUP;
+    if (mode == Mode::SOCIAL) {
+        if (selected == SOCIAL_GIFT) {
+            enterMode(Mode::GIFT);
+        } else if (selected == SOCIAL_FIGHT) {
+            enterMode(Mode::FIGHT);
+        } else if (selected == SOCIAL_BACK) {
+            enterMode(Mode::MAIN);
+        }
+        return;
+    }
+
+    if (mode == Mode::GIFT) {
+        if (selected == GIFT_SEND_FOOD) {
+            FoodType type = (FoodType)GameEngine::ins().getFoodStyle();
+            ItemId itemId = ItemCatalog::food(type);
+            if (bug.getItemCount(itemId) == 0) {
+                showToast(UiStrings::GIFT_NO_FOOD);
+                return;
             }
-        } else if (selected == FIGHT_CREATE) {
+            GameEngine::ins().setPendingGiftItem(itemId, 1);
+            GameEngine::ins().setLobbyMode(LobbyMode::LOBBY_GIFT_SEND);
+            nextScene = SCENE_LOBBY;
+        } else if (selected == GIFT_RECEIVE_FOOD) {
+            GameEngine::ins().clearPendingGiftItem();
+            GameEngine::ins().setLobbyMode(LobbyMode::LOBBY_GIFT_RECEIVE);
+            nextScene = SCENE_LOBBY;
+        } else if (selected == GIFT_BACK) {
+            enterMode(Mode::SOCIAL);
+        }
+        return;
+    }
+
+    if (mode == Mode::FIGHT) {
+        if (selected == FIGHT_CREATE) {
             GameEngine::ins().setLobbyMode(LobbyMode::LOBBY_CREATE);
             nextScene = SCENE_LOBBY;
         } else if (selected == FIGHT_SEARCH) {
@@ -510,7 +602,22 @@ void MenuScene::executeSelection() {
             return;
         }
 
-        if (selected >= 0 && selected < EXPLORE_ITEM_COUNT - 1) {
+        if (selected == LOCATION_CUP) {
+            if (bug.getStage() != Stage::ADULT) {
+                showToast(UiStrings::CUP_NEED_ADULT);
+            } else if (bug.isDead()) {
+                showToast(UiStrings::CUP_BEETLE_DIED);
+            } else if (bug.getHunger() < 30) {
+                showToast(UiStrings::CUP_NEED_HUNGER);
+            } else if (GameEngine::ins().getCupCycleState() != GameEngine::CupCycleState::REGISTER_OPEN) {
+                showToast(cupClosedMessage());
+            } else {
+                nextScene = SCENE_CUP;
+            }
+            return;
+        }
+
+        if (selected >= 0 && selected < GameEngine::EXPLORE_LOCATION_COUNT) {
             bool clockBlocked = !GameEngine::ins().isExploreTimeAllowed();
             if (clockBlocked) {
                 showToast(UiStrings::EXPLORE_NIGHT_FORBIDDEN);
@@ -542,15 +649,61 @@ void MenuScene::executeSelection() {
             return;
         }
 
-        if (selected >= DEBUG_EGG && selected <= DEBUG_ADULT) {
-            Stage nextStage = (Stage)selected; // Debug menu uses stage ids 1-5 in labels; enum remains 0-4.
+        if (selected == DEBUG_BEETLE) {
+            enterMode(Mode::DEBUG_STATE);
+        } else if (selected == DEBUG_ATTR) {
+            enterMode(Mode::DEBUG_ATTR);
+        } else if (selected == DEBUG_NPC) {
+            if (bug.isDead()) {
+                showToast(UiStrings::EXPLORE_BEETLE_DIED);
+            } else {
+                NpcCombatant npc = NpcGenerator::generateForExplore(bug);
+                GameEngine::ins().setPendingNpcBattle(npc, SCENE_MENU,
+                                                      npc.tier == NpcData::Tier::LEGEND,
+                                                      false, false);
+                nextScene = SCENE_BATTLE;
+                Serial.printf("[Menu] Debug VS NPC generated, tier=%d index=%d\n",
+                              (int)npc.tier, npc.index);
+            }
+        }
+        return;
+    }
+
+    if (mode == Mode::DEBUG_STATE) {
+        if (selected == DEBUG_STATE_BACK) {
+            enterMode(Mode::DEBUG);
+            return;
+        }
+
+        if (selected == DEBUG_STATE_STAGE) {
+            debugStageIndex = (debugStageIndex + 1) % 5;
+            Stage nextStage = (Stage)debugStageIndex;
             bug.debugSetStage(nextStage, GameEngine::ins().getGameNow());
             GameEngine::ins().forceSave();
 
             char toast[32];
             const char* stageName = itemLabel(selected, toast, sizeof(toast));
             showToast(stageName);
-            Serial.printf("[Menu] Debug stage set to %d\n", selected + 1);
+            Serial.printf("[Menu] Debug stage cycled to %d\n", debugStageIndex + 1);
+        } else if (selected == DEBUG_STATE_TEMPER) {
+            debugTemperIndex = (debugTemperIndex + 1) % 6;
+            Temperament nextTemper = (Temperament)debugTemperIndex;
+            bug.debugSetTemperament(nextTemper);
+            GameEngine::ins().forceSave();
+
+            char toast[32];
+            const char* temper = itemLabel(selected, toast, sizeof(toast));
+            showToast(temper);
+            Serial.printf("[Menu] Debug temperament cycled to %d\n", debugTemperIndex);
+        }
+        return;
+    }
+
+    if (mode == Mode::DEBUG_ATTR) {
+        if (selected == DEBUG_ATTR_BACK) {
+            enterMode(Mode::DEBUG);
+        } else if (selected >= DEBUG_ATTR_SIZ && selected <= DEBUG_ATTR_SPI) {
+            openAttrEdit((uint8_t)selected);
         }
         return;
     }
@@ -562,8 +715,8 @@ void MenuScene::executeSelection() {
         case BOX:
             enterMode(Mode::BOX);
             break;
-        case FIGHT:
-            enterMode(Mode::FIGHT);
+        case SOCIAL:
+            enterMode(Mode::SOCIAL);
             break;
         case EXPLORE: {
             enterMode(Mode::EXPLORE);
@@ -589,9 +742,13 @@ void MenuScene::enterMode(Mode nextMode) {
     else if (mode == Mode::BOWL) lastBowlSelected = selected;
     else if (mode == Mode::WOOD) lastWoodSelected = selected;
     else if (mode == Mode::BOX) lastBoxSelected = selected;
+    else if (mode == Mode::SOCIAL) lastSocialSelected = selected;
+    else if (mode == Mode::GIFT) lastGiftSelected = selected;
     else if (mode == Mode::FIGHT) lastFightSelected = selected;
     else if (mode == Mode::EXPLORE) lastExploreSelected = selected;
     else if (mode == Mode::DEBUG) lastDebugSelected = selected;
+    else if (mode == Mode::DEBUG_STATE) lastDebugStateSelected = selected;
+    else if (mode == Mode::DEBUG_ATTR) lastDebugAttrSelected = selected;
     else lastSelected = selected;
 
     mode = nextMode;
@@ -613,6 +770,8 @@ void MenuScene::enterMode(Mode nextMode) {
         woodScroll = 0.0f;
     }
     else if (mode == Mode::BOX) selected = lastBoxSelected;
+    else if (mode == Mode::SOCIAL) selected = lastSocialSelected;
+    else if (mode == Mode::GIFT) selected = lastGiftSelected;
     else if (mode == Mode::FIGHT) selected = lastFightSelected;
     else if (mode == Mode::EXPLORE) {
         selected = lastExploreSelected;
@@ -622,6 +781,16 @@ void MenuScene::enterMode(Mode nextMode) {
         selected = lastDebugSelected;
         if (selected >= DEBUG_ITEM_COUNT - 1) selected = 0;
     }
+    else if (mode == Mode::DEBUG_STATE) {
+        selected = lastDebugStateSelected;
+        debugStageIndex = (int)GameEngine::ins().getBug().getStage();
+        if (debugStageIndex < 0) debugStageIndex = 0;
+        if (debugStageIndex > 4) debugStageIndex = 4;
+        debugTemperIndex = (int)GameEngine::ins().getBug().getTemperament();
+        if (debugTemperIndex < 0) debugTemperIndex = 0;
+        if (debugTemperIndex > 5) debugTemperIndex = 5;
+    }
+    else if (mode == Mode::DEBUG_ATTR) selected = lastDebugAttrSelected;
     else selected = lastSelected;
     int count = itemCount();
     if (selected >= count) selected = 0;
@@ -633,9 +802,13 @@ int MenuScene::itemCount() const {
     if (mode == Mode::BOWL) return BOWL_ITEM_COUNT;
     if (mode == Mode::WOOD) return WOOD_ITEM_COUNT;
     if (mode == Mode::BOX) return BOX_ITEM_COUNT;
+    if (mode == Mode::SOCIAL) return SOCIAL_ITEM_COUNT;
+    if (mode == Mode::GIFT) return GIFT_ITEM_COUNT;
     if (mode == Mode::FIGHT) return FIGHT_ITEM_COUNT;
     if (mode == Mode::EXPLORE) return EXPLORE_ITEM_COUNT;
     if (mode == Mode::DEBUG) return DEBUG_ITEM_COUNT;
+    if (mode == Mode::DEBUG_STATE) return DEBUG_STATE_ITEM_COUNT;
+    if (mode == Mode::DEBUG_ATTR) return DEBUG_ATTR_ITEM_COUNT;
     return MAIN_ITEM_COUNT;
 }
 
@@ -684,9 +857,26 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
         }
     }
 
+    if (mode == Mode::SOCIAL) {
+        switch (index) {
+            case SOCIAL_GIFT: return UiStrings::MENU_SOCIAL_GIFT;
+            case SOCIAL_FIGHT: return UiStrings::MENU_SOCIAL_FIGHT;
+            case SOCIAL_BACK:
+            default: return UiStrings::BACK;
+        }
+    }
+
+    if (mode == Mode::GIFT) {
+        switch (index) {
+            case GIFT_SEND_FOOD: return UiStrings::MENU_GIFT_SEND_FOOD;
+            case GIFT_RECEIVE_FOOD: return UiStrings::MENU_GIFT_RECEIVE_FOOD;
+            case GIFT_BACK:
+            default: return UiStrings::BACK;
+        }
+    }
+
     if (mode == Mode::FIGHT) {
         switch (index) {
-            case FIGHT_CUP: return UiStrings::MENU_FIGHT_CUP;
             case FIGHT_CREATE: return UiStrings::MENU_FIGHT_CREATE;
             case FIGHT_SEARCH: return UiStrings::MENU_FIGHT_SEARCH;
             case FIGHT_BACK:
@@ -700,6 +890,7 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
             case LOCATION_BACK_HILL: return "Back Hill";
             case LOCATION_RIVERSIDE: return "Riverside";
             case LOCATION_OLD_WOODS: return "Old Woods";
+            case LOCATION_CUP: return UiStrings::MENU_FIGHT_CUP;
             case LOCATION_BACK:
             default: return UiStrings::BACK;
         }
@@ -707,21 +898,44 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
 
     if (mode == Mode::DEBUG) {
         switch (index) {
-            case DEBUG_EGG: return "1 Egg";
-            case DEBUG_LARVA: return "2 Larva";
-            case DEBUG_PUPA: return "3 Pupa";
-            case DEBUG_JUVENILE: return "4 Juvenile";
-            case DEBUG_ADULT: return "5 Adult";
+            case DEBUG_BEETLE: return "Beetle";
+            case DEBUG_ATTR: return "Attributes";
+            case DEBUG_NPC: return UiStrings::MENU_DEBUG_NPC;
             case DEBUG_BACK:
             default: return UiStrings::BACK;
         }
+    }
+
+    if (mode == Mode::DEBUG_STATE) {
+        switch (index) {
+            case DEBUG_STATE_STAGE:
+                snprintf(buf, bufSize, "Stage:%s", stageName((Stage)debugStageIndex));
+                return buf;
+            case DEBUG_STATE_TEMPER:
+                snprintf(buf, bufSize, "Temper:%s", temperamentName((Temperament)debugTemperIndex));
+                return buf;
+            case DEBUG_STATE_BACK:
+            default:
+                return UiStrings::BACK;
+        }
+    }
+
+    if (mode == Mode::DEBUG_ATTR) {
+        if (index >= DEBUG_ATTR_SIZ && index <= DEBUG_ATTR_SPI) {
+            const Bug& bug = GameEngine::ins().getBug();
+            snprintf(buf, bufSize, "%s:%.0f/%u", attrName((uint8_t)index),
+                     bug.debugGetAttr((uint8_t)index),
+                     bug.debugGetAttrCap((uint8_t)index));
+            return buf;
+        }
+        return UiStrings::BACK;
     }
 
     switch (index) {
         case INFO: return UiStrings::MENU_INFO;
         case FEED: return UiStrings::MENU_FEED;
         case BOX: return UiStrings::MENU_BOX;
-        case FIGHT: return UiStrings::MENU_FIGHT;
+        case SOCIAL: return UiStrings::MENU_SOCIAL;
         case EXPLORE: return UiStrings::MENU_EXPLORE;
         case SETTINGS: return UiStrings::MENU_SETTINGS;
         case DEBUG: return UiStrings::MENU_DEBUG;
@@ -763,6 +977,123 @@ bool MenuScene::isCupAvailable() const {
     const Bug& bug = GameEngine::ins().getBug();
     if (bug.getStage() != Stage::ADULT || bug.isDead() || bug.getHunger() < 30) return false;
     return GameEngine::ins().getCupCycleState() == GameEngine::CupCycleState::REGISTER_OPEN;
+}
+
+const char* MenuScene::cupClosedMessage() {
+    uint64_t now = GameEngine::ins().getGameNow();
+    uint64_t cycleStart = (uint64_t)GameEngine::ins().getLastCupGameTime() * 1000ULL;
+    uint64_t target = cycleStart;
+
+    GameEngine::CupCycleState state = GameEngine::ins().getCupCycleState();
+    if (state == GameEngine::CupCycleState::REGISTER_EXPIRED ||
+        state == GameEngine::CupCycleState::IN_PROGRESS ||
+        now >= cycleStart + GameEngine::CUP_REGISTER_MS) {
+        target = cycleStart + GameEngine::CUP_CYCLE_MS;
+    }
+    while (target <= now) {
+        target += GameEngine::CUP_CYCLE_MS;
+    }
+
+    uint64_t remaining = target - now;
+    if (remaining >= GameEngine::GAME_DAY_MS) {
+        uint32_t days = (uint32_t)((remaining + GameEngine::GAME_DAY_MS - 1) /
+                                   GameEngine::GAME_DAY_MS);
+        snprintf(cupClosedToast, sizeof(cupClosedToast),
+                 "Next cup\n%u day%s later", days, days == 1 ? "" : "s");
+        return cupClosedToast;
+    }
+
+    static constexpr uint64_t HOUR_MS = 60ULL * 60 * 1000;
+    uint32_t hours = (uint32_t)((remaining + HOUR_MS - 1) / HOUR_MS);
+    if (hours > 0) {
+        snprintf(cupClosedToast, sizeof(cupClosedToast),
+                 "Next cup\n%u hour%s later", hours, hours == 1 ? "" : "s");
+        return cupClosedToast;
+    }
+
+    snprintf(cupClosedToast, sizeof(cupClosedToast), "Next cup\nsoon");
+    return cupClosedToast;
+}
+
+const char* MenuScene::stageName(Stage stage) const {
+    switch (stage) {
+        case Stage::EGG: return "Egg";
+        case Stage::LARVA: return "Larva";
+        case Stage::PUPA: return "Pupa";
+        case Stage::JUVENILE: return "Juvenile";
+        case Stage::ADULT: return "Adult";
+        default: return "?";
+    }
+}
+
+const char* MenuScene::temperamentName(Temperament temperament) const {
+    switch (temperament) {
+        case Temperament::SWIFT: return UiStrings::TEMP_SWIFT;
+        case Temperament::RESILIENT: return UiStrings::TEMP_RESILIENT;
+        case Temperament::GIANT: return UiStrings::TEMP_GIANT;
+        case Temperament::BRUTE: return UiStrings::TEMP_BRUTE;
+        case Temperament::BALANCED: return UiStrings::TEMP_BALANCED;
+        case Temperament::SPIRIT: return UiStrings::TEMP_SPIRIT;
+        default: return "?";
+    }
+}
+
+const char* MenuScene::attrName(uint8_t index) const {
+    switch (index) {
+        case 0: return "SIZ";
+        case 1: return "STR";
+        case 2: return "END";
+        case 3: return "SPD";
+        case 4: return "SPI";
+        default: return "?";
+    }
+}
+
+void MenuScene::openAttrEdit(uint8_t index) {
+    attrEditIndex = index;
+    attrEditValue = roundf(GameEngine::ins().getBug().debugGetAttr(index));
+    clampAttrEditValue();
+    attrEditButton = ATTR_EDIT_INC;
+    attrEditActive = true;
+}
+
+void MenuScene::clampAttrEditValue() {
+    if (attrEditValue < 1.0f) attrEditValue = 1.0f;
+    uint8_t cap = GameEngine::ins().getBug().debugGetAttrCap(attrEditIndex);
+    if (attrEditValue > cap) attrEditValue = (float)cap;
+}
+
+bool MenuScene::handleAttrEditButton(const ButtonEvent& ev) {
+    if (ev.action == BtnAction::LONG_PRESS && ev.btn == 1) {
+        attrEditActive = false;
+        return true;
+    }
+    if (ev.action != BtnAction::PRESSED) return true;
+
+    if (ev.btn == 1) {
+        attrEditButton++;
+        if (attrEditButton > ATTR_EDIT_YES) attrEditButton = ATTR_EDIT_DEC;
+        return true;
+    }
+
+    if (ev.btn == 0) {
+        if (attrEditButton == ATTR_EDIT_DEC) {
+            attrEditValue -= 1.0f;
+            clampAttrEditValue();
+        } else if (attrEditButton == ATTR_EDIT_INC) {
+            attrEditValue += 1.0f;
+            clampAttrEditValue();
+        } else if (attrEditButton == ATTR_EDIT_YES) {
+            GameEngine::ins().getBug().debugSetAttr(attrEditIndex, attrEditValue);
+            GameEngine::ins().forceSave();
+            attrEditActive = false;
+            showToast("Saved");
+            Serial.printf("[Menu] Debug attr %s set to %.0f\n", attrName(attrEditIndex), attrEditValue);
+        }
+        return true;
+    }
+
+    return true;
 }
 
 void MenuScene::showToast(const char* msg, uint32_t durationMs) {
