@@ -193,6 +193,7 @@ public:
     static constexpr uint32_t EGG_SHAKE_DELAY_MAX_MS = 2ULL * 60 * 1000; // 累计最多延长 2min
     static constexpr uint32_t HUNGER_DROP_MS      = 90ULL * 1000;   // 饥饿度每 90s -1（节奏更慢，便于观赏）
     static constexpr uint32_t LARVA_HUNGER_DROP_MS = 45ULL * 1000;  // 幼虫代谢更快，每 45s -1
+    static constexpr uint8_t  PUPA_TARGET_HUNGER = 30;              // 蛹期结束时保留的 HUN
     static constexpr uint32_t LARVA_SUBSTRATE_EAT_MS = 60ULL * 1000; // 啃底材每口间隔
     static constexpr uint8_t  LARVA_SUBSTRATE_EAT_HUNGER = 90;      // 低于该值开始啃底材
     static constexpr uint8_t  LARVA_SUBSTRATE_HUNGER_GAIN = 6;      // 每口底材恢复 HUN

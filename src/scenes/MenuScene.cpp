@@ -220,8 +220,6 @@ void MenuScene::drawList() {
 
         int leftW = BOX_W;
         int iconIndex = i;
-        if (mode == Mode::MAIN && i == DEBUG) iconIndex = -1;
-        else if (mode == Mode::MAIN && i >= BOX) iconIndex = i + 1;
 
         if (mode == Mode::MAIN && iconIndex >= 0 && iconIndex < MenuAssets::MAIN_ICON_COUNT) {
             if (isSelected) {
@@ -230,12 +228,13 @@ void MenuScene::drawList() {
 
             uint16_t offset = pgm_read_word(&MenuAssets::MAIN_ICON_FRAMES[iconIndex].offset);
             uint16_t length = pgm_read_word(&MenuAssets::MAIN_ICON_FRAMES[iconIndex].length);
-            int scaledIconW = (int)(MenuAssets::FRAME_W * relScale);
-            int scaledIconH = (int)(MenuAssets::FRAME_H * relScale);
+            float iconScale = relScale;
+            int scaledIconW = (int)(MenuAssets::FRAME_W * iconScale);
+            int scaledIconH = (int)(MenuAssets::FRAME_H * iconScale);
             int iconX = boxX + (ICON_SLOT_W - scaledIconW) / 2;
             int iconY = y - scaledIconH / 2;
             PixelRenderer::drawRgb565RleScaled(iconX, iconY, MenuAssets::FRAME_W, MenuAssets::FRAME_H,
-                                               MenuAssets::MAIN_ICON_RLE, offset, length, relScale);
+                                               MenuAssets::MAIN_ICON_RLE, offset, length, iconScale);
             leftW = ICON_SLOT_W;
         } else {
             // 子菜单仍使用统一尺寸色块；主菜单由 MenuAssets 图标承担视觉识别。

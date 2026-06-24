@@ -179,6 +179,32 @@ void Bug::update(uint64_t now) {
 }
 
 void Bug::updateHunger(uint64_t now, uint32_t deltaMs) {
+    if (stage == Stage::PUPA) {
+        uint64_t pupaEnd = stageStartTime + PUPA_DURATION_MS;
+        if (hunger > PUPA_TARGET_HUNGER) {
+            if (now >= pupaEnd) {
+                hunger = PUPA_TARGET_HUNGER;
+                hungerDropAcc = 0;
+            } else {
+                hungerDropAcc += deltaMs;
+                while (hunger > PUPA_TARGET_HUNGER) {
+                    uint64_t remainingMs = pupaEnd - now;
+                    uint8_t remainingDrops = hunger - PUPA_TARGET_HUNGER;
+                    uint64_t dropMs = remainingMs / remainingDrops;
+                    if (dropMs == 0) dropMs = 1;
+                    if (hungerDropAcc < dropMs) break;
+                    hungerDropAcc -= dropMs;
+                    hunger--;
+                }
+            }
+        } else {
+            hungerDropAcc = 0;
+        }
+        deathTimerStart = 0;
+        if (hunger < 30 && mot > 50) mot = 50;
+        return;
+    }
+
     hungerDropAcc += deltaMs;
     uint32_t baseDropMs = stage == Stage::LARVA ? LARVA_HUNGER_DROP_MS : HUNGER_DROP_MS;
     uint32_t dropMs = sleeping ? baseDropMs * 3 : baseDropMs;
@@ -294,6 +320,8 @@ void Bug::advanceStage(uint64_t now) {
         case Stage::PUPA:
             stageStartTime += PUPA_DURATION_MS;
             stage = Stage::JUVENILE;
+            hunger = PUPA_TARGET_HUNGER;
+            hungerDropAcc = 0;
             spi += 3.0f - (float)pupaShakes;
             break;
         case Stage::JUVENILE:

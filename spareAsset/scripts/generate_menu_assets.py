@@ -5,7 +5,10 @@ from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SRC = ROOT / "spareAsset/legacy/menu/menu_main.png"
+SRC_CANDIDATES = (
+    ROOT / "spareAsset/origin/menu/main_menu.png",
+    ROOT / "spareAsset/origin/menu/menu_main.png",
+)
 OUT_H = ROOT / "src/assets/MenuAssets.h"
 OUT_CPP = ROOT / "src/assets/MenuAssets.cpp"
 SPARE = ROOT / "spareAsset"
@@ -13,9 +16,20 @@ EXTRACTED = SPARE / "extracted/menu"
 PREVIEWS = SPARE / "previews/menu"
 GENERATED = SPARE / "generated/src_assets"
 
-MENU_FRAME_W = 40
+MENU_FRAME_W = 32
 MENU_FRAME_H = 32
 MENU_ICON_COUNT = 7
+MENU_SHEET_W = MENU_FRAME_W * MENU_ICON_COUNT
+MENU_SHEET_H = MENU_FRAME_H
+MENU_SAFE_W = MENU_FRAME_W
+MENU_SAFE_H = MENU_FRAME_H
+
+SOURCE_FRAME_W = 16
+SOURCE_FRAME_H = 16
+SOURCE_GAP_W = 4
+SOURCE_SHEET_W = MENU_ICON_COUNT * SOURCE_FRAME_W + (MENU_ICON_COUNT - 1) * SOURCE_GAP_W
+SOURCE_SHEET_H = SOURCE_FRAME_H
+SOURCE_GAP_COLOR = (0, 255, 0)
 
 
 def rgb565(r, g, b):
@@ -52,20 +66,104 @@ def trim_alpha(im):
     return im.crop(bbox) if bbox else Image.new("RGBA", (1, 1), (0, 0, 0, 0))
 
 
+def is_green_gap_pixel(r, g, b, a):
+    return a >= 80 and abs(r - SOURCE_GAP_COLOR[0]) <= 8 and abs(g - SOURCE_GAP_COLOR[1]) <= 8 and abs(b - SOURCE_GAP_COLOR[2]) <= 8
+
+
+def validate_source_gaps(source):
+    pix = source.load()
+    for gap in range(MENU_ICON_COUNT - 1):
+        left = (gap + 1) * SOURCE_FRAME_W + gap * SOURCE_GAP_W
+        for y in range(SOURCE_SHEET_H):
+            for x in range(left, left + SOURCE_GAP_W):
+                r, g, b, a = pix[x, y]
+                if not is_green_gap_pixel(r, g, b, a):
+                    raise ValueError(
+                        f"Expected #00ff00 separator at x={x}, y={y} in {SOURCE_SHEET_W}x{SOURCE_SHEET_H} menu source"
+                    )
+
+
+def find_content_x_ranges(source):
+    transparent = transparentize_green(source)
+    pix = transparent.load()
+    ranges = []
+    start = None
+    for x in range(transparent.width):
+        has_content = False
+        for y in range(transparent.height):
+            if pix[x, y][3] >= 80:
+                has_content = True
+                break
+        if has_content and start is None:
+            start = x
+        elif not has_content and start is not None:
+            ranges.append((start, x))
+            start = None
+    if start is not None:
+        ranges.append((start, transparent.width))
+
+    merged = []
+    for left, right in ranges:
+        if merged and left - merged[-1][1] <= 2:
+            merged[-1] = (merged[-1][0], right)
+        else:
+            merged.append((left, right))
+    return merged
+
+
+def make_source_tiles(source):
+    if source.size == (SOURCE_SHEET_W, SOURCE_SHEET_H):
+        validate_source_gaps(source)
+        return [
+            source.crop((
+                i * (SOURCE_FRAME_W + SOURCE_GAP_W),
+                0,
+                i * (SOURCE_FRAME_W + SOURCE_GAP_W) + SOURCE_FRAME_W,
+                SOURCE_FRAME_H,
+            ))
+            for i in range(MENU_ICON_COUNT)
+        ]
+
+    if source.size == (MENU_SHEET_W, MENU_SHEET_H):
+        return [
+            source.crop((i * MENU_FRAME_W, 0, (i + 1) * MENU_FRAME_W, MENU_FRAME_H))
+            for i in range(MENU_ICON_COUNT)
+        ]
+
+    content_ranges = find_content_x_ranges(source)
+    if len(content_ranges) == MENU_ICON_COUNT:
+        return [
+            source.crop((left, 0, right, source.height))
+            for left, right in content_ranges
+        ]
+
+    tiles = []
+    for i in range(MENU_ICON_COUNT):
+        left = round(i * source.width / MENU_ICON_COUNT)
+        right = round((i + 1) * source.width / MENU_ICON_COUNT)
+        tiles.append(source.crop((left, 0, right, source.height)))
+    return tiles
+
+
 def make_frames():
-    source = transparentize_green(Image.open(SRC))
-    tile_w = source.width // MENU_ICON_COUNT
-    if tile_w * MENU_ICON_COUNT != source.width:
-        raise ValueError(f"Expected {MENU_ICON_COUNT} equal menu tiles, got width {source.width}")
+    src = next((p for p in SRC_CANDIDATES if p.exists()), None)
+    if src is None:
+        candidates = ", ".join(str(p) for p in SRC_CANDIDATES)
+        raise FileNotFoundError(f"No menu source found. Expected one of: {candidates}")
+
+    source = Image.open(src).convert("RGBA")
+    tiles = make_source_tiles(source)
 
     frames = []
-    for i in range(MENU_ICON_COUNT):
-        tile = source.crop((i * tile_w, 0, (i + 1) * tile_w, source.height))
+    for i, tile in enumerate(tiles):
+        tile = transparentize_green(tile)
         crop = trim_alpha(tile)
-        scale = min(MENU_FRAME_W / crop.width, MENU_FRAME_H / crop.height)
+        scale = min(MENU_SAFE_W / crop.width, MENU_SAFE_H / crop.height)
+        source_size = crop.size
+        resample = Image.Resampling.NEAREST if source_size == (SOURCE_FRAME_W, SOURCE_FRAME_H) else Image.Resampling.LANCZOS
         resized = crop.resize(
             (max(1, round(crop.width * scale)), max(1, round(crop.height * scale))),
-            Image.Resampling.LANCZOS,
+            resample,
         )
         resized = trim_alpha(resized)
 
@@ -76,7 +174,13 @@ def make_frames():
         )
         frames.append(canvas)
         canvas.save(EXTRACTED / f"menu_main_{i}.png")
-        print(f"menu_main_{i}: {crop.width}x{crop.height} -> {resized.width}x{resized.height}")
+        bbox = canvas.getbbox()
+        bbox_size = (bbox[2] - bbox[0], bbox[3] - bbox[1]) if bbox else (0, 0)
+        print(
+            f"menu_main_{i}: source {source_size[0]}x{source_size[1]} -> "
+            f"safe {MENU_SAFE_W}x{MENU_SAFE_H}, frame {MENU_FRAME_W}x{MENU_FRAME_H}, "
+            f"visible {bbox_size[0]}x{bbox_size[1]}"
+        )
     return frames
 
 
