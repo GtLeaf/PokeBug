@@ -1,5 +1,6 @@
 #pragma once
 #include "../core/Scene.h"
+#include <cstddef>
 #include <cstdint>
 
 enum class Stage;
@@ -40,6 +41,7 @@ private:
     float bowlScroll = 0.0f;    // 食物盘列表滚动偏移
     uint64_t foodConfirmTime = 0; // A 键确认反馈结束时间（ms）
     const char* toastMsg = nullptr;
+    char toastText[64] = {0};
     uint64_t toastEndMs = 0;
     char cupClosedToast[40] = {0};
     static int lastSelected;
@@ -54,7 +56,7 @@ private:
     static int lastDebugSelected;
     static int lastDebugStateSelected;
     static int lastDebugAttrSelected;
-    static constexpr int MAIN_ITEM_COUNT = 8;
+    static constexpr int MAIN_ITEM_COUNT = 7;
     static constexpr int BOX_ITEM_COUNT = 6;
     static constexpr int WOOD_ITEM_COUNT = 7; // None + 5 种风格 + Back
     static constexpr int BOWL_ITEM_COUNT = 4; // 3 种风格 + Back
@@ -110,7 +112,6 @@ private:
 
     enum MenuItem {
         INFO = 0,
-        FEED,
         BOX,
         SOCIAL,
         EXPLORE,

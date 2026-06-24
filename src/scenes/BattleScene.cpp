@@ -155,13 +155,10 @@ void BattleScene::onEnter() {
     enemyRealGauge = 0.0f;
     lastGaugeUpdateMs = 0;
     gaugeReadySinceMs = 0;
-    btnAHoldStartMs = 0;
-    btnAHoldReturned = false;
     rhythmWindowCount = 0;
     rhythmWindowIndex = 0;
     myAttackOpportunity = 1;
     rhythmPressedThisOpportunity = false;
-    rhythmRawAPrev = Hal::ins().btnA_raw();
     rhythmFeedback = RhythmFeedback::NONE;
     rhythmFeedbackUntilMs = 0;
     initFromBug();
@@ -236,25 +233,6 @@ bool BattleScene::buildSync() {
 }
 
 SceneID BattleScene::update() {
-    // 备用：直接检测 A 键持续按住 800ms 返回主菜单（兜底 ButtonDispatcher 长按偶发失效）
-    uint32_t rawNow = Hal::ins().millis();
-    bool rawA = Hal::ins().btnA_raw();
-    if (rawA) {
-        if (btnAHoldStartMs == 0) btnAHoldStartMs = rawNow;
-        else if (!btnAHoldReturned && rawNow - btnAHoldStartMs >= 800) {
-            btnAHoldReturned = true;
-            Serial.printf("[BattleScene] A hold fallback -> return scene %d\n", returnScene);
-            nextScene = returnScene;
-        }
-    } else {
-        btnAHoldStartMs = 0;
-        btnAHoldReturned = false;
-    }
-    if (state == State::GAUGE_FILLING && rawA && !rhythmRawAPrev) {
-        handleRhythmButtonPress(rawNow);
-    }
-    rhythmRawAPrev = rawA;
-
     if (!localNpcBattle) {
         BattleLink::ins().update();
     }
@@ -709,42 +687,35 @@ void BattleScene::showRhythmFeedback(RhythmFeedback feedback, uint32_t nowMs) {
 
 void BattleScene::handleRhythmButtonPress(uint32_t nowMs) {
     const RhythmWindow* window = currentRhythmWindow();
-    if (rhythmPressedThisOpportunity) return;
+    if (window == nullptr || rhythmPressedThisOpportunity) return;
 
     rhythmPressedThisOpportunity = true;
 
     int markerPx = (int)(tempoProgress(true) * TEMPO_BAR_W + 0.5f);
     RhythmFeedback feedback = RhythmFeedback::MISS;
     uint8_t boost = RHYTHM_BOOST_MISS;
-    int startPx = -1;
-    int endPx = -1;
+    int startPx = window->startPx;
+    int endPx = startPx + window->widthPx;
+    int centerPx = startPx + window->widthPx / 2;
+    int perfectHalfPx = window->widthPx / 5;
+    if (perfectHalfPx < 2) perfectHalfPx = 2;
 
-    if (window != nullptr) {
-        startPx = window->startPx;
-        endPx = startPx + window->widthPx;
-        int centerPx = startPx + window->widthPx / 2;
-        int perfectHalfPx = window->widthPx / 5;
-        if (perfectHalfPx < 2) perfectHalfPx = 2;
-
-        if (markerPx >= startPx && markerPx <= endPx) {
-            int dist = markerPx - centerPx;
-            if (dist < 0) dist = -dist;
-            if (dist <= perfectHalfPx) {
-                feedback = RhythmFeedback::PERFECT;
-                boost = RHYTHM_BOOST_PERFECT;
-            } else {
-                feedback = RhythmFeedback::GREAT;
-                boost = RHYTHM_BOOST_GREAT;
-            }
+    if (markerPx >= startPx && markerPx <= endPx) {
+        int dist = markerPx - centerPx;
+        if (dist < 0) dist = -dist;
+        if (dist <= perfectHalfPx) {
+            feedback = RhythmFeedback::PERFECT;
+            boost = RHYTHM_BOOST_PERFECT;
+        } else {
+            feedback = RhythmFeedback::GREAT;
+            boost = RHYTHM_BOOST_GREAT;
         }
     }
 
     uint16_t mot = (uint16_t)me.mot + boost;
-    me.mot = mot > 100 ? 100 : (uint8_t)mot;
+    me.mot = mot > BATTLE_MOT_TEMP_CAP ? BATTLE_MOT_TEMP_CAP : (uint8_t)mot;
     queueMotUpdate();
-    if (window != nullptr) {
-        showRhythmFeedback(feedback, nowMs);
-    }
+    showRhythmFeedback(feedback, nowMs);
     Serial.printf("[BattleScene] rhythm %d opportunity=%d marker=%d zone=%d-%d mot+%d -> %d\n",
                   (int)feedback, myAttackOpportunity, markerPx, startPx, endPx, boost, me.mot);
 }
@@ -808,6 +779,8 @@ battle_round_t BattleScene::computeAuthoritativeRound() {
     int clientMot = (int)enemy.mot - clientMotLoss;
     if (hostMot < 0) hostMot = 0;
     if (clientMot < 0) clientMot = 0;
+    if (hostMot > BATTLE_MOT_SOFT_CAP) hostMot = BATTLE_MOT_SOFT_CAP;
+    if (clientMot > BATTLE_MOT_SOFT_CAP) clientMot = BATTLE_MOT_SOFT_CAP;
     round.host_mot = (uint8_t)hostMot;
     round.client_mot = (uint8_t)clientMot;
 
@@ -960,7 +933,7 @@ bool BattleScene::onButton(const ButtonEvent& ev) {
         return true;
     }
 
-    if (state == State::GAUGE_FILLING && ev.action == BtnAction::PRESSED && ev.btn == 0) {
+    if (state == State::GAUGE_FILLING && ev.action == BtnAction::DOWN && ev.btn == 0) {
         handleRhythmButtonPress(Hal::ins().millis());
         return true;
     }
@@ -1058,7 +1031,7 @@ void BattleScene::drawCombatantSprite(const Combatant& combatant, int centerX, i
 }
 
 int BattleScene::tempoScore(const Combatant& combatant) const {
-    int score = (int)combatant.spd * 6;
+    int score = TEMPO_BASE_SCORE + (int)combatant.spd * TEMPO_SPD_SLOPE;
     return score < 1 ? 1 : score;
 }
 
@@ -1163,11 +1136,11 @@ void BattleScene::drawBattleField() {
     if (now < rhythmFeedbackUntilMs && rhythmFeedback != RhythmFeedback::NONE) {
         switch (rhythmFeedback) {
             case RhythmFeedback::PERFECT:
-                msg = "PERFECT!";
-                msgColor = PixelRenderer::YELLOW;
+                msg = "MOT++";
+                msgColor = PixelRenderer::MAGENTA;
                 break;
             case RhythmFeedback::GREAT:
-                msg = "GREAT!";
+                msg = "MOT+";
                 msgColor = PixelRenderer::CYAN;
                 break;
             case RhythmFeedback::MISS:

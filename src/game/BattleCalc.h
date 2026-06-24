@@ -30,9 +30,9 @@ public:
         return computeHp(stats.siz, stats.end);
     }
 
-    // 先手值：SPD 高者更容易先手；MOT 与少量节奏随机避免 +1 SPD 永久锁先手。
+    // 旧回合制先手值 fallback；当前 BattleScene 使用 ATB tempoScore。
     static int computeInitiative(uint8_t spd, uint8_t mot) {
-        return spd * 6 + mot + (int)random(-8, 9);
+        return 45 + spd * 3 + mot + (int)random(-8, 9);
     }
 
     static int computeInitiative(const BattleStats& stats) {
@@ -46,14 +46,14 @@ public:
                                 attacker.mot);
     }
 
-    // 每回合 MOT 自然衰减。MOT 越低越抗衰减，避免低斗志时继续快速见底。
+    // 每回合 MOT 自然衰减。MOT 越低越抗衰减，避免中低斗志时继续快速见底。
     static int computeMotLoss(uint8_t spi, uint8_t mot) {
         int loss = (int)roundf(9.0f - spi / 3.0f);
         if (loss < 2) loss = 2;
         if (loss > 9) loss = 9;
-        if (mot < 30) {
+        if (mot <= 50) {
             loss = (int)roundf(loss * 0.5f);
-        } else if (mot < 50) {
+        } else if (mot <= 70) {
             loss = (int)roundf(loss * 0.8f);
         }
         if (loss < 1) loss = 1;
@@ -74,7 +74,7 @@ private:
 
         float dodgeRate = 0.0f;
         int spdDiff = (int)defenderSpd - (int)attackerSpd;
-        if (spdDiff > 0) dodgeRate += spdDiff * 3.0f;
+        if (spdDiff > 0) dodgeRate += spdDiff * 2.0f;
         dodgeRate += defenderSpi / 8.0f;
         dodgeRate = clampFloat(dodgeRate, 0.0f, 22.0f);
         if (rollPercent(dodgeRate)) {

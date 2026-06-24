@@ -23,7 +23,7 @@ uint16_t temperamentColor(Temperament temperament) {
 }
 
 uint16_t potentialColor(uint8_t cap) {
-    if (cap <= 10) return PixelRenderer::GRAY;                 // Low
+    if (cap <= 10) return PixelRenderer::rgb565(150, 150, 160); // Low
     if (cap <= 13) return PixelRenderer::WHITE;                // Common
     if (cap <= 16) return PixelRenderer::rgb565(80, 150, 255); // Rare
     if (cap <= 19) return PixelRenderer::rgb565(163, 53, 238); // Epic

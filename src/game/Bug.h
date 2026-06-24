@@ -91,6 +91,7 @@ public:
     uint8_t getHunger() const { return hunger; }
     void modHunger(int8_t delta);
     void ensureMinHunger(uint8_t minHunger = 1);
+    bool eatSubstrate(uint64_t now);
     void skipSimulationTime(uint64_t deltaMs);
     void addTrainingBonus(float sizDelta, float strDelta, float endDelta,
                           float spdDelta, float spiDelta);
@@ -119,10 +120,12 @@ public:
     bool addItem(const ItemStack& item) { return addItem(item.id, item.amount); }
     bool removeItem(const ItemStack& item) { return removeItem(item.id, item.amount); }
     void setSleeping(bool sleepingNow) { sleeping = sleepingNow; }
+    bool isSleeping() const { return sleeping; }
     bool isWoodPlaced() const { return woodPlaced; }
     bool hasFoodInTray() const { return foodInTray; }
     FoodType getFoodInTrayType() const { return trayFoodType; }
     uint8_t getFoodAmount() const { return foodAmount; }
+    uint64_t getLastEatTime() const { return lastEatTime; }
     bool placeWood();              // 放置腐木到缸内
     void removeWood() { woodPlaced = false; }
     bool isWoodUnlocked(uint8_t style) const;
@@ -182,13 +185,17 @@ public:
     uint64_t getLastUpdateTime() const { return lastUpdateTime; }
 
     // 阶段时长（按设计文档 v1.0）
-    static constexpr uint32_t EGG_DURATION_MS      = 5ULL * 60 * 1000;   // 5 min
-    static constexpr uint32_t LARVA_DURATION_MS    = 30ULL * 60 * 1000;  // 30 min
-    static constexpr uint32_t PUPA_DURATION_MS     = 60ULL * 60 * 1000;  // 60 min
+    static constexpr uint32_t EGG_DURATION_MS      = 10ULL * 60 * 1000;  // 10 min
+    static constexpr uint32_t LARVA_DURATION_MS    = 60ULL * 60 * 1000;  // 60 min
+    static constexpr uint32_t PUPA_DURATION_MS     = 20ULL * 60 * 1000;  // 20 min
     static constexpr uint32_t JUVENILE_DURATION_MS = 60ULL * 60 * 1000;  // 60 min
     static constexpr uint32_t EGG_SHAKE_DELAY_MS  = 30ULL * 1000;   // 每次摇晃卵延长 30s
     static constexpr uint32_t EGG_SHAKE_DELAY_MAX_MS = 2ULL * 60 * 1000; // 累计最多延长 2min
     static constexpr uint32_t HUNGER_DROP_MS      = 90ULL * 1000;   // 饥饿度每 90s -1（节奏更慢，便于观赏）
+    static constexpr uint32_t LARVA_HUNGER_DROP_MS = 45ULL * 1000;  // 幼虫代谢更快，每 45s -1
+    static constexpr uint32_t LARVA_SUBSTRATE_EAT_MS = 60ULL * 1000; // 啃底材每口间隔
+    static constexpr uint8_t  LARVA_SUBSTRATE_EAT_HUNGER = 90;      // 低于该值开始啃底材
+    static constexpr uint8_t  LARVA_SUBSTRATE_HUNGER_GAIN = 6;      // 每口底材恢复 HUN
     static constexpr uint32_t STARVE_DEATH_MS     = 5ULL * 60 * 1000; // 饥饿 0 后持续 5min 死亡
     static constexpr uint32_t ADULT_SAP_PRODUCE_MS = 10ULL * 60 * 1000; // 成虫每 10min 产 1 份树汁
     static constexpr uint8_t  FOOD_MAX_AMOUNT     = 5;              // 一份食物分成 5 口吃完
@@ -202,7 +209,7 @@ public:
     static constexpr uint8_t  POKE_MOT_BUFF          = 5;                  // 触发后 MOT +5
 
     // 蛹期安静成长：整个蛹期总计维持原有 SPI +1
-    static constexpr uint32_t PUPA_SPI_GROWTH_MS     = 60ULL * 60 * 1000;
+    static constexpr uint32_t PUPA_SPI_GROWTH_MS     = PUPA_DURATION_MS;
 
 private:
     uint8_t geneVIG = 0, geneATK = 0, geneMNT = 0, geneEND = 0, geneAPP = 0;

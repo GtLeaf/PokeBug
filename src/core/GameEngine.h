@@ -6,6 +6,7 @@
 #include "../hardware/Hal.h"
 #include "../hardware/PixelRenderer.h"
 
+#include <cstddef>
 #include <cstdint>
 #include "../game/NpcGenerator.h"
 
@@ -64,10 +65,6 @@ public:
 
     // 获取上一个场景
     SceneID getPrevSceneID() const { return prevSceneID; }
-
-    // 按钮分派器句柄
-    int engineDispatcherHandle = -1;
-    int sceneDispatcherHandle = -1;
 
     // 帧计数器
     uint32_t frameCount() const { return frames; }
@@ -288,6 +285,8 @@ private:
     uint32_t lastImuTime = 0;
 
     void processInput();
+    bool routeButtonEvent(const ButtonEvent& ev);
+    bool handleGlobalButtonEvent(const ButtonEvent& ev);
     void processIMU();
     void checkCupCycle();
     uint8_t naturalExploreTimeOfDay() const;

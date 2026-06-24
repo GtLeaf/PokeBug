@@ -23,6 +23,12 @@ enum class TiltDir {
     RIGHT   // 右倾（设备右侧向下）
 };
 
+enum class LarvaState {
+    IDLE,
+    EAT,
+    SLEEP,
+};
+
 // 培养缸主场景
 class TerrariumScene : public Scene {
 public:
@@ -61,6 +67,10 @@ private:
     uint8_t eatFrameInterval = 0; // EAT 动画每帧持续帧数
     uint8_t eatBitesThisSession = 0;
     uint32_t eatLastBiteMs = 0;   // 成虫咬食使用现实时间节奏，避免被游戏速度压缩
+    LarvaState larvaState = LarvaState::IDLE;
+    uint32_t larvaStateStartMs = 0;
+    uint32_t larvaStateDurationMs = 0;
+    uint64_t observedLarvaEatGameMs = 0;
     uint32_t restResumeAllowedMs = 0; // 允许重新进入夜间休息的时间戳
     uint32_t foodRefillGraceUntilMs = 0; // 刚吃空但仍饿时，等待玩家补食的时间窗
     uint32_t alertUntilMs = 0;        // 被戳后的警戒结束时间
@@ -81,6 +91,13 @@ private:
     static constexpr uint32_t EAT_BITE_INTERVAL_MS = 2000;    // 每口至少间隔 2 秒现实时间
     static constexpr uint8_t EAT_FRAME_INTERVAL_MIN = 6;     // 20fps 下约 0.3 秒
     static constexpr uint8_t EAT_FRAME_INTERVAL_MAX = 10;    // 20fps 下约 0.5 秒
+    static constexpr uint32_t LARVA_EAT_FRAME_MS = 180;
+    static constexpr uint32_t LARVA_IDLE_MIN_MS = 3000;
+    static constexpr uint32_t LARVA_IDLE_MAX_MS = 8000;
+    static constexpr uint32_t LARVA_EAT_MIN_MS = 45000;
+    static constexpr uint32_t LARVA_EAT_MAX_MS = 90000;
+    static constexpr uint32_t LARVA_SLEEP_MIN_MS = 30000;
+    static constexpr uint32_t LARVA_SLEEP_MAX_MS = 90000;
     static constexpr uint8_t EAT_CONTINUE_HUNGER = 80;
     static constexpr uint32_t FOOD_REFILL_GRACE_MS = 3000;
     static constexpr uint8_t REST_GETDOWN_FRAME_INTERVAL = 8; // 入睡动作每帧约 0.4 秒
@@ -115,6 +132,8 @@ private:
     void startWalkTo(int x, bool restTarget = false);
     void enterEat();
     void enterRest();
+    void enterLarvaState(LarvaState nextState, uint32_t nowMs);
+    void updateLarvaState(Bug& bug, uint32_t nowMs);
     void setIdleDuration();
     int pickRestTargetX();
     void startClimbOrIdle();

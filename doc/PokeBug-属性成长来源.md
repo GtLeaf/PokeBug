@@ -131,7 +131,7 @@ delta = foodBase * stageAbsorb * temperamentMult * environmentMult * geneGrowthM
 SPI +1.0
 ```
 
-当前蛹期为 60 分钟，`PUPA_SPI_GROWTH_MS` 也是 60 分钟，因此整个蛹期稳定总计 `SPI +1.0`。
+当前蛹期为 20 分钟，`PUPA_SPI_GROWTH_MS` 也跟随蛹期总时长，因此整个蛹期稳定总计 `SPI +1.0`。
 
 如果幼虫期喂过 Berry，间隔会缩短 10%，但因为蛹期总时长不变，当前实现仍主要表现为稳定触发一次。
 

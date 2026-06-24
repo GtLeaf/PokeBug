@@ -70,7 +70,7 @@ void GameEngine::begin() {
         setWoodStyle(loadedWood);
         setBowlStyle(loadedBowl);
         setFoodStyle(loadedFood);
-        bug.setFoodTray(bowlStyle + 1, (FoodType)foodStyle);
+        bug.setFoodTray(bowlStyle == 0xFF ? 0 : bowlStyle + 1, (FoodType)foodStyle);
         bug.setWood(woodStyle);
         PixelRenderer::setContentFontScale(fontScale);
         Hal::ins().setBrightness(brightness);
@@ -121,16 +121,6 @@ void GameEngine::begin() {
 
     // 根据当前游戏时间立即校正杯赛周期状态
     checkCupCycle();
-
-    // 注册全局按钮监听：仅在培养缸主场景时长按 B 进入 Deep Sleep
-    engineDispatcherHandle = ButtonDispatcher::ins().subscribe([this](const ButtonEvent& ev) -> bool {
-        if (ev.btn == 1 && ev.action == BtnAction::LONG_PRESS && curSceneID == SCENE_TERRARIUM) {
-            systemState = SystemState::DEEP_SLEEP;
-            Serial.println("[Engine] Deep sleep triggered by long-press B");
-            return true;
-        }
-        return false;
-    }, 100);
 
     switchScene(SCENE_TERRARIUM);
 }
@@ -255,10 +245,6 @@ void GameEngine::switchScene(SceneID id) {
     prevSceneID = curSceneID;
 
     if (curScene) {
-        if (sceneDispatcherHandle >= 0) {
-            ButtonDispatcher::ins().unsubscribe(sceneDispatcherHandle);
-            sceneDispatcherHandle = -1;
-        }
         curScene->onExit();
         delete curScene;
         curScene = nullptr;
@@ -299,12 +285,6 @@ void GameEngine::switchScene(SceneID id) {
 
     if (curScene) {
         curScene->onEnter();
-        sceneDispatcherHandle = ButtonDispatcher::ins().subscribe([this](const ButtonEvent& ev) -> bool {
-            if (this->curScene) {
-                return this->curScene->onButton(ev);
-            }
-            return false;
-        }, 0);
     }
 }
 
@@ -313,13 +293,33 @@ void GameEngine::processInput() {
     bool rawA = hal.btnA_raw();
     bool rawB = hal.btnB_raw();
 
-    ButtonDispatcher::ins().poll();
+    ButtonEvent events[ButtonDispatcher::MAX_EVENTS_PER_POLL];
+    uint8_t eventCount = ButtonDispatcher::ins().poll(events, ButtonDispatcher::MAX_EVENTS_PER_POLL);
+    for (uint8_t i = 0; i < eventCount; ++i) {
+        routeButtonEvent(events[i]);
+    }
 
     if (systemState != SystemState::DEEP_SLEEP && (rawA || rawB)) {
         systemState = SystemState::ACTIVE;
         idleTimer = 0;
         idleRendered = false;
     }
+}
+
+bool GameEngine::routeButtonEvent(const ButtonEvent& ev) {
+    if (curScene && curScene->onButton(ev)) {
+        return true;
+    }
+    return handleGlobalButtonEvent(ev);
+}
+
+bool GameEngine::handleGlobalButtonEvent(const ButtonEvent& ev) {
+    if (ev.btn == 1 && ev.action == BtnAction::LONG_PRESS && curSceneID == SCENE_TERRARIUM) {
+        systemState = SystemState::DEEP_SLEEP;
+        Serial.println("[Engine] Deep sleep triggered by long-press B");
+        return true;
+    }
+    return false;
 }
 
 void GameEngine::processIMU() {
@@ -478,6 +478,10 @@ const char* GameEngine::getWoodStyleName() const {
 }
 
 void GameEngine::setBowlStyle(uint8_t id) {
+    if (id == 0xFF) {
+        bowlStyle = id;
+        return;
+    }
     if (id >= 3) id = 0;
     uint8_t wins = getBug().getWins();
     // Lv.2 需 2 胜，Lv.3 需 5 胜
@@ -495,6 +499,7 @@ void GameEngine::cycleBowlStyle() {
 }
 
 bool GameEngine::isBowlStyleUnlocked(uint8_t id) const {
+    if (id == 0xFF) return true;
     uint8_t wins = getBug().getWins();
     if (id == 0) return true;
     if (id == 1) return wins >= 2;
@@ -503,6 +508,7 @@ bool GameEngine::isBowlStyleUnlocked(uint8_t id) const {
 }
 
 const char* GameEngine::getBowlStyleName() const {
+    if (bowlStyle == 0xFF) return UiStrings::WOOD_NONE;
     switch (bowlStyle) {
         case 1: return "Block";
         case 2: return "Root";

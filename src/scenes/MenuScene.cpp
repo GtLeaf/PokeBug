@@ -25,8 +25,28 @@ int MenuScene::lastDebugSelected = 0;
 int MenuScene::lastDebugStateSelected = 0;
 int MenuScene::lastDebugAttrSelected = 0;
 
+namespace {
+
+bool careItemsNotNeeded(Stage stage) {
+    return stage == Stage::EGG || stage == Stage::LARVA || stage == Stage::PUPA;
+}
+
+}
+
 void MenuScene::onEnter() {
     mode = Mode::MAIN;
+    Bug& bug = GameEngine::ins().getBug();
+    if (careItemsNotNeeded(bug.getStage())) {
+        bool changed = GameEngine::ins().getBowlStyle() != 0xFF ||
+                       GameEngine::ins().getWoodStyle() != 0xFF ||
+                       bug.isWoodPlaced();
+        GameEngine::ins().setBowlStyle(0xFF);
+        bug.setFoodTray(0, (FoodType)GameEngine::ins().getFoodStyle());
+        GameEngine::ins().setWoodStyle(0xFF);
+        bug.removeWood();
+        if (changed) saveSettingsNow();
+    }
+
     // 从培养缸进入时重置；从子菜单返回时保持上次位置
     if (GameEngine::ins().getPrevSceneID() == SCENE_TERRARIUM) {
         selected = 0;
@@ -36,10 +56,10 @@ void MenuScene::onEnter() {
     animSelected = (float)selected;
 
     // Debug 阶段切换索引初始化为当前甲虫阶段
-    debugStageIndex = (int)GameEngine::ins().getBug().getStage();
+    debugStageIndex = (int)bug.getStage();
     if (debugStageIndex < 0) debugStageIndex = 0;
     if (debugStageIndex > 4) debugStageIndex = 4;
-    debugTemperIndex = (int)GameEngine::ins().getBug().getTemperament();
+    debugTemperIndex = (int)bug.getTemperament();
     if (debugTemperIndex < 0) debugTemperIndex = 0;
     if (debugTemperIndex > 5) debugTemperIndex = 5;
     attrEditActive = false;
@@ -201,7 +221,7 @@ void MenuScene::drawList() {
         int leftW = BOX_W;
         int iconIndex = i;
         if (mode == Mode::MAIN && i == DEBUG) iconIndex = -1;
-        else if (mode == Mode::MAIN && i > DEBUG) iconIndex = i - 1;
+        else if (mode == Mode::MAIN && i >= BOX) iconIndex = i + 1;
 
         if (mode == Mode::MAIN && iconIndex >= 0 && iconIndex < MenuAssets::MAIN_ICON_COUNT) {
             if (isSelected) {
@@ -479,6 +499,13 @@ void MenuScene::executeSelection() {
     }
 
     if (mode == Mode::BOWL) {
+        if (careItemsNotNeeded(bug.getStage())) {
+            GameEngine::ins().setBowlStyle(0xFF);
+            bug.setFoodTray(0, (FoodType)GameEngine::ins().getFoodStyle());
+            saveSettingsNow();
+            showToast(UiStrings::CARE_ITEM_NOT_NEEDED);
+            return;
+        }
         if (selected >= 0 && selected < BOWL_ITEM_COUNT - 1) {
             GameEngine::ins().setBowlStyle((uint8_t)selected);
             bug.setFoodTray(GameEngine::ins().getBowlStyle() + 1,
@@ -492,6 +519,13 @@ void MenuScene::executeSelection() {
     }
 
     if (mode == Mode::WOOD) {
+        if (careItemsNotNeeded(bug.getStage())) {
+            bug.removeWood();
+            GameEngine::ins().setWoodStyle(0xFF);
+            saveSettingsNow();
+            showToast(UiStrings::CARE_ITEM_NOT_NEEDED);
+            return;
+        }
         if (selected == WOOD_NONE) {
             // 选择空选项：移除主界面的腐木
             bug.removeWood();
@@ -525,10 +559,24 @@ void MenuScene::executeSelection() {
                 enterMode(Mode::FOOD);
                 break;
             case BOX_WOOD:
-                enterMode(Mode::WOOD);
+                if (careItemsNotNeeded(bug.getStage())) {
+                    bug.removeWood();
+                    GameEngine::ins().setWoodStyle(0xFF);
+                    saveSettingsNow();
+                    showToast(UiStrings::CARE_ITEM_NOT_NEEDED);
+                } else {
+                    enterMode(Mode::WOOD);
+                }
                 break;
             case BOX_BOWL:
-                enterMode(Mode::BOWL);
+                if (careItemsNotNeeded(bug.getStage())) {
+                    GameEngine::ins().setBowlStyle(0xFF);
+                    bug.setFoodTray(0, (FoodType)GameEngine::ins().getFoodStyle());
+                    saveSettingsNow();
+                    showToast(UiStrings::CARE_ITEM_NOT_NEEDED);
+                } else {
+                    enterMode(Mode::BOWL);
+                }
                 break;
             case BOX_BG:
                 GameEngine::ins().cycleMainSceneBg();
@@ -679,6 +727,14 @@ void MenuScene::executeSelection() {
             debugStageIndex = (debugStageIndex + 1) % 5;
             Stage nextStage = (Stage)debugStageIndex;
             bug.debugSetStage(nextStage, GameEngine::ins().getGameNow());
+            GameEngine::ins().clearTerrariumViewState();
+            if (careItemsNotNeeded(nextStage)) {
+                GameEngine::ins().setBowlStyle(0xFF);
+                bug.setFoodTray(0, (FoodType)GameEngine::ins().getFoodStyle());
+                GameEngine::ins().setWoodStyle(0xFF);
+                bug.removeWood();
+                saveSettingsNow();
+            }
             GameEngine::ins().forceSave();
 
             char toast[32];
@@ -709,9 +765,6 @@ void MenuScene::executeSelection() {
     }
 
     switch (selected) {
-        case FEED:
-            enterMode(Mode::FOOD);
-            break;
         case BOX:
             enterMode(Mode::BOX);
             break;
@@ -933,7 +986,6 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
 
     switch (index) {
         case INFO: return UiStrings::MENU_INFO;
-        case FEED: return UiStrings::MENU_FEED;
         case BOX: return UiStrings::MENU_BOX;
         case SOCIAL: return UiStrings::MENU_SOCIAL;
         case EXPLORE: return UiStrings::MENU_EXPLORE;
@@ -1097,7 +1149,14 @@ bool MenuScene::handleAttrEditButton(const ButtonEvent& ev) {
 }
 
 void MenuScene::showToast(const char* msg, uint32_t durationMs) {
-    toastMsg = msg;
+    if (!msg || msg[0] == '\0') {
+        toastText[0] = '\0';
+        toastMsg = nullptr;
+        toastEndMs = 0;
+        return;
+    }
+    snprintf(toastText, sizeof(toastText), "%s", msg);
+    toastMsg = toastText;
     toastEndMs = Hal::ins().millis() + durationMs;
 }
 

@@ -42,6 +42,7 @@ static constexpr const char* MENU_CUP         = "Cup";         // 甲虫杯
 static constexpr const char* MENU_WOOD        = "Wood";        // 腐木
 static constexpr const char* MENU_BOWL        = "Bowl";        // 食物盘
 static constexpr const char* MENU_SLEEP       = "Sleep";       // 睡觉
+static constexpr const char* CARE_ITEM_NOT_NEEDED = "Not needed yet."; // 暂不需要这个
 
 // Sleep 提示
 static constexpr const char* SLEEP_TOO_EARLY  = "Too early to sleep.";          // 太早了，不能睡觉

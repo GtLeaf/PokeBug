@@ -166,10 +166,10 @@ void Bug::update(uint64_t now) {
 
     // 睡眠快进/深睡更新中，如果已经饿到危险区且盘中有食物，允许自动咬食。
     static constexpr uint8_t SLEEP_AUTO_EAT_HUNGER = 30;
-    if (sleeping && hunger < SLEEP_AUTO_EAT_HUNGER) {
+    if (sleeping && stage != Stage::LARVA && hunger < SLEEP_AUTO_EAT_HUNGER) {
         eatFromTray(now, true);
-    } else if (stage != Stage::ADULT) {
-        // 幼虫/青年期自主进食；成虫平时由 TerrariumScene 走到食物盘后控制进食。
+    } else if (stage == Stage::JUVENILE) {
+        // 青年期自主进食；成虫平时由 TerrariumScene 走到食物盘后控制进食。
         eatFromTray(now);
     }
 
@@ -180,7 +180,8 @@ void Bug::update(uint64_t now) {
 
 void Bug::updateHunger(uint64_t now, uint32_t deltaMs) {
     hungerDropAcc += deltaMs;
-    uint32_t dropMs = sleeping ? HUNGER_DROP_MS * 3 : HUNGER_DROP_MS;
+    uint32_t baseDropMs = stage == Stage::LARVA ? LARVA_HUNGER_DROP_MS : HUNGER_DROP_MS;
+    uint32_t dropMs = sleeping ? baseDropMs * 3 : baseDropMs;
     while (hungerDropAcc >= dropMs) {
         hungerDropAcc -= dropMs;
         if (hunger > 0) {
@@ -198,6 +199,18 @@ void Bug::updateHunger(uint64_t now, uint32_t deltaMs) {
     }
 
     if (hunger < 30 && mot > 50) mot = 50;
+}
+
+bool Bug::eatSubstrate(uint64_t now) {
+    if (stage != Stage::LARVA) return false;
+    if (hunger > LARVA_SUBSTRATE_EAT_HUNGER) return false;
+    if (now - lastEatTime < LARVA_SUBSTRATE_EAT_MS) return false;
+
+    modHunger((int8_t)LARVA_SUBSTRATE_HUNGER_GAIN);
+    deathTimerStart = 0;
+    lastEatTime = now;
+    clampAttributes();
+    return true;
 }
 
 void Bug::updatePupaSpi(uint64_t now, uint32_t deltaMs) {
@@ -300,6 +313,7 @@ void Bug::debugSetStage(Stage nextStage, uint64_t now) {
     lastUpdateTime = now;
     deathTimerStart = 0;
     hungerDropAcc = 0;
+    lastEatTime = 0;
     sleeping = false;
     pupaShakes = 0;
     if (stage == Stage::EGG) {
@@ -449,12 +463,14 @@ float Bug::getEnvMultiplier(int attrIndex) const {
     float mult = 1.0f;
 
     // 食物盘加成
-    if (foodTrayLevel == 2) mult *= 1.03f;
-    else if (foodTrayLevel == 3) mult *= 1.06f;
+    if (foodTrayLevel > 0) {
+        if (foodTrayLevel == 2) mult *= 1.03f;
+        else if (foodTrayLevel == 3) mult *= 1.06f;
 
-    // 食物倾向加成
-    int foodAttr = FoodTypeInfo::envAttribute(foodTrayType);
-    if (foodAttr == attrIndex) mult *= 1.03f;
+        // 食物倾向加成
+        int foodAttr = FoodTypeInfo::envAttribute(foodTrayType);
+        if (foodAttr == attrIndex) mult *= 1.03f;
+    }
 
     // 腐木加成（仅成虫）
     if (stage == Stage::ADULT && woodPlaced) {
@@ -468,6 +484,10 @@ float Bug::getEnvMultiplier(int attrIndex) const {
 void Bug::setFoodTray(uint8_t level, FoodType type) {
     foodTrayLevel = level;
     foodTrayType = type;
+    if (foodTrayLevel == 0) {
+        foodInTray = false;
+        foodAmount = 0;
+    }
 }
 
 void Bug::setWood(uint8_t style) {

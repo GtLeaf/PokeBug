@@ -90,13 +90,8 @@ private:
     uint8_t rhythmWindowIndex = 0;
     uint8_t myAttackOpportunity = 1;
     bool rhythmPressedThisOpportunity = false;
-    bool rhythmRawAPrev = false;
     RhythmFeedback rhythmFeedback = RhythmFeedback::NONE;
     uint32_t rhythmFeedbackUntilMs = 0;
-
-    // A 键长按返回备用检测（ButtonDispatcher 长按偶尔不可靠时兜底）
-    uint32_t btnAHoldStartMs = 0;
-    bool btnAHoldReturned = false;
 
     // 受击晃动时间戳
     uint32_t meShakeEndMs = 0;
@@ -171,6 +166,8 @@ private:
     static constexpr uint32_t ROUND_TIMEOUT_MS = 5000;
     static constexpr uint32_t RESULT_TIMEOUT_MS = 5000;
     static constexpr uint8_t MAX_ROUNDS = 40;
+    static constexpr int TEMPO_BASE_SCORE = 45;
+    static constexpr int TEMPO_SPD_SLOPE = 3;
     static constexpr float GAUGE_BASE_SCORE = 80.0f;     // 参考 tempoScore，对应 GAUGE_FILL_MS 充满
 
     static constexpr int TEMPO_LABEL_X = 8;
@@ -187,7 +184,9 @@ private:
     static constexpr uint8_t RHYTHM_ZONE_W_MIN = 23;
     static constexpr uint8_t RHYTHM_ZONE_W_MAX = 30;
     static constexpr uint8_t RHYTHM_BOOST_MISS = 8;
-    static constexpr uint8_t RHYTHM_BOOST_GREAT = 15;
-    static constexpr uint8_t RHYTHM_BOOST_PERFECT = 22;
+    static constexpr uint8_t RHYTHM_BOOST_GREAT = 22;    // floor(15 * 1.5)
+    static constexpr uint8_t RHYTHM_BOOST_PERFECT = 33;  // floor(22 * 1.5)
     static constexpr uint32_t RHYTHM_FEEDBACK_MS = 500;
+    static constexpr uint8_t BATTLE_MOT_SOFT_CAP = 100;
+    static constexpr uint8_t BATTLE_MOT_TEMP_CAP = 130;
 };

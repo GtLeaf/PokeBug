@@ -3,6 +3,8 @@
 #include "../core/UiStrings.h"
 #include "../hardware/Hal.h"
 #include "../assets/MainSceneAssets.h"
+#include "../assets/HerculesEggSprites.h"
+#include "../assets/HerculesLarvaSprites.h"
 #include "../assets/HerculesAdultSprites.h"
 #include "../assets/HerculesPupaSprites.h"
 #include "../assets/WoodAssets.h"
@@ -91,6 +93,14 @@ void TerrariumScene::onEnter() {
     resetting = false;
 
     Bug& bug = GameEngine::ins().getBug();
+    Stage stage = bug.getStage();
+    if (stage == Stage::EGG || stage == Stage::LARVA || stage == Stage::PUPA) {
+        GameEngine::ins().setBowlStyle(0xFF);
+        bug.setFoodTray(0, (FoodType)GameEngine::ins().getFoodStyle());
+        GameEngine::ins().setWoodStyle(0xFF);
+        bug.removeWood();
+    }
+
     const TerrariumViewState& saved = GameEngine::ins().getTerrariumViewState();
     if (saved.valid && isMobileBeetleStage(bug.getStage()) && !bug.isDead()) {
         bugX = saved.bugX;
@@ -179,6 +189,10 @@ void TerrariumScene::resetLocalViewState() {
     eatFrameInterval = 0;
     eatBitesThisSession = 0;
     eatLastBiteMs = 0;
+    larvaState = LarvaState::IDLE;
+    larvaStateStartMs = Hal::ins().millis();
+    larvaStateDurationMs = random(LARVA_IDLE_MIN_MS, LARVA_IDLE_MAX_MS + 1);
+    observedLarvaEatGameMs = GameEngine::ins().getBug().getLastEatTime();
     restResumeAllowedMs = 0;
     foodRefillGraceUntilMs = 0;
     alertUntilMs = 0;
@@ -187,11 +201,68 @@ void TerrariumScene::resetLocalViewState() {
     setIdleDuration();
 }
 
+void TerrariumScene::enterLarvaState(LarvaState nextState, uint32_t nowMs) {
+    if (larvaState == nextState) return;
+    larvaState = nextState;
+    larvaStateStartMs = nowMs;
+    switch (nextState) {
+        case LarvaState::EAT:
+            larvaStateDurationMs = random(LARVA_EAT_MIN_MS, LARVA_EAT_MAX_MS + 1);
+            break;
+        case LarvaState::SLEEP:
+            larvaStateDurationMs = random(LARVA_SLEEP_MIN_MS, LARVA_SLEEP_MAX_MS + 1);
+            break;
+        case LarvaState::IDLE:
+        default:
+            larvaStateDurationMs = random(LARVA_IDLE_MIN_MS, LARVA_IDLE_MAX_MS + 1);
+            break;
+    }
+}
+
+void TerrariumScene::updateLarvaState(Bug& bug, uint32_t nowMs) {
+    bool stateDone = nowMs - larvaStateStartMs >= larvaStateDurationMs;
+
+    if (larvaState == LarvaState::EAT) {
+        bug.setSleeping(false);
+        if (bug.eatSubstrate(GameEngine::ins().getGameNow())) {
+            observedLarvaEatGameMs = bug.getLastEatTime();
+        }
+        if (stateDone && bug.getHunger() > Bug::LARVA_SUBSTRATE_EAT_HUNGER) {
+            enterLarvaState(LarvaState::IDLE, nowMs);
+        }
+        return;
+    }
+
+    if (larvaState == LarvaState::SLEEP) {
+        bug.setSleeping(true);
+        if (stateDone) {
+            enterLarvaState(LarvaState::IDLE, nowMs);
+        }
+        return;
+    }
+
+    bug.setSleeping(false);
+    if (stateDone) {
+        bool hungry = bug.getHunger() <= Bug::LARVA_SUBSTRATE_EAT_HUNGER;
+        bool chooseEat = hungry || random(100) < 65;
+        enterLarvaState(chooseEat ? LarvaState::EAT : LarvaState::SLEEP, nowMs);
+    }
+}
+
 SceneID TerrariumScene::update() {
     animFrame++;
 
     Bug& bug = GameEngine::ins().getBug();
-    bug.setSleeping(bug.getStage() == Stage::ADULT && adultState == AdultState::REST);
+    uint32_t nowMs = Hal::ins().millis();
+    if (bug.getStage() == Stage::ADULT) {
+        bug.setSleeping(adultState == AdultState::REST);
+    } else if (bug.getStage() == Stage::LARVA && !bug.isDead()) {
+        updateLarvaState(bug, nowMs);
+    } else {
+        larvaState = LarvaState::IDLE;
+        observedLarvaEatGameMs = bug.getLastEatTime();
+        bug.setSleeping(false);
+    }
 
     // 更新甲虫心智（成虫期且存活）
     if (bug.getStage() == Stage::ADULT && !bug.isDead()) {
@@ -463,21 +534,57 @@ void TerrariumScene::drawBug() {
 
 void TerrariumScene::drawEgg(int x, int y, uint8_t palette) {
     (void)palette;
-    uint16_t c = PixelRenderer::WHITE;
-    PixelRenderer::fillRect(x - 6, y - 7, 12, 14, c);
-    PixelRenderer::fillRect(x - 4, y - 9, 8, 2, c);
-    PixelRenderer::fillRect(x - 4, y + 7, 8, 2, c);
+    Bug& bug = GameEngine::ins().getBug();
+    float progress = bug.getStageProgress(GameEngine::ins().getGameNow());
+    uint8_t frameIndex = (uint8_t)(progress * HerculesEggSprites::FRAME_COUNT);
+    if (frameIndex >= HerculesEggSprites::FRAME_COUNT) {
+        frameIndex = HerculesEggSprites::FRAME_COUNT - 1;
+    }
+
+    uint16_t offset = pgm_read_word(&HerculesEggSprites::FRAMES[frameIndex].offset);
+    uint16_t length = pgm_read_word(&HerculesEggSprites::FRAMES[frameIndex].length);
+    uint8_t w = pgm_read_byte(&HerculesEggSprites::FRAMES[frameIndex].width);
+    uint8_t h = pgm_read_byte(&HerculesEggSprites::FRAMES[frameIndex].height);
+    PixelRenderer::drawRgb565Rle(x - w / 2, y + 9 - h, w, h,
+                                 HerculesEggSprites::RLE, offset, length);
 }
 
 void TerrariumScene::drawLarva(int x, int y, uint8_t palette) {
-    uint16_t body = PixelRenderer::CREAM;
-    uint16_t outline = PALETTE[palette][1];
-    // 三段身体
-    PixelRenderer::fillRect(x - 12, y - 4, 8, 8, body);
-    PixelRenderer::fillRect(x - 4, y - 5, 8, 10, body);
-    PixelRenderer::fillRect(x + 4, y - 4, 8, 8, body);
-    PixelRenderer::fillRect(x - 14, y - 2, 2, 4, outline);
-    PixelRenderer::fillRect(x + 12, y - 2, 2, 4, outline);
+    (void)palette;
+    Bug& bug = GameEngine::ins().getBug();
+    float progress = bug.getStageProgress(GameEngine::ins().getGameNow());
+    uint8_t ageIndex = (uint8_t)(progress * HerculesLarvaSprites::AGE_COUNT);
+    if (ageIndex >= HerculesLarvaSprites::AGE_COUNT) {
+        ageIndex = HerculesLarvaSprites::AGE_COUNT - 1;
+    }
+
+    bool sleepingVisual = larvaState == LarvaState::SLEEP;
+    const auto* frames = HerculesLarvaSprites::IDLE_FRAMES;
+    const uint16_t* rle = HerculesLarvaSprites::IDLE_RLE;
+    uint8_t frameIndex = ageIndex;
+    bool eatingVisual = larvaState == LarvaState::EAT;
+    if (eatingVisual) {
+        uint32_t elapsed = Hal::ins().millis() - larvaStateStartMs;
+        uint8_t eatFrame = (elapsed / LARVA_EAT_FRAME_MS) % HerculesLarvaSprites::EAT_FRAME_COUNT;
+        frameIndex = ageIndex * HerculesLarvaSprites::EAT_FRAME_COUNT + eatFrame;
+        frames = HerculesLarvaSprites::EAT_FRAMES;
+        rle = HerculesLarvaSprites::EAT_RLE;
+    } else if (sleepingVisual) {
+        static constexpr uint8_t LARVA_SLEEP_BREATH_SEQUENCE[] = {0, 1, 2, 1, 0};
+        uint8_t sequenceIndex = (Hal::ins().millis() / 650) %
+                                (sizeof(LARVA_SLEEP_BREATH_SEQUENCE) /
+                                 sizeof(LARVA_SLEEP_BREATH_SEQUENCE[0]));
+        uint8_t sleepFrame = LARVA_SLEEP_BREATH_SEQUENCE[sequenceIndex];
+        frameIndex = ageIndex * HerculesLarvaSprites::SLEEP_FRAME_COUNT + sleepFrame;
+        frames = HerculesLarvaSprites::SLEEP_FRAMES;
+        rle = HerculesLarvaSprites::SLEEP_RLE;
+    }
+
+    uint16_t offset = pgm_read_word(&frames[frameIndex].offset);
+    uint16_t length = pgm_read_word(&frames[frameIndex].length);
+    uint8_t w = pgm_read_byte(&frames[frameIndex].width);
+    uint8_t h = pgm_read_byte(&frames[frameIndex].height);
+    PixelRenderer::drawRgb565Rle(x - w / 2, y + 5 - h, w, h, rle, offset, length);
 }
 
 void TerrariumScene::drawPupa(int x, int y, uint8_t palette) {
@@ -1028,6 +1135,11 @@ void TerrariumScene::updateJuvenileMovement() {
 }
 
 void TerrariumScene::drawFoodTray() {
+    Bug& bug = GameEngine::ins().getBug();
+    Stage stage = bug.getStage();
+    if (stage == Stage::EGG || stage == Stage::LARVA || stage == Stage::PUPA) return;
+    if (GameEngine::ins().getBowlStyle() == 0xFF) return;
+
     static constexpr int BOWL_X = 14;
     static constexpr int BOWL_Y = GROUND_Y - BowlAssets::FRAME_H + 8;
 
@@ -1041,7 +1153,6 @@ void TerrariumScene::drawFoodTray() {
                                  BowlAssets::SPRITE_RLE,
                                  bowlOffset, bowlLength);
 
-    Bug& bug = GameEngine::ins().getBug();
     if (bug.hasFoodInTray() && bug.getFoodAmount() > 0) {
         uint8_t foodStyle = GameEngine::ins().getFoodStyle();
         if (foodStyle >= FoodAssets::SPRITE_COUNT) foodStyle = 0;
@@ -1060,6 +1171,8 @@ void TerrariumScene::drawFoodTray() {
 
 void TerrariumScene::drawWood() {
     Bug& bug = GameEngine::ins().getBug();
+    Stage stage = bug.getStage();
+    if (stage == Stage::EGG || stage == Stage::LARVA || stage == Stage::PUPA) return;
     if (!bug.isWoodPlaced()) return;
 
     uint8_t style = GameEngine::ins().getWoodStyle();
@@ -1354,13 +1467,8 @@ void TerrariumScene::startClimbOrIdle() {
 
 // 幼虫被戳：三段身体收缩 2 像素
 void TerrariumScene::drawLarvaPoked(int x, int y, uint8_t palette) {
-    uint16_t body = PixelRenderer::CREAM;
-    uint16_t outline = PALETTE[palette][1];
-    PixelRenderer::fillRect(x - 10, y - 2, 6, 6, body);
-    PixelRenderer::fillRect(x - 2, y - 3, 6, 8, body);
-    PixelRenderer::fillRect(x + 6, y - 2, 6, 6, body);
-    PixelRenderer::fillRect(x - 12, y - 2, 2, 4, outline);
-    PixelRenderer::fillRect(x + 10, y - 2, 2, 4, outline);
+    int shake = ((Hal::ins().millis() / 70) % 2) ? 2 : -2;
+    drawLarva(x + shake, y, palette);
 }
 
 int TerrariumScene::getPokeTargetY() const {
