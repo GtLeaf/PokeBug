@@ -81,6 +81,12 @@ private:
         SOCCER = 0,
     };
 
+    enum class ToyButtonInteraction : uint8_t {
+        POKE = 0,       // 像未选择玩具一样戳一戳
+        THROW_ARC,      // 从屏幕外抛入，带近大远小和抛物线
+        DROP_DOWN,      // 从上方直接落下，适合小玩具
+    };
+
     struct ToySpec {
         ToyType type;
         uint8_t radius;
@@ -111,8 +117,9 @@ private:
     int toyChargeDir = 1;
     uint32_t toyNoCatchUntilMs = 0;
     bool toyVisible = false;
-    bool toyThrowing = false;
-    uint32_t toyThrowStartMs = 0;
+    bool toyEntryActive = false;
+    ToyButtonInteraction toyEntryInteraction = ToyButtonInteraction::THROW_ARC;
+    uint32_t toyEntryStartMs = 0;
     int toyThrowFromX = 120;
     int toyThrowFromY = 142;
     int toyThrowTargetX = 120;
@@ -158,6 +165,7 @@ private:
     static constexpr uint32_t TOY_NO_CATCH_AFTER_HIT_MS = 1200;
     static constexpr uint32_t TOY_NO_CATCH_AFTER_REBOUND_MS = 650;
     static constexpr uint32_t TOY_THROW_MS = 520;
+    static constexpr uint32_t TOY_DROP_MS = 420;
     static constexpr float TOY_CATCH_MAX_SPEED = 70.0f;
     static constexpr float TOY_TILT_ACCEL = 190.0f;
 
@@ -181,11 +189,16 @@ private:
     void startToyCharge(uint32_t nowMs, int pushDir);
     void triggerToyHit(uint32_t nowMs, int pushDir, float chargeRatio);
     void deflectToyFromBeetle(int pushDir);
-    void startToyThrow(uint32_t nowMs);
-    void finishToyThrow(uint32_t nowMs);
+    bool startToyButtonInteraction(uint32_t nowMs);
+    void startToyArcThrow(uint32_t nowMs);
+    void startToyDrop(uint32_t nowMs);
+    void finishToyEntry(uint32_t nowMs);
     void drawToyBall(int centerX, int centerY, int radius, uint8_t phase);
-    void drawToyThrow();
+    void drawToyEntry();
     bool isToyEnabled() const;
+    ToyType toyTypeForStyle(uint8_t style) const;
+    ToyButtonInteraction toyButtonInteractionForStyle(uint8_t style) const;
+    uint32_t toyEntryDurationMs() const;
     const ToySpec& currentToySpec() const;
     uint8_t toyInterestPercent(Temperament temperament) const;
     uint32_t toyChargeDurationFor(Temperament temperament) const;

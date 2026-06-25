@@ -204,11 +204,12 @@ void TerrariumScene::resetLocalViewState() {
 }
 
 void TerrariumScene::resetToy() {
+    toyType = toyTypeForStyle(GameEngine::ins().getToyStyle());
     const ToySpec& spec = currentToySpec();
-    toyType = ToyType::SOCCER;
     toyVisible = isToyEnabled();
-    toyThrowing = false;
-    toyThrowStartMs = 0;
+    toyEntryActive = false;
+    toyEntryInteraction = toyButtonInteractionForStyle(GameEngine::ins().getToyStyle());
+    toyEntryStartMs = 0;
     toyX = 172.0f;
     toyY = (float)(TOY_TANK_BOTTOM - spec.radius);
     toyVx = 0.0f;
@@ -226,7 +227,38 @@ void TerrariumScene::resetToy() {
 }
 
 bool TerrariumScene::isToyEnabled() const {
-    return GameEngine::ins().getToyStyle() == GameEngine::TOY_BALL;
+    return toyButtonInteractionForStyle(GameEngine::ins().getToyStyle()) != ToyButtonInteraction::POKE;
+}
+
+TerrariumScene::ToyType TerrariumScene::toyTypeForStyle(uint8_t style) const {
+    // 新增玩具时，在这里映射物理/绘制类型，并在下方映射 B 键交互方式。
+    switch (style) {
+        case GameEngine::TOY_BALL:
+        default:
+            return ToyType::SOCCER;
+    }
+}
+
+TerrariumScene::ToyButtonInteraction
+TerrariumScene::toyButtonInteractionForStyle(uint8_t style) const {
+    switch (style) {
+        case GameEngine::TOY_BALL:
+            return ToyButtonInteraction::THROW_ARC;
+        case GameEngine::TOY_NONE:
+        default:
+            return ToyButtonInteraction::POKE;
+    }
+}
+
+uint32_t TerrariumScene::toyEntryDurationMs() const {
+    switch (toyEntryInteraction) {
+        case ToyButtonInteraction::DROP_DOWN:
+            return TOY_DROP_MS;
+        case ToyButtonInteraction::THROW_ARC:
+        case ToyButtonInteraction::POKE:
+        default:
+            return TOY_THROW_MS;
+    }
 }
 
 const TerrariumScene::ToySpec& TerrariumScene::currentToySpec() const {
@@ -341,14 +373,14 @@ void TerrariumScene::triggerToyHit(uint32_t nowMs, int pushDir, float chargeRati
 void TerrariumScene::updateToyPhysics(uint32_t nowMs) {
     if (!isToyEnabled()) {
         toyVisible = false;
-        toyThrowing = false;
+        toyEntryActive = false;
         toyCharging = false;
         return;
     }
 
-    if (toyThrowing) {
-        if (nowMs - toyThrowStartMs >= TOY_THROW_MS) {
-            finishToyThrow(nowMs);
+    if (toyEntryActive) {
+        if (nowMs - toyEntryStartMs >= toyEntryDurationMs()) {
+            finishToyEntry(nowMs);
         }
         toyLastUpdateMs = nowMs;
         return;
@@ -475,13 +507,32 @@ void TerrariumScene::deflectToyFromBeetle(int pushDir) {
     toySpin *= -0.4f;
 }
 
-void TerrariumScene::startToyThrow(uint32_t nowMs) {
+bool TerrariumScene::startToyButtonInteraction(uint32_t nowMs) {
+    if (!isToyEnabled()) return false;
+    if (toyEntryActive) return true;
+    toyType = toyTypeForStyle(GameEngine::ins().getToyStyle());
+    ToyButtonInteraction interaction = toyButtonInteractionForStyle(GameEngine::ins().getToyStyle());
+    switch (interaction) {
+        case ToyButtonInteraction::THROW_ARC:
+            startToyArcThrow(nowMs);
+            return true;
+        case ToyButtonInteraction::DROP_DOWN:
+            startToyDrop(nowMs);
+            return true;
+        case ToyButtonInteraction::POKE:
+        default:
+            return false;
+    }
+}
+
+void TerrariumScene::startToyArcThrow(uint32_t nowMs) {
     if (!isToyEnabled()) return;
     const ToySpec& spec = currentToySpec();
     toyVisible = false;
     toyCharging = false;
-    toyThrowing = true;
-    toyThrowStartMs = nowMs;
+    toyEntryActive = true;
+    toyEntryInteraction = ToyButtonInteraction::THROW_ARC;
+    toyEntryStartMs = nowMs;
     toyThrowFromX = 120 + random(-42, 43);
     toyThrowFromY = Hal::DISPLAY_H + 18;
     toyThrowTargetX = bugX + random(-24, 25);
@@ -499,9 +550,35 @@ void TerrariumScene::startToyThrow(uint32_t nowMs) {
     toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_HIT_MS;
 }
 
-void TerrariumScene::finishToyThrow(uint32_t nowMs) {
+void TerrariumScene::startToyDrop(uint32_t nowMs) {
+    if (!isToyEnabled()) return;
     const ToySpec& spec = currentToySpec();
-    toyThrowing = false;
+    toyVisible = false;
+    toyCharging = false;
+    toyEntryActive = true;
+    toyEntryInteraction = ToyButtonInteraction::DROP_DOWN;
+    toyEntryStartMs = nowMs;
+    toyThrowTargetX = bugX + random(-18, 19);
+    toyThrowTargetY = GROUND_Y - (int)(40.0f * GameEngine::ins().getBug().getAdultScale()) +
+                      random(-5, 7);
+    if (toyThrowTargetY < TOY_TANK_TOP + spec.radius) toyThrowTargetY = TOY_TANK_TOP + spec.radius;
+    if (toyThrowTargetY > TOY_TANK_BOTTOM - spec.radius) toyThrowTargetY = TOY_TANK_BOTTOM - spec.radius;
+    toyThrowFromX = toyThrowTargetX + random(-8, 9);
+    toyThrowFromY = TOY_TANK_TOP - spec.radius - random(14, 27);
+    toyThrowArcH = 0;
+    toyThrowCurveX = random(-7, 8);
+    toyX = (float)toyThrowTargetX;
+    toyY = (float)(TOY_TANK_BOTTOM - spec.radius);
+    toyVx = 0.0f;
+    toyVy = 0.0f;
+    toySpin = 0.0f;
+    toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_HIT_MS;
+}
+
+void TerrariumScene::finishToyEntry(uint32_t nowMs) {
+    const ToySpec& spec = currentToySpec();
+    ToyButtonInteraction finishedInteraction = toyEntryInteraction;
+    toyEntryActive = false;
     toyVisible = true;
     toyX = (float)toyThrowTargetX;
     toyY = (float)toyThrowTargetY;
@@ -509,9 +586,15 @@ void TerrariumScene::finishToyThrow(uint32_t nowMs) {
     if (toyY > TOY_TANK_BOTTOM - spec.radius) toyY = TOY_TANK_BOTTOM - spec.radius;
 
     int pushDir = toyX >= bugX ? 1 : -1;
-    toyVx = (float)(pushDir * random(160, 251));
-    toyVy = -(float)random(110, 181);
-    toySpin = (float)(pushDir * random(8, 15));
+    if (finishedInteraction == ToyButtonInteraction::DROP_DOWN) {
+        toyVx = (float)(pushDir * random(80, 151));
+        toyVy = -(float)random(90, 151);
+        toySpin = (float)(pushDir * random(5, 11));
+    } else {
+        toyVx = (float)(pushDir * random(160, 251));
+        toyVy = -(float)random(110, 181);
+        toySpin = (float)(pushDir * random(8, 15));
+    }
     toyLastHitMs = nowMs;
     toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_HIT_MS;
     toyLastUpdateMs = nowMs;
@@ -551,18 +634,32 @@ void TerrariumScene::drawToyBall(int centerX, int centerY, int radius, uint8_t p
     }
 }
 
-void TerrariumScene::drawToyThrow() {
-    if (!toyThrowing) return;
-    uint32_t elapsed = Hal::ins().millis() - toyThrowStartMs;
-    if (elapsed > TOY_THROW_MS) elapsed = TOY_THROW_MS;
-    float t = (float)elapsed / (float)TOY_THROW_MS;
-    float depthEase = 1.0f - (1.0f - t) * (1.0f - t);
+void TerrariumScene::drawToyEntry() {
+    if (!toyEntryActive) return;
+    uint32_t duration = toyEntryDurationMs();
+    uint32_t elapsed = Hal::ins().millis() - toyEntryStartMs;
+    if (elapsed > duration) elapsed = duration;
+    float t = duration == 0 ? 1.0f : (float)elapsed / (float)duration;
     float arc = 4.0f * t * (1.0f - t);
-    int x = (int)(toyThrowFromX + (toyThrowTargetX - toyThrowFromX) * t +
+    int x = 0;
+    int y = 0;
+    int radius = currentToySpec().radius;
+
+    if (toyEntryInteraction == ToyButtonInteraction::DROP_DOWN) {
+        float easeIn = t * t;
+        x = (int)(toyThrowFromX + (toyThrowTargetX - toyThrowFromX) * t +
                   toyThrowCurveX * arc);
-    int y = (int)(toyThrowFromY + (toyThrowTargetY - toyThrowFromY) * t -
+        y = (int)(toyThrowFromY + (toyThrowTargetY - toyThrowFromY) * easeIn);
+        radius += (int)(2.0f * (1.0f - t));
+    } else {
+        float depthEase = 1.0f - (1.0f - t) * (1.0f - t);
+        x = (int)(toyThrowFromX + (toyThrowTargetX - toyThrowFromX) * t +
+                  toyThrowCurveX * arc);
+        y = (int)(toyThrowFromY + (toyThrowTargetY - toyThrowFromY) * t -
                   toyThrowArcH * arc);
-    int radius = (int)(18.0f + (float)(currentToySpec().radius - 18) * depthEase);
+        radius = (int)(18.0f + (float)(currentToySpec().radius - 18) * depthEase);
+    }
+
     uint8_t phase = (uint8_t)((elapsed / 80) & 0x03);
     drawToyBall(x, y, radius, phase);
 }
@@ -715,7 +812,7 @@ void TerrariumScene::render() {
         drawToy();
     }
     drawBug();
-    drawToyThrow();
+    drawToyEntry();
     drawPokeAction();
     drawStatusBar();
 
@@ -747,9 +844,9 @@ bool TerrariumScene::onButton(const ButtonEvent& ev) {
     if (ev.btn == 1 && ev.action == BtnAction::PRESSED) {
         uint64_t gameNow = GameEngine::ins().getGameNow();
         if (isMobileBeetleStage(bug.getStage()) &&
-            GameEngine::ins().getToyStyle() == GameEngine::TOY_BALL) {
-            startToyThrow(Hal::ins().millis());
-            Serial.println("[Terrarium] Threw toy ball");
+            startToyButtonInteraction(Hal::ins().millis())) {
+            Serial.printf("[Terrarium] Toy interaction style=%u\n",
+                          GameEngine::ins().getToyStyle());
             return true;
         }
         if (bug.getStage() == Stage::EGG) {
