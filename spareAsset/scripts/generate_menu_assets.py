@@ -40,12 +40,12 @@ def is_bg(r, g, b, a, bg):
     if a < 80:
         return True
     close_to_corner = (
-        abs(r - bg[0]) < 24 and
-        abs(g - bg[1]) < 24 and
-        abs(b - bg[2]) < 24
+        abs(r - bg[0]) < 36 and
+        abs(g - bg[1]) < 36 and
+        abs(b - bg[2]) < 36
     )
-    pure_green_spill = r < 32 and g > 220 and b < 32
-    return close_to_corner or pure_green_spill
+    green_screen = g > 180 and r < 96 and b < 96
+    return close_to_corner or green_screen
 
 
 def transparentize_green(im):
@@ -53,11 +53,134 @@ def transparentize_green(im):
     bg = im.getpixel((0, 0))[:3]
     pix = im.load()
     w, h = im.size
+    seen = set()
+    stack = []
+
+    def is_connected_bg(x, y):
+        r, g, b, a = pix[x, y]
+        if is_bg(r, g, b, a, bg):
+            return True
+        return g > 120 and r < 180 and b < 180 and g - max(r, b) > 18
+
+    for x in range(w):
+        if is_connected_bg(x, 0):
+            stack.append((x, 0))
+        if is_connected_bg(x, h - 1):
+            stack.append((x, h - 1))
+    for y in range(h):
+        if is_connected_bg(0, y):
+            stack.append((0, y))
+        if is_connected_bg(w - 1, y):
+            stack.append((w - 1, y))
+
+    while stack:
+        x, y = stack.pop()
+        if (x, y) in seen:
+            continue
+        if not is_connected_bg(x, y):
+            continue
+
+        seen.add((x, y))
+        pix[x, y] = (0, 0, 0, 0)
+
+        for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+            if 0 <= nx < w and 0 <= ny < h and (nx, ny) not in seen:
+                stack.append((nx, ny))
+    return im
+
+
+def harden_alpha(im, threshold=128):
+    im = im.convert("RGBA")
+    pix = im.load()
+    w, h = im.size
     for y in range(h):
         for x in range(w):
             r, g, b, a = pix[x, y]
-            if is_bg(r, g, b, a, bg):
+            if a < threshold:
                 pix[x, y] = (0, 0, 0, 0)
+            else:
+                pix[x, y] = (r, g, b, 255)
+    return im
+
+
+def remove_edge_shadow(im):
+    im = im.convert("RGBA")
+    pix = im.load()
+    w, h = im.size
+    clear = []
+    neighbors = (
+        (-1, -1), (0, -1), (1, -1),
+        (-1, 0),           (1, 0),
+        (-1, 1),  (0, 1),  (1, 1),
+    )
+
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = pix[x, y]
+            if a < 80:
+                continue
+
+            touches_transparent = any(
+                0 <= x + dx < w and
+                0 <= y + dy < h and
+                pix[x + dx, y + dy][3] < 80
+                for dx, dy in neighbors
+            )
+            if not touches_transparent:
+                continue
+
+            max_rgb = max(r, g, b)
+            min_rgb = min(r, g, b)
+            saturation = max_rgb - min_rgb
+            green_fringe = g > 130 and g - max(r, b) > 24
+            shadow_fringe = (max_rgb < 210 and saturation < 42) or max_rgb < 130
+            if green_fringe or shadow_fringe:
+                clear.append((x, y))
+
+    for x, y in clear:
+        pix[x, y] = (0, 0, 0, 0)
+    return im
+
+
+def remove_connected_edge_green(im):
+    im = im.convert("RGBA")
+    pix = im.load()
+    w, h = im.size
+    seen = set()
+    stack = []
+
+    def is_green_artifact(x, y):
+        r, g, b, a = pix[x, y]
+        return a >= 80 and g > 100 and r < 200 and b < 200 and g - max(r, b) > 12
+
+    def can_traverse(x, y):
+        return pix[x, y][3] < 80 or is_green_artifact(x, y)
+
+    for x in range(w):
+        if can_traverse(x, 0):
+            stack.append((x, 0))
+        if can_traverse(x, h - 1):
+            stack.append((x, h - 1))
+    for y in range(h):
+        if can_traverse(0, y):
+            stack.append((0, y))
+        if can_traverse(w - 1, y):
+            stack.append((w - 1, y))
+
+    while stack:
+        x, y = stack.pop()
+        if (x, y) in seen:
+            continue
+        if not can_traverse(x, y):
+            continue
+
+        seen.add((x, y))
+        if is_green_artifact(x, y):
+            pix[x, y] = (0, 0, 0, 0)
+
+        for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+            if 0 <= nx < w and 0 <= ny < h and (nx, ny) not in seen:
+                stack.append((nx, ny))
     return im
 
 
@@ -165,13 +288,14 @@ def make_frames():
             (max(1, round(crop.width * scale)), max(1, round(crop.height * scale))),
             resample,
         )
-        resized = trim_alpha(resized)
+        resized = trim_alpha(remove_edge_shadow(harden_alpha(resized, 150)))
 
         canvas = Image.new("RGBA", (MENU_FRAME_W, MENU_FRAME_H), (0, 0, 0, 0))
         canvas.alpha_composite(
             resized,
             ((MENU_FRAME_W - resized.width) // 2, (MENU_FRAME_H - resized.height) // 2),
         )
+        canvas = remove_connected_edge_green(canvas)
         frames.append(canvas)
         canvas.save(EXTRACTED / f"menu_main_{i}.png")
         bbox = canvas.getbbox()
