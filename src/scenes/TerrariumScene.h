@@ -164,6 +164,9 @@ private:
     LarvaState larvaState = LarvaState::IDLE;
     uint32_t larvaStateStartMs = 0;
     uint32_t larvaStateDurationMs = 0;
+    int larvaTargetX = 120;
+    uint32_t larvaNextStepMs = 0;
+    bool larvaFaceRight = true;
     uint64_t observedLarvaEatGameMs = 0;
     uint32_t restResumeAllowedMs = 0; // 允许重新进入夜间休息的时间戳
     uint32_t foodRefillGraceUntilMs = 0; // 刚吃空但仍饿时，等待玩家补食的时间窗
@@ -289,6 +292,9 @@ private:
     static constexpr uint32_t LARVA_EAT_FRAME_MS = 180;
     static constexpr uint32_t LARVA_IDLE_MIN_MS = 3000;
     static constexpr uint32_t LARVA_IDLE_MAX_MS = 8000;
+    static constexpr uint32_t LARVA_WALK_START_MS = 900;
+    static constexpr uint32_t LARVA_WALK_STEP_MS = 80;
+    static constexpr int LARVA_WALK_MIN_DELTA = 18;
     static constexpr uint32_t LARVA_EAT_MIN_MS = 45000;
     static constexpr uint32_t LARVA_EAT_MAX_MS = 90000;
     static constexpr uint32_t LARVA_SLEEP_MIN_MS = 30000;

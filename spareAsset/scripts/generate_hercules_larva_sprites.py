@@ -16,6 +16,10 @@ GENERATED = SPARE / "generated/src_assets"
 # Usage:
 # 1. Put larva images under this structure:
 #      spareAsset/origin/beetle/hercules/larva/age1/idle/*.png
+#      spareAsset/origin/beetle/hercules/larva/age1/walk/frame_1.png
+#      spareAsset/origin/beetle/hercules/larva/age1/walk/frame_2.png
+#      ... up to five walk frames. Missing walk frames repeat the last frame.
+#      If an age has no walk directory, its idle frame is used as fallback.
 #      spareAsset/origin/beetle/hercules/larva/age1/sleep/frame_1.png
 #      spareAsset/origin/beetle/hercules/larva/age1/sleep/frame_2.png
 #      spareAsset/origin/beetle/hercules/larva/age1/sleep/frame_3.png
@@ -25,12 +29,15 @@ GENERATED = SPARE / "generated/src_assets"
 #      spareAsset/origin/beetle/hercules/larva/age1/eat/frame_3.png
 #      spareAsset/origin/beetle/hercules/larva/age1/eat/frame_4.png
 #      ... repeat eat frames for age2 and age3.
-# 2. Each age has one idle frame, three sleep frames, and four eat frames.
-#    Sleep/eat frames play only after entering that visual state.
+# 2. Each age has one idle frame, five walk frames, three sleep frames,
+#    and four eat frames. Sleep/eat are generated for compatibility, but the
+#    current game logic can choose to skip those visual states.
 # 3. Generated frames use BASE_FRAME_* multiplied by LARVA_SIZE_SCALE,
-#    bottom-aligned. Idle/sleep share one scale per age; eat uses a separate
-#    per-age scale so oversized food/bite poses do not shrink normal idle
-#    growth frames. Change LARVA_SIZE_SCALE to resize all larva frames.
+#    bottom-aligned. Idle defines each age's visible body size; walk frames use
+#    frame_1 vs idle to choose the larger width/height matching scale, so the
+#    first walk pose does not look smaller than idle. Sleep and eat use separate
+#    per-age scales for compatibility. Change LARVA_SIZE_SCALE to resize all
+#    larva frames.
 # 4. Run:
 #      python3 spareAsset/scripts/generate_hercules_larva_sprites.py
 #    Then build with:
@@ -39,9 +46,11 @@ GENERATED = SPARE / "generated/src_assets"
 AGE_COUNT = 3
 SLEEP_FRAME_COUNT = 3
 EAT_FRAME_COUNT = 4
+WALK_FRAME_COUNT = 5
 BASE_FRAME_W = 76
 BASE_FRAME_H = 52
 LARVA_SIZE_SCALE = 1.2
+AGE1_WALK_SCALE_BOOST = 1.08
 LARVA_FRAME_W = round(BASE_FRAME_W * LARVA_SIZE_SCALE)
 LARVA_FRAME_H = round(BASE_FRAME_H * LARVA_SIZE_SCALE)
 LARVA_MAX_W = LARVA_FRAME_W
@@ -93,6 +102,17 @@ def source_images():
     for age in range(1, AGE_COUNT + 1):
         age_dir = SRC_DIR / f"age{age}"
         idle_path = first_png(age_dir / "idle")
+        walk_dir = age_dir / "walk"
+        walk_candidates = sorted(walk_dir.glob("*.png")) if walk_dir.exists() else []
+        walk_paths = []
+        for frame in range(1, WALK_FRAME_COUNT + 1):
+            path = walk_dir / f"frame_{frame}.png"
+            if path.exists():
+                walk_paths.append(path)
+            elif walk_candidates:
+                walk_paths.append(walk_candidates[min(frame - 1, len(walk_candidates) - 1)])
+            else:
+                walk_paths.append(idle_path)
         sleep_paths = []
         for frame in range(1, SLEEP_FRAME_COUNT + 1):
             path = age_dir / "sleep" / f"frame_{frame}.png"
@@ -105,7 +125,7 @@ def source_images():
             if not path.exists():
                 path = first_png(age_dir / "eat")
             eat_paths.append(path)
-        ages.append((idle_path, sleep_paths, eat_paths))
+        ages.append((idle_path, walk_paths, sleep_paths, eat_paths))
     return ages
 
 
@@ -122,28 +142,38 @@ def make_canvas(crop, scale):
 
 def make_frames():
     (EXTRACTED / "idle").mkdir(parents=True, exist_ok=True)
+    (EXTRACTED / "walk").mkdir(parents=True, exist_ok=True)
     (EXTRACTED / "sleep").mkdir(parents=True, exist_ok=True)
     (EXTRACTED / "eat").mkdir(parents=True, exist_ok=True)
     PREVIEWS.mkdir(parents=True, exist_ok=True)
     GENERATED.mkdir(parents=True, exist_ok=True)
     clear_pngs(EXTRACTED / "idle")
+    clear_pngs(EXTRACTED / "walk")
     clear_pngs(EXTRACTED / "sleep")
     clear_pngs(EXTRACTED / "eat")
     clear_pngs(PREVIEWS)
 
     idle_frames = []
+    walk_frames = []
     sleep_frames = []
     eat_frames = []
-    for age, (idle_path, sleep_paths, eat_paths) in enumerate(source_images(), start=1):
-        idle_sleep_paths = [("idle", 0, idle_path)]
-        idle_sleep_paths.extend(("sleep", i, path) for i, path in enumerate(sleep_paths))
+    for age, (idle_path, walk_paths, sleep_paths, eat_paths) in enumerate(source_images(), start=1):
+        idle_walk_paths = [("idle", 0, idle_path)]
+        idle_walk_paths.extend(("walk", i, path) for i, path in enumerate(walk_paths))
+        sleep_role_paths = [("sleep", i, path) for i, path in enumerate(sleep_paths)]
         eat_role_paths = [("eat", i, path) for i, path in enumerate(eat_paths)]
 
-        idle_sleep_crops = []
-        for role, role_index, path in idle_sleep_paths:
+        idle_walk_crops = []
+        for role, role_index, path in idle_walk_paths:
             source = Image.open(path).convert("RGBA")
             crop = trim_alpha(remove_green_bg(source))
-            idle_sleep_crops.append((role, role_index, path, source, crop))
+            idle_walk_crops.append((role, role_index, path, source, crop))
+
+        sleep_crops = []
+        for role, role_index, path in sleep_role_paths:
+            source = Image.open(path).convert("RGBA")
+            crop = trim_alpha(remove_green_bg(source))
+            sleep_crops.append((role, role_index, path, source, crop))
 
         eat_crops = []
         for role, role_index, path in eat_role_paths:
@@ -151,21 +181,46 @@ def make_frames():
             crop = trim_alpha(remove_green_bg(source))
             eat_crops.append((role, role_index, path, source, crop))
 
-        idle_sleep_max_w = max(crop.width for _, _, _, _, crop in idle_sleep_crops)
-        idle_sleep_max_h = max(crop.height for _, _, _, _, crop in idle_sleep_crops)
-        idle_sleep_scale = min(LARVA_MAX_W / idle_sleep_max_w, LARVA_MAX_H / idle_sleep_max_h)
+        idle_crop = idle_walk_crops[0][4]
+        active_max_w = max(crop.width for _, _, _, _, crop in idle_walk_crops)
+        active_max_h = max(crop.height for _, _, _, _, crop in idle_walk_crops)
+        idle_scale = min(LARVA_MAX_W / active_max_w, LARVA_MAX_H / active_max_h)
+        first_walk_crop = next((crop for role, _, _, _, crop in idle_walk_crops if role == "walk"),
+                               idle_crop)
+        idle_visible_w = idle_crop.width * idle_scale
+        idle_visible_h = idle_crop.height * idle_scale
+        if age == 1:
+            walk_scale = (idle_visible_w / first_walk_crop.width) * AGE1_WALK_SCALE_BOOST
+        else:
+            walk_scale = max(idle_visible_w / first_walk_crop.width,
+                             idle_visible_h / first_walk_crop.height)
+
+        sleep_max_w = max(crop.width for _, _, _, _, crop in sleep_crops)
+        sleep_max_h = max(crop.height for _, _, _, _, crop in sleep_crops)
+        sleep_scale = min(LARVA_MAX_W / sleep_max_w, LARVA_MAX_H / sleep_max_h)
 
         eat_max_w = max(crop.width for _, _, _, _, crop in eat_crops)
         eat_max_h = max(crop.height for _, _, _, _, crop in eat_crops)
         eat_scale = min(LARVA_MAX_W / eat_max_w, LARVA_MAX_H / eat_max_h)
 
-        for role, role_index, path, source, crop in idle_sleep_crops + eat_crops:
-            scale = eat_scale if role == "eat" else idle_sleep_scale
+        for role, role_index, path, source, crop in idle_walk_crops + sleep_crops + eat_crops:
+            if role == "eat":
+                scale = eat_scale
+            elif role == "sleep":
+                scale = sleep_scale
+            elif role == "walk":
+                scale = walk_scale
+            else:
+                scale = idle_scale
             frame, resized = make_canvas(crop, scale)
             if role == "idle":
                 idle_frames.append(frame)
                 frame.save(EXTRACTED / "idle" / f"larva_age{age}_idle.png")
                 label = f"larva_age{age}_idle"
+            elif role == "walk":
+                walk_frames.append(frame)
+                frame.save(EXTRACTED / "walk" / f"larva_age{age}_walk_{role_index}.png")
+                label = f"larva_age{age}_walk_{role_index}"
             elif role == "sleep":
                 sleep_frames.append(frame)
                 frame.save(EXTRACTED / "sleep" / f"larva_age{age}_sleep_{role_index}.png")
@@ -178,7 +233,7 @@ def make_frames():
                 f"{label}: source {source.width}x{source.height}, bbox {crop.width}x{crop.height} "
                 f"-> {resized.width}x{resized.height} in {LARVA_FRAME_W}x{LARVA_FRAME_H} ({path.name})"
             )
-    return idle_frames, sleep_frames, eat_frames
+    return idle_frames, walk_frames, sleep_frames, eat_frames
 
 
 def image_data(img):
@@ -218,11 +273,16 @@ def fmt(vals):
     )
 
 
-def write_preview(idle_frames, sleep_frames, eat_frames):
+def write_preview(idle_frames, walk_frames, sleep_frames, eat_frames):
     idle_sheet = Image.new("RGBA", (LARVA_FRAME_W * len(idle_frames), LARVA_FRAME_H), (0, 0, 0, 0))
     for i, frame in enumerate(idle_frames):
         idle_sheet.alpha_composite(frame, (i * LARVA_FRAME_W, 0))
     idle_sheet.save(PREVIEWS / "larva_idle_sheet_preview.png")
+
+    walk_sheet = Image.new("RGBA", (LARVA_FRAME_W * len(walk_frames), LARVA_FRAME_H), (0, 0, 0, 0))
+    for i, frame in enumerate(walk_frames):
+        walk_sheet.alpha_composite(frame, (i * LARVA_FRAME_W, 0))
+    walk_sheet.save(PREVIEWS / "larva_walk_sheet_preview.png")
 
     sleep_sheet = Image.new("RGBA", (LARVA_FRAME_W * len(sleep_frames), LARVA_FRAME_H), (0, 0, 0, 0))
     for i, frame in enumerate(sleep_frames):
@@ -235,12 +295,16 @@ def write_preview(idle_frames, sleep_frames, eat_frames):
     eat_sheet.save(PREVIEWS / "larva_eat_sheet_preview.png")
 
     gap = 8
-    compare_w = LARVA_FRAME_W * (1 + EAT_FRAME_COUNT + SLEEP_FRAME_COUNT) + gap * 2
+    compare_w = LARVA_FRAME_W * (1 + WALK_FRAME_COUNT + EAT_FRAME_COUNT + SLEEP_FRAME_COUNT) + gap * 3
     for age_index in range(AGE_COUNT):
         compare = Image.new("RGBA", (compare_w, LARVA_FRAME_H), (0, 0, 0, 0))
         x = 0
         compare.alpha_composite(idle_frames[age_index], (x, 0))
         x += LARVA_FRAME_W + gap
+        for i in range(WALK_FRAME_COUNT):
+            compare.alpha_composite(walk_frames[age_index * WALK_FRAME_COUNT + i], (x, 0))
+            x += LARVA_FRAME_W
+        x += gap
         for i in range(EAT_FRAME_COUNT):
             compare.alpha_composite(eat_frames[age_index * EAT_FRAME_COUNT + i], (x, 0))
             x += LARVA_FRAME_W
@@ -263,7 +327,7 @@ def build_chunks(frames):
     return meta, chunks
 
 
-def write_outputs(idle_frames, sleep_frames, eat_frames):
+def write_outputs(idle_frames, walk_frames, sleep_frames, eat_frames):
     h = f"""#pragma once
 #include <Arduino.h>
 #include <cstdint>
@@ -272,10 +336,13 @@ namespace HerculesLarvaSprites {{
 
 static constexpr uint8_t AGE_COUNT = {AGE_COUNT};
 static constexpr uint8_t IDLE_FRAME_COUNT = {AGE_COUNT};
+static constexpr uint8_t WALK_FRAME_COUNT = {WALK_FRAME_COUNT};
 static constexpr uint8_t SLEEP_FRAME_COUNT = {SLEEP_FRAME_COUNT};
 static constexpr uint8_t EAT_FRAME_COUNT = {EAT_FRAME_COUNT};
 static constexpr uint8_t IDLE_FRAME_W = {LARVA_FRAME_W};
 static constexpr uint8_t IDLE_FRAME_H = {LARVA_FRAME_H};
+static constexpr uint8_t WALK_FRAME_W = {LARVA_FRAME_W};
+static constexpr uint8_t WALK_FRAME_H = {LARVA_FRAME_H};
 static constexpr uint8_t SLEEP_FRAME_W = {LARVA_FRAME_W};
 static constexpr uint8_t SLEEP_FRAME_H = {LARVA_FRAME_H};
 static constexpr uint8_t EAT_FRAME_W = {LARVA_FRAME_W};
@@ -290,6 +357,8 @@ struct RleFrame {{
 
 extern const RleFrame IDLE_FRAMES[] PROGMEM;
 extern const uint16_t IDLE_RLE[] PROGMEM;
+extern const RleFrame WALK_FRAMES[] PROGMEM;
+extern const uint16_t WALK_RLE[] PROGMEM;
 extern const RleFrame SLEEP_FRAMES[] PROGMEM;
 extern const uint16_t SLEEP_RLE[] PROGMEM;
 extern const RleFrame EAT_FRAMES[] PROGMEM;
@@ -300,6 +369,7 @@ extern const uint16_t EAT_RLE[] PROGMEM;
     OUT_H.write_text(h, encoding="utf-8")
 
     idle_meta, idle_chunks = build_chunks(idle_frames)
+    walk_meta, walk_chunks = build_chunks(walk_frames)
     sleep_meta, sleep_chunks = build_chunks(sleep_frames)
     eat_meta, eat_chunks = build_chunks(eat_frames)
 
@@ -311,6 +381,15 @@ extern const uint16_t EAT_RLE[] PROGMEM;
     cpp.append("")
     cpp.append("const uint16_t IDLE_RLE[] PROGMEM = {")
     cpp.append(fmt(idle_chunks))
+    cpp.append("};")
+    cpp.append("")
+    cpp.append("const RleFrame WALK_FRAMES[] PROGMEM = {")
+    for off, length, w, hgt in walk_meta:
+        cpp.append(f"    {{ {off}, {length}, {w}, {hgt} }},")
+    cpp.append("};")
+    cpp.append("")
+    cpp.append("const uint16_t WALK_RLE[] PROGMEM = {")
+    cpp.append(fmt(walk_chunks))
     cpp.append("};")
     cpp.append("")
     cpp.append("const RleFrame SLEEP_FRAMES[] PROGMEM = {")
@@ -340,9 +419,9 @@ extern const uint16_t EAT_RLE[] PROGMEM;
 
 
 def main():
-    idle_frames, sleep_frames, eat_frames = make_frames()
-    write_preview(idle_frames, sleep_frames, eat_frames)
-    write_outputs(idle_frames, sleep_frames, eat_frames)
+    idle_frames, walk_frames, sleep_frames, eat_frames = make_frames()
+    write_preview(idle_frames, walk_frames, sleep_frames, eat_frames)
+    write_outputs(idle_frames, walk_frames, sleep_frames, eat_frames)
 
 
 if __name__ == "__main__":

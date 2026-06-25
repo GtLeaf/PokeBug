@@ -470,6 +470,23 @@ void TerrariumScene::onEnter() {
     }
 
     const TerrariumViewState& saved = GameEngine::ins().getTerrariumViewState();
+    if (saved.valid && bug.getStage() == Stage::LARVA && !bug.isDead()) {
+        bugX = saved.bugX;
+        if (bugX < MIN_X) bugX = MIN_X;
+        if (bugX > MAX_X) bugX = MAX_X;
+        bugY = saved.bugY;
+        animFrame = saved.animFrame;
+        faceRight = saved.faceRight;
+        larvaFaceRight = faceRight;
+        larvaTargetX = bugX;
+        larvaState = LarvaState::IDLE;
+        larvaStateStartMs = Hal::ins().millis();
+        larvaStateDurationMs = random(LARVA_IDLE_MIN_MS, LARVA_IDLE_MAX_MS + 1);
+        larvaNextStepMs = larvaStateStartMs + LARVA_WALK_START_MS;
+        observedLarvaEatGameMs = bug.getLastEatTime();
+        startPendingVisitIfAny();
+        return;
+    }
     if (saved.valid && isMobileBeetleStage(bug.getStage()) && !bug.isDead()) {
         bugX = saved.bugX;
         bugY = saved.bugY;
@@ -511,13 +528,14 @@ void TerrariumScene::onExit() {
 
 void TerrariumScene::persistViewState() {
     Bug& bug = GameEngine::ins().getBug();
-    if (isMobileBeetleStage(bug.getStage()) && !bug.isDead()) {
+    if ((isMobileBeetleStage(bug.getStage()) || bug.getStage() == Stage::LARVA) &&
+        !bug.isDead()) {
         TerrariumViewState state;
         state.bugX = bugX;
         state.bugY = bugY;
         state.animFrame = animFrame;
         state.adultState = (uint8_t)adultState;
-        state.faceRight = faceRight;
+        state.faceRight = bug.getStage() == Stage::LARVA ? larvaFaceRight : faceRight;
         state.turnTargetFaceRight = turnTargetFaceRight;
         state.walkAfterTurn = walkAfterTurn;
         state.slideAfterTurn = slideAfterTurn;
@@ -537,7 +555,8 @@ void TerrariumScene::persistViewState() {
         state.alertUntilMs = alertUntilMs;
 
         uint32_t nowMs = Hal::ins().millis();
-        if (GameEngine::ins().isVisitHost() && visitor.active && nowMs < visitor.untilMs) {
+        if (isMobileBeetleStage(bug.getStage()) &&
+            GameEngine::ins().isVisitHost() && visitor.active && nowMs < visitor.untilMs) {
             state.visitorActive = true;
             state.visitorFalling = visitor.falling;
             state.visitorX = visitor.x;
@@ -581,6 +600,9 @@ void TerrariumScene::resetLocalViewState() {
     larvaState = LarvaState::IDLE;
     larvaStateStartMs = Hal::ins().millis();
     larvaStateDurationMs = random(LARVA_IDLE_MIN_MS, LARVA_IDLE_MAX_MS + 1);
+    larvaTargetX = bugX;
+    larvaNextStepMs = larvaStateStartMs;
+    larvaFaceRight = faceRight;
     observedLarvaEatGameMs = GameEngine::ins().getBug().getLastEatTime();
     restResumeAllowedMs = 0;
     foodRefillGraceUntilMs = 0;
@@ -2059,32 +2081,44 @@ void TerrariumScene::enterLarvaState(LarvaState nextState, uint32_t nowMs) {
 }
 
 void TerrariumScene::updateLarvaState(Bug& bug, uint32_t nowMs) {
-    bool stateDone = nowMs - larvaStateStartMs >= larvaStateDurationMs;
-
-    if (larvaState == LarvaState::EAT) {
-        bug.setSleeping(false);
-        if (bug.eatSubstrate(GameEngine::ins().getGameNow())) {
-            observedLarvaEatGameMs = bug.getLastEatTime();
-        }
-        if (stateDone && bug.getHunger() > Bug::LARVA_SUBSTRATE_EAT_HUNGER) {
-            enterLarvaState(LarvaState::IDLE, nowMs);
-        }
-        return;
-    }
-
-    if (larvaState == LarvaState::SLEEP) {
-        bug.setSleeping(true);
-        if (stateDone) {
-            enterLarvaState(LarvaState::IDLE, nowMs);
-        }
-        return;
-    }
-
     bug.setSleeping(false);
-    if (stateDone) {
-        bool hungry = bug.getHunger() <= Bug::LARVA_SUBSTRATE_EAT_HUNGER;
-        bool chooseEat = hungry || random(100) < 65;
-        enterLarvaState(chooseEat ? LarvaState::EAT : LarvaState::SLEEP, nowMs);
+    if (larvaState != LarvaState::IDLE) {
+        enterLarvaState(LarvaState::IDLE, nowMs);
+    }
+    if (bug.getHunger() <= Bug::LARVA_SUBSTRATE_EAT_HUNGER &&
+        bug.eatSubstrate(GameEngine::ins().getGameNow())) {
+        observedLarvaEatGameMs = bug.getLastEatTime();
+    }
+    if (nowMs - larvaStateStartMs >= larvaStateDurationMs) {
+        larvaStateStartMs = nowMs;
+        larvaStateDurationMs = random(LARVA_IDLE_MIN_MS, LARVA_IDLE_MAX_MS + 1);
+        larvaTargetX = bugX;
+        larvaNextStepMs = nowMs + LARVA_WALK_START_MS;
+        return;
+    }
+
+    if (nowMs - larvaStateStartMs < LARVA_WALK_START_MS) {
+        return;
+    }
+
+    if (larvaTargetX < MIN_X || larvaTargetX > MAX_X || abs(larvaTargetX - bugX) <= 1) {
+        int nextTarget = random(MIN_X, MAX_X + 1);
+        if (abs(nextTarget - bugX) < LARVA_WALK_MIN_DELTA) {
+            nextTarget = bugX < (MIN_X + MAX_X) / 2
+                             ? random(bugX + LARVA_WALK_MIN_DELTA, MAX_X + 1)
+                             : random(MIN_X, bugX - LARVA_WALK_MIN_DELTA + 1);
+        }
+        larvaTargetX = nextTarget;
+        larvaFaceRight = larvaTargetX >= bugX;
+    }
+
+    if (nowMs >= larvaNextStepMs) {
+        int dx = larvaTargetX > bugX ? 1 : -1;
+        bugX += dx;
+        if (bugX < MIN_X) bugX = MIN_X;
+        if (bugX > MAX_X) bugX = MAX_X;
+        larvaFaceRight = dx > 0;
+        larvaNextStepMs = nowMs + LARVA_WALK_STEP_MS;
     }
 }
 
@@ -2186,7 +2220,7 @@ SceneID TerrariumScene::update() {
         updateAdultMovement();
     } else if (bug.getStage() == Stage::JUVENILE && !bug.isDead()) {
         updateJuvenileMovement();
-    } else if (bug.getStage() != Stage::ADULT) {
+    } else if (bug.getStage() != Stage::ADULT && bug.getStage() != Stage::LARVA) {
         bugX = 120;
         faceRight = true;
     }
@@ -2649,26 +2683,16 @@ void TerrariumScene::drawLarva(int x, int y, uint8_t palette) {
         ageIndex = HerculesLarvaSprites::AGE_COUNT - 1;
     }
 
-    bool sleepingVisual = larvaState == LarvaState::SLEEP;
-    const auto* frames = HerculesLarvaSprites::IDLE_FRAMES;
-    const uint16_t* rle = HerculesLarvaSprites::IDLE_RLE;
+    uint32_t elapsed = Hal::ins().millis() - larvaStateStartMs;
+    bool showWalk = elapsed >= LARVA_WALK_START_MS;
+    const auto* frames = showWalk ? HerculesLarvaSprites::WALK_FRAMES
+                                  : HerculesLarvaSprites::IDLE_FRAMES;
+    const uint16_t* rle = showWalk ? HerculesLarvaSprites::WALK_RLE
+                                   : HerculesLarvaSprites::IDLE_RLE;
     uint8_t frameIndex = ageIndex;
-    bool eatingVisual = larvaState == LarvaState::EAT;
-    if (eatingVisual) {
-        uint32_t elapsed = Hal::ins().millis() - larvaStateStartMs;
-        uint8_t eatFrame = (elapsed / LARVA_EAT_FRAME_MS) % HerculesLarvaSprites::EAT_FRAME_COUNT;
-        frameIndex = ageIndex * HerculesLarvaSprites::EAT_FRAME_COUNT + eatFrame;
-        frames = HerculesLarvaSprites::EAT_FRAMES;
-        rle = HerculesLarvaSprites::EAT_RLE;
-    } else if (sleepingVisual) {
-        static constexpr uint8_t LARVA_SLEEP_BREATH_SEQUENCE[] = {0, 1, 2, 1, 0};
-        uint8_t sequenceIndex = (Hal::ins().millis() / 650) %
-                                (sizeof(LARVA_SLEEP_BREATH_SEQUENCE) /
-                                 sizeof(LARVA_SLEEP_BREATH_SEQUENCE[0]));
-        uint8_t sleepFrame = LARVA_SLEEP_BREATH_SEQUENCE[sequenceIndex];
-        frameIndex = ageIndex * HerculesLarvaSprites::SLEEP_FRAME_COUNT + sleepFrame;
-        frames = HerculesLarvaSprites::SLEEP_FRAMES;
-        rle = HerculesLarvaSprites::SLEEP_RLE;
+    if (showWalk) {
+        uint8_t walkFrame = (elapsed / LARVA_EAT_FRAME_MS) % HerculesLarvaSprites::WALK_FRAME_COUNT;
+        frameIndex = ageIndex * HerculesLarvaSprites::WALK_FRAME_COUNT + walkFrame;
     }
 
     uint16_t offset = pgm_read_word(&frames[frameIndex].offset);
@@ -2678,10 +2702,11 @@ void TerrariumScene::drawLarva(int x, int y, uint8_t palette) {
     if (drawCachedRleFrame(x - w / 2, y + 5 - h,
                            w, h,
                            rle, offset, length,
-                           1.0f, false)) {
+                           1.0f, !larvaFaceRight)) {
         return;
     }
-    PixelRenderer::drawRgb565Rle(x - w / 2, y + 5 - h, w, h, rle, offset, length);
+    PixelRenderer::drawRgb565Rle(x - w / 2, y + 5 - h, w, h, rle, offset, length,
+                                 !larvaFaceRight);
 }
 
 void TerrariumScene::drawPupa(int x, int y, uint8_t palette) {
