@@ -35,6 +35,12 @@ bool isMobileBeetleStage(Stage stage) {
     return stage == Stage::ADULT || stage == Stage::JUVENILE;
 }
 
+uint8_t larvaAgeIndexForProgress(float progress) {
+    if (progress < 0.25f) return 0; // 0-15 min
+    if (progress < 0.50f) return 1; // 15-30 min
+    return 2;                       // 30-60 min
+}
+
 bool circleHitsRect(float cx, float cy, float radius,
                     float left, float top, float right, float bottom) {
     float closestX = cx;
@@ -2126,14 +2132,58 @@ void TerrariumScene::enterLarvaState(LarvaState nextState, uint32_t nowMs) {
 
 void TerrariumScene::updateLarvaState(Bug& bug, uint32_t nowMs) {
     bug.setSleeping(false);
-    if (larvaState != LarvaState::IDLE) {
-        enterLarvaState(LarvaState::IDLE, nowMs);
+    uint8_t ageIndex = larvaAgeIndexForProgress(bug.getStageProgress(GameEngine::ins().getGameNow()));
+
+    uint64_t lastEatGameMs = bug.getLastEatTime();
+    bool ateSinceObserved = lastEatGameMs != 0 && lastEatGameMs != observedLarvaEatGameMs;
+    bool ateSubstrateNow = false;
+    if (bug.getHunger() <= Bug::LARVA_SUBSTRATE_EAT_HUNGER) {
+        ateSubstrateNow = bug.eatSubstrate(GameEngine::ins().getGameNow());
+        if (ateSubstrateNow) {
+            lastEatGameMs = bug.getLastEatTime();
+        }
     }
-    if (bug.getHunger() <= Bug::LARVA_SUBSTRATE_EAT_HUNGER &&
-        bug.eatSubstrate(GameEngine::ins().getGameNow())) {
-        observedLarvaEatGameMs = bug.getLastEatTime();
+    if (ateSinceObserved || ateSubstrateNow) {
+        observedLarvaEatGameMs = lastEatGameMs;
+        larvaTargetX = bugX;
+        if (larvaState == LarvaState::EAT) {
+            larvaStateStartMs = nowMs;
+            larvaStateDurationMs = random(LARVA_EAT_MIN_MS, LARVA_EAT_MAX_MS + 1);
+        } else {
+            enterLarvaState(LarvaState::EAT, nowMs);
+        }
+        return;
+    }
+
+    if (larvaState == LarvaState::EAT) {
+        if (nowMs - larvaStateStartMs >= larvaStateDurationMs) {
+            enterLarvaState(LarvaState::IDLE, nowMs);
+            larvaTargetX = bugX;
+            larvaNextStepMs = nowMs + LARVA_WALK_START_MS;
+        }
+        return;
+    }
+
+    if (larvaState == LarvaState::SLEEP) {
+        if (ageIndex < 2 ||
+            bug.getHunger() < 35 ||
+            nowMs - larvaStateStartMs >= larvaStateDurationMs) {
+            enterLarvaState(LarvaState::IDLE, nowMs);
+            larvaTargetX = bugX;
+            larvaNextStepMs = nowMs + LARVA_WALK_START_MS;
+        } else {
+            bug.setSleeping(true);
+        }
+        return;
     }
     if (nowMs - larvaStateStartMs >= larvaStateDurationMs) {
+        if (ageIndex == 2 && bug.getHunger() >= 45 && random(100) < 35) {
+            enterLarvaState(LarvaState::SLEEP, nowMs);
+            larvaTargetX = bugX;
+            bug.setSleeping(true);
+            return;
+        }
+        larvaState = LarvaState::IDLE;
         larvaStateStartMs = nowMs;
         larvaStateDurationMs = random(LARVA_IDLE_MIN_MS, LARVA_IDLE_MAX_MS + 1);
         larvaTargetX = bugX;
@@ -2722,19 +2772,26 @@ void TerrariumScene::drawLarva(int x, int y, uint8_t palette) {
     (void)palette;
     Bug& bug = GameEngine::ins().getBug();
     float progress = bug.getStageProgress(GameEngine::ins().getGameNow());
-    uint8_t ageIndex = (uint8_t)(progress * HerculesLarvaSprites::AGE_COUNT);
-    if (ageIndex >= HerculesLarvaSprites::AGE_COUNT) {
-        ageIndex = HerculesLarvaSprites::AGE_COUNT - 1;
-    }
+    uint8_t ageIndex = larvaAgeIndexForProgress(progress);
 
     uint32_t elapsed = Hal::ins().millis() - larvaStateStartMs;
-    bool showWalk = elapsed >= LARVA_WALK_START_MS;
-    const auto* frames = showWalk ? HerculesLarvaSprites::WALK_FRAMES
-                                  : HerculesLarvaSprites::IDLE_FRAMES;
-    const uint16_t* rle = showWalk ? HerculesLarvaSprites::WALK_RLE
-                                   : HerculesLarvaSprites::IDLE_RLE;
+    bool showWalk = elapsed >= LARVA_WALK_START_MS && abs(larvaTargetX - bugX) > 1;
+    const auto* frames = HerculesLarvaSprites::IDLE_FRAMES;
+    const uint16_t* rle = HerculesLarvaSprites::IDLE_RLE;
     uint8_t frameIndex = ageIndex;
-    if (showWalk) {
+    if (larvaState == LarvaState::EAT) {
+        frames = HerculesLarvaSprites::EAT_FRAMES;
+        rle = HerculesLarvaSprites::EAT_RLE;
+        uint8_t eatFrame = (elapsed / LARVA_EAT_FRAME_MS) % HerculesLarvaSprites::EAT_FRAME_COUNT;
+        frameIndex = ageIndex * HerculesLarvaSprites::EAT_FRAME_COUNT + eatFrame;
+    } else if (larvaState == LarvaState::SLEEP) {
+        frames = HerculesLarvaSprites::SLEEP_FRAMES;
+        rle = HerculesLarvaSprites::SLEEP_RLE;
+        uint8_t sleepFrame = (elapsed / LARVA_SLEEP_FRAME_MS) % HerculesLarvaSprites::SLEEP_FRAME_COUNT;
+        frameIndex = ageIndex * HerculesLarvaSprites::SLEEP_FRAME_COUNT + sleepFrame;
+    } else if (showWalk) {
+        frames = HerculesLarvaSprites::WALK_FRAMES;
+        rle = HerculesLarvaSprites::WALK_RLE;
         uint8_t walkFrame = (elapsed / LARVA_EAT_FRAME_MS) % HerculesLarvaSprites::WALK_FRAME_COUNT;
         frameIndex = ageIndex * HerculesLarvaSprites::WALK_FRAME_COUNT + walkFrame;
     }

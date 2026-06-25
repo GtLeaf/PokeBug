@@ -855,9 +855,6 @@ void MenuScene::executeSelection() {
             }
             GameEngine::ins().forceSave();
 
-            char toast[32];
-            const char* stageName = itemLabel(selected, toast, sizeof(toast));
-            showToast(stageName);
             Serial.printf("[Menu] Debug stage cycled to %d\n", debugStageIndex + 1);
         } else if (selected == DEBUG_STATE_TEMPER) {
             debugTemperIndex = (debugTemperIndex + 1) % 6;

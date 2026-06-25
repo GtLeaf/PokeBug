@@ -299,6 +299,7 @@ private:
     static constexpr uint32_t LARVA_EAT_MAX_MS = 90000;
     static constexpr uint32_t LARVA_SLEEP_MIN_MS = 30000;
     static constexpr uint32_t LARVA_SLEEP_MAX_MS = 90000;
+    static constexpr uint32_t LARVA_SLEEP_FRAME_MS = 900;
     static constexpr uint8_t EAT_CONTINUE_HUNGER = 80;
     static constexpr uint32_t FOOD_REFILL_GRACE_MS = 3000;
     static constexpr uint8_t REST_GETDOWN_FRAME_INTERVAL = 8; // 入睡动作每帧约 0.4 秒
