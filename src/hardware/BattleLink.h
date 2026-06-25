@@ -28,7 +28,7 @@ enum BattleMsgType : uint8_t {
     MSG_ACK           = 0x80,
 };
 
-static constexpr uint8_t BATTLE_PROTOCOL_VERSION = 5;
+static constexpr uint8_t BATTLE_PROTOCOL_VERSION = 6;
 
 enum RoomPurpose : uint8_t {
     ROOM_PURPOSE_BATTLE = 0,
@@ -136,6 +136,8 @@ struct __attribute__((packed)) visit_status_t {
     uint16_t remaining_s;   // 主机权威剩余秒数
     uint16_t duration_s;    // 主机权威总秒数
     uint8_t speed_x10;      // 主机游戏速度 * 10
+    uint8_t guest_eat_count;
+    uint8_t guest_play_count;
 };
 
 enum VisitIntentCode : uint8_t {
@@ -217,7 +219,8 @@ public:
     bool sendGiftItem(uint16_t itemId, uint8_t amount);
     bool sendVisitRecall();
     bool sendVisitPing(uint8_t hunger, uint8_t motivation);
-    bool sendVisitStatus(uint32_t remainingMs, uint32_t durationMs, uint8_t speedX10, bool active);
+    bool sendVisitStatus(uint32_t remainingMs, uint32_t durationMs, uint8_t speedX10, bool active,
+                         uint8_t guestEatCount = 0, uint8_t guestPlayCount = 0);
     bool sendVisitIntent(uint8_t intent);
     bool sendVisitEatResult(bool success, uint8_t hungerGain, uint8_t newGuestHunger, uint8_t foodType);
 

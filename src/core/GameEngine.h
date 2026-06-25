@@ -38,6 +38,10 @@ struct VisitSession {
     uint32_t startMs = 0;
     uint32_t durationMs = 0;
     uint8_t speedX10 = 10;
+    uint8_t localEatCount = 0;
+    uint8_t localPlayCount = 0;
+    uint8_t remoteEatCount = 0;
+    uint8_t remotePlayCount = 0;
     VisitBugSnapshot remoteBug;
 };
 
@@ -253,6 +257,10 @@ public:
     }
 
     static constexpr uint32_t VISIT_MAX_MS = 30UL * 60UL * 1000UL;
+    static constexpr uint32_t VISIT_REWARD_FULL_MS = 10UL * 60UL * 1000UL;
+    static constexpr float VISIT_REWARD_MAX_TOTAL = 1.20f;
+    static constexpr float VISIT_REWARD_PER_EAT = 0.24f;
+    static constexpr float VISIT_REWARD_PER_PLAY = 0.16f;
 
     void setPendingVisitBug(uint8_t siz, uint8_t palette, uint8_t hunger = 100, uint8_t motivation = 50,
                             uint8_t str = 1, uint8_t strCap = 6, uint8_t temperament = 0) {
@@ -293,7 +301,39 @@ public:
         visitSession.remoteBug.strCap = strCap < 1 ? 1 : strCap;
         visitSession.remoteBug.temperament = temperament;
     }
-    void clearVisitSession() { visitSession = VisitSession(); }
+    void clearVisitSession() {
+        if (!visitSession.active) {
+            visitSession = VisitSession();
+            return;
+        }
+        applyVisitRewards();
+        visitSession = VisitSession();
+    }
+    void recordVisitLocalEat() {
+        if (!visitSession.active) return;
+        if (visitSession.localEatCount < 255) visitSession.localEatCount++;
+    }
+    void recordVisitLocalPlay() {
+        if (!visitSession.active) return;
+        if (visitSession.localPlayCount < 255) visitSession.localPlayCount++;
+    }
+    void recordVisitRemoteEat() {
+        if (!visitSession.active) return;
+        if (visitSession.remoteEatCount < 255) visitSession.remoteEatCount++;
+    }
+    void recordVisitRemotePlay() {
+        if (!visitSession.active) return;
+        if (visitSession.remotePlayCount < 255) visitSession.remotePlayCount++;
+    }
+    void syncVisitGuestRewards(uint8_t eatCount, uint8_t playCount) {
+        if (!visitSession.active || visitSession.asHost) return;
+        if (eatCount > visitSession.localEatCount) visitSession.localEatCount = eatCount;
+        if (playCount > visitSession.localPlayCount) visitSession.localPlayCount = playCount;
+    }
+    uint8_t getVisitRemoteEatCount() const { return visitSession.remoteEatCount; }
+    uint8_t getVisitRemotePlayCount() const { return visitSession.remotePlayCount; }
+    uint8_t getVisitLocalEatCount() const { return visitSession.localEatCount; }
+    uint8_t getVisitLocalPlayCount() const { return visitSession.localPlayCount; }
     void syncVisitTiming(uint32_t remainingMs, uint32_t durationMs, uint8_t speedX10) {
         if (!visitSession.active) return;
         if (durationMs == 0 || durationMs > VISIT_MAX_MS) durationMs = VISIT_MAX_MS;
@@ -427,6 +467,87 @@ private:
     ItemStack pendingGiftItem;
     VisitBugSnapshot pendingVisitBug;
     VisitSession visitSession;
+
+    void applyVisitRewards() {
+        uint8_t eatCount = visitSession.localEatCount;
+        uint8_t playCount = visitSession.localPlayCount;
+        if (eatCount == 0 && playCount == 0) return;
+
+        uint32_t elapsedMs = getVisitElapsedMs();
+        float durationRatio = (float)elapsedMs / (float)VISIT_REWARD_FULL_MS;
+        if (durationRatio > 1.0f) durationRatio = 1.0f;
+        if (durationRatio < 0.0f) durationRatio = 0.0f;
+
+        float maxTotal = VISIT_REWARD_MAX_TOTAL * durationRatio;
+        float interactionTotal = (float)eatCount * VISIT_REWARD_PER_EAT +
+                                 (float)playCount * VISIT_REWARD_PER_PLAY;
+        float rewardTotal = interactionTotal < maxTotal ? interactionTotal : maxTotal;
+        if (rewardTotal <= 0.0f) return;
+
+        uint8_t slots = 2;
+        if (rewardTotal > 1.00f) slots = 5;
+        else if (rewardTotal > 0.70f) slots = 4;
+        else if (rewardTotal > 0.35f) slots = 3;
+        bool includeMot = rewardTotal > 1.00f && random(100) < 60;
+        uint8_t attrSlots = includeMot ? 5 : slots;
+        if (attrSlots > 5) attrSlots = 5;
+
+        uint16_t weights[5] = {10, 10, 10, 10, 10}; // SIZ, STR, END, SPD, SPI
+        weights[0] += (uint16_t)eatCount * 10;
+        weights[2] += (uint16_t)eatCount * 20;
+        weights[1] += (uint16_t)playCount * 10;
+        weights[3] += (uint16_t)playCount * 10;
+        weights[4] += (uint16_t)playCount * 20;
+
+        bool picked[5] = {false, false, false, false, false};
+        uint8_t pickedAttrs[5] = {0, 0, 0, 0, 0};
+        for (uint8_t slot = 0; slot < attrSlots; ++slot) {
+            uint16_t totalWeight = 0;
+            for (uint8_t i = 0; i < 5; ++i) {
+                if (!picked[i]) totalWeight += weights[i];
+            }
+            if (totalWeight == 0) break;
+            uint16_t roll = (uint16_t)random(totalWeight);
+            uint8_t chosen = 0;
+            for (uint8_t i = 0; i < 5; ++i) {
+                if (picked[i]) continue;
+                if (roll < weights[i]) {
+                    chosen = i;
+                    break;
+                }
+                roll -= weights[i];
+            }
+            picked[chosen] = true;
+            pickedAttrs[slot] = chosen;
+        }
+
+        uint16_t shareWeights[5] = {0, 0, 0, 0, 0};
+        uint16_t shareTotal = 0;
+        for (uint8_t slot = 0; slot < attrSlots; ++slot) {
+            uint16_t share = (uint16_t)random(70, 131);
+            shareWeights[slot] = share;
+            shareTotal += share;
+        }
+        if (shareTotal == 0) return;
+
+        float bonuses[5] = {0, 0, 0, 0, 0};
+        for (uint8_t slot = 0; slot < attrSlots; ++slot) {
+            bonuses[pickedAttrs[slot]] += rewardTotal * (float)shareWeights[slot] / (float)shareTotal;
+        }
+
+        bug.addTrainingBonus(bonuses[0], bonuses[1], bonuses[2], bonuses[3], bonuses[4]);
+        uint8_t motBonus = 0;
+        if (includeMot) {
+            motBonus = (uint8_t)random(3, 9);
+            uint16_t mot = (uint16_t)bug.getMot() + motBonus;
+            bug.setMot(mot > 100 ? 100 : (uint8_t)mot);
+        }
+        forceSave();
+        Serial.printf("[Engine] Visit rewards eat=%u play=%u elapsed=%lu total=%.2f "
+                      "siz=%.2f str=%.2f end=%.2f spd=%.2f spi=%.2f mot=%u\n",
+                      eatCount, playCount, (unsigned long)elapsedMs, rewardTotal,
+                      bonuses[0], bonuses[1], bonuses[2], bonuses[3], bonuses[4], motBonus);
+    }
     PendingNpcBattle npcBattle;
     NpcBattleResult npcResult;
 

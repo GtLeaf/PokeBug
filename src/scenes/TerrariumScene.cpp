@@ -1124,6 +1124,8 @@ void TerrariumScene::updateVisitGuestLink(uint32_t nowMs) {
 
     visit_status_t status;
     if (link.takeReceivedVisitStatus(status)) {
+        GameEngine::ins().syncVisitGuestRewards(status.guest_eat_count,
+                                                status.guest_play_count);
         if ((status.flags & 1) == 0 || status.remaining_s == 0) {
             GameEngine::ins().clearVisitSession();
             visitRecallConfirm = false;
@@ -1148,6 +1150,7 @@ void TerrariumScene::updateVisitGuestLink(uint32_t nowMs) {
     if (link.takeReceivedVisitEatResult(eatResult)) {
         if (eatResult.success && eatResult.hunger_gain > 0) {
             GameEngine::ins().getBug().modHunger((int8_t)eatResult.hunger_gain);
+            GameEngine::ins().recordVisitLocalEat();
             GameEngine::ins().forceSave();
             visitEatRetryAfterMs = nowMs + 2000;
             Serial.printf("[Terrarium] Visit eat success gain=%u localHun=%u\n",
@@ -1225,7 +1228,9 @@ void TerrariumScene::updateVisitHostLink(uint32_t nowMs) {
     if (link.sendVisitStatus(GameEngine::ins().getVisitRemainingMs(),
                              GameEngine::ins().getVisitDurationMs(),
                              GameEngine::ins().getGameSpeedX10(),
-                             GameEngine::ins().isVisitHost())) {
+                             GameEngine::ins().isVisitHost(),
+                             GameEngine::ins().getVisitRemoteEatCount(),
+                             GameEngine::ins().getVisitRemotePlayCount())) {
         lastVisitStatusMs = nowMs;
     }
 }
@@ -1287,6 +1292,7 @@ void TerrariumScene::updateVisitorEating(uint32_t nowMs) {
     uint16_t h = (uint16_t)newHunger + gain;
     newHunger = h > 100 ? 100 : (uint8_t)h;
     GameEngine::ins().setVisitRemoteHunger(newHunger);
+    GameEngine::ins().recordVisitRemoteEat();
     queueVisitEatResult(true, gain, newHunger, (uint8_t)foodType);
     visitorEatRequested = false;
     visitor.actor.state = AdultState::EAT;
@@ -1545,6 +1551,7 @@ void TerrariumScene::triggerToyHit(uint32_t nowMs, int pushDir, float chargeRati
     toySpin = pushDir * (7.0f + 10.0f * power + 4.0f * chargeRatio);
     toyLastHitMs = nowMs;
     toyAttackStartMs = nowMs;
+    GameEngine::ins().recordVisitLocalPlay();
     toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_HIT_MS;
     toyCharging = false;
     toyChargeStartMs = 0;
@@ -1561,6 +1568,7 @@ void TerrariumScene::reactLocalToToyImpact(uint32_t nowMs, int pushDir) {
     pokeReactionWasPoked = true;
     pokeThreatenEndMs = nowMs + POKE_REACTION_MS;
     alertUntilMs = nowMs + random(ALERT_MIN_MS, ALERT_MAX_MS + 1);
+    GameEngine::ins().recordVisitLocalPlay();
     adultState = AdultState::IDLE;
     stateTimer = 0;
     setIdleDuration();
@@ -1583,6 +1591,7 @@ void TerrariumScene::reactVisitorToToyImpact(uint32_t nowMs, int pushDir) {
     visitor.actor.stateDuration = POKE_REACTION_MS;
     visitor.actor.threatenStartMs = nowMs;
     visitor.actor.threatenEndMs = nowMs + POKE_REACTION_MS;
+    GameEngine::ins().recordVisitRemotePlay();
     visitorIntentUntilMs = nowMs + VISITOR_INTENT_MS;
     visitor.turning = false;
     visitor.nextWanderMs = visitor.actor.threatenEndMs;
@@ -1592,20 +1601,20 @@ void TerrariumScene::reactVisitorToToyImpact(uint32_t nowMs, int pushDir) {
 void TerrariumScene::reboundToyFromEntryImpact(uint32_t nowMs, int pushDir,
                                                float beetleTop, const ToySpec& spec) {
     if (pushDir == 0) pushDir = 1;
-    toyY = beetleTop - (float)spec.radius - 3.0f;
+    toyY = beetleTop - (float)spec.radius - 1.0f;
     if (toyY < TOY_TANK_TOP + spec.radius) toyY = (float)(TOY_TANK_TOP + spec.radius);
     if (toyX < TOY_TANK_LEFT + spec.radius) toyX = (float)(TOY_TANK_LEFT + spec.radius);
     if (toyX > TOY_TANK_RIGHT - spec.radius) toyX = (float)(TOY_TANK_RIGHT - spec.radius);
 
-    float vx = fabsf(toyVx) * 0.58f;
-    float minVx = spec.baseImpulse * 0.42f + (float)random(0, 36);
+    float vx = fabsf(toyVx) * 0.48f;
+    float minVx = spec.baseImpulse * 0.34f;
     if (vx < minVx) vx = minVx;
     toyVx = vx * 0.9f * (float)pushDir;
-    float vy = fabsf(toyVy) * 0.70f;
-    float minVy = spec.liftImpulse * 1.05f + (float)random(0, 46);
+    float vy = fabsf(toyVy) * 0.68f;
+    float minVy = spec.liftImpulse * 0.92f;
     if (vy < minVy) vy = minVy;
     toyVy = -vy * 0.9f;
-    toySpin = (float)(pushDir * random(9, 17)) * 0.9f;
+    toySpin = (float)(pushDir * 11) * 0.9f;
     toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_REBOUND_MS;
 }
 
@@ -1627,6 +1636,7 @@ void TerrariumScene::triggerVisitorToyHit(uint32_t nowMs, int pushDir, float cha
     visitorToyCharging = false;
     visitorToyChargeStartMs = 0;
     visitorToyAttackStartMs = nowMs;
+    GameEngine::ins().recordVisitRemotePlay();
     visitor.actor.state = AdultState::ATTACK_UP;
     visitor.actor.stateTimer = 0;
     visitor.actor.stateDuration = (TOY_ATTACK_UP_MS / 50) + 4;
@@ -1759,6 +1769,21 @@ void TerrariumScene::updateToyPhysics(uint32_t nowMs) {
     if (circleHitsRect(toyX, toyY, (float)spec.radius,
                        beetleLeft, beetleTop, beetleRight, beetleBottom)) {
         int pushDir = toyX >= bugX ? 1 : -1;
+        bool topImpact = toyVy > 0.0f &&
+                         toyY <= beetleTop + (float)spec.radius + 4.0f &&
+                         toyX >= beetleLeft - (float)spec.radius &&
+                         toyX <= beetleRight + (float)spec.radius;
+        if (topImpact) {
+            if (fabsf(toyVx) > 8.0f) pushDir = toyVx > 0.0f ? 1 : -1;
+            toyY = beetleTop - (float)spec.radius - 1.0f;
+            if (toyY < top) toyY = top;
+            toyVy = -fmaxf(fabsf(toyVy) * 0.72f, spec.liftImpulse * 0.42f);
+            if (fabsf(toyVx) < 28.0f) toyVx = (float)pushDir * 28.0f;
+            else toyVx *= 0.88f;
+            toySpin = (float)pushDir * (fabsf(toySpin) + 5.0f);
+            toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_REBOUND_MS;
+            return;
+        }
         toyX = pushDir > 0 ? beetleRight + spec.radius + 1.0f
                            : beetleLeft - spec.radius - 1.0f;
         if (toyX < left) toyX = left;
@@ -1813,6 +1838,20 @@ void TerrariumScene::handleToyVisitorCollision(uint32_t nowMs, const ToySpec& sp
     }
 
     int pushDir = toyX >= visitor.x ? 1 : -1;
+    bool topImpact = toyVy > 0.0f &&
+                     toyY <= beetleTop + (float)spec.radius + 4.0f &&
+                     toyX >= beetleLeft - (float)spec.radius &&
+                     toyX <= beetleRight + (float)spec.radius;
+    if (topImpact) {
+        if (fabsf(toyVx) > 8.0f) pushDir = toyVx > 0.0f ? 1 : -1;
+        toyY = beetleTop - (float)spec.radius - 1.0f;
+        if (toyY < TOY_TANK_TOP + spec.radius) toyY = (float)(TOY_TANK_TOP + spec.radius);
+        toyVx = fabsf(toyVx) < 28.0f ? (float)pushDir * 28.0f : toyVx * 0.88f;
+        toyVy = -fmaxf(fabsf(toyVy) * 0.72f, spec.liftImpulse * 0.42f);
+        toySpin = (float)pushDir * (fabsf(toySpin) + 5.0f);
+        toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_REBOUND_MS;
+        return;
+    }
     bool betweenBeetles = (toyX > (float)min(bugX, visitor.x) &&
                            toyX < (float)max(bugX, visitor.x));
     bool nearBack = fabsf(toyX - visitor.x) < beetleHalfW * 0.55f;
@@ -1896,8 +1935,9 @@ void TerrariumScene::startToyArcThrow(uint32_t nowMs, int targetX, float targetS
     toyThrowFromX = 120 + random(-42, 43);
     toyThrowFromY = Hal::DISPLAY_H + 18;
     toyThrowTargetX = targetX + random(-24, 25);
-    toyThrowTargetY = GROUND_Y - (int)(42.0f * targetScale) +
-                      random(-7, 8);
+    toyThrowTargetY = GROUND_Y -
+                      (int)(TOY_BEETLE_HIT_TOP * targetScale + (float)spec.radius - 1.0f) +
+                      random(-2, 3);
     if (toyThrowTargetY < TOY_TANK_TOP + spec.radius) toyThrowTargetY = TOY_TANK_TOP + spec.radius;
     if (toyThrowTargetY > TOY_TANK_BOTTOM - spec.radius) toyThrowTargetY = TOY_TANK_BOTTOM - spec.radius;
     toyThrowArcH = random(48, 83);
@@ -1921,8 +1961,9 @@ void TerrariumScene::startToyDrop(uint32_t nowMs, int targetX, float targetScale
     toyEntryInteraction = ToyButtonInteraction::DROP_DOWN;
     toyEntryStartMs = nowMs;
     toyThrowTargetX = targetX + random(-18, 19);
-    toyThrowTargetY = GROUND_Y - (int)(40.0f * targetScale) +
-                      random(-5, 7);
+    toyThrowTargetY = GROUND_Y -
+                      (int)(TOY_BEETLE_HIT_TOP * targetScale + (float)spec.radius - 1.0f) +
+                      random(-2, 3);
     if (toyThrowTargetY < TOY_TANK_TOP + spec.radius) toyThrowTargetY = TOY_TANK_TOP + spec.radius;
     if (toyThrowTargetY > TOY_TANK_BOTTOM - spec.radius) toyThrowTargetY = TOY_TANK_BOTTOM - spec.radius;
     toyThrowFromX = toyThrowTargetX + random(-8, 9);
@@ -1947,7 +1988,10 @@ void TerrariumScene::finishToyEntry(uint32_t nowMs) {
     if (toyY < TOY_TANK_TOP + spec.radius) toyY = TOY_TANK_TOP + spec.radius;
     if (toyY > TOY_TANK_BOTTOM - spec.radius) toyY = TOY_TANK_BOTTOM - spec.radius;
 
-    int pushDir = toyX >= toyEntryTargetX ? 1 : -1;
+    int pushDir = toyThrowTargetX >= toyThrowFromX ? 1 : -1;
+    if (abs(toyThrowTargetX - toyThrowFromX) < 4) {
+        pushDir = toyX >= toyEntryTargetX ? 1 : -1;
+    }
     if (finishedInteraction == ToyButtonInteraction::DROP_DOWN) {
         toyVx = (float)(pushDir * random(80, 151));
         toyVy = -(float)random(90, 151);
@@ -2037,16 +2081,16 @@ void TerrariumScene::drawToyEntry() {
 
     if (toyEntryInteraction == ToyButtonInteraction::DROP_DOWN) {
         float easeIn = t * t;
-        x = (int)(toyThrowFromX + (toyThrowTargetX - toyThrowFromX) * t +
-                  toyThrowCurveX * arc);
-        y = (int)(toyThrowFromY + (toyThrowTargetY - toyThrowFromY) * easeIn);
+        x = (int)roundf(toyThrowFromX + (toyThrowTargetX - toyThrowFromX) * t +
+                        toyThrowCurveX * arc);
+        y = (int)roundf(toyThrowFromY + (toyThrowTargetY - toyThrowFromY) * easeIn);
         radius += (int)(2.0f * (1.0f - t));
     } else {
         float depthEase = 1.0f - (1.0f - t) * (1.0f - t);
-        x = (int)(toyThrowFromX + (toyThrowTargetX - toyThrowFromX) * t +
-                  toyThrowCurveX * arc);
-        y = (int)(toyThrowFromY + (toyThrowTargetY - toyThrowFromY) * t -
-                  toyThrowArcH * arc);
+        x = (int)roundf(toyThrowFromX + (toyThrowTargetX - toyThrowFromX) * t +
+                        toyThrowCurveX * arc);
+        y = (int)roundf(toyThrowFromY + (toyThrowTargetY - toyThrowFromY) * t -
+                        toyThrowArcH * arc);
         radius = (int)(18.0f + (float)(currentToySpec().radius - 18) * depthEase);
     }
 

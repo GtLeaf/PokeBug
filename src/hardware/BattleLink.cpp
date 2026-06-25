@@ -426,7 +426,8 @@ bool BattleLink::sendVisitPing(uint8_t hunger, uint8_t motivation) {
     return true;
 }
 
-bool BattleLink::sendVisitStatus(uint32_t remainingMs, uint32_t durationMs, uint8_t speedX10, bool active) {
+bool BattleLink::sendVisitStatus(uint32_t remainingMs, uint32_t durationMs, uint8_t speedX10, bool active,
+                                 uint8_t guestEatCount, uint8_t guestPlayCount) {
     if (!battlePeerSet) {
         BATTLE_LINK_LOG_EVERY_MS(BATTLE_LINK_WARN_LOG_INTERVAL_MS,
                                  Serial.println("[BattleLink] visit status: no peer"));
@@ -447,6 +448,8 @@ bool BattleLink::sendVisitStatus(uint32_t remainingMs, uint32_t durationMs, uint
         (uint16_t)((remainingMs + 999UL) / 1000UL),
         (uint16_t)((durationMs + 999UL) / 1000UL),
         speedX10,
+        guestEatCount,
+        guestPlayCount,
     };
     memcpy(sendCtx.buf, &status, sizeof(status));
     sendCtx.len = sizeof(status);
@@ -455,8 +458,9 @@ bool BattleLink::sendVisitStatus(uint32_t remainingMs, uint32_t durationMs, uint
     sendCtx.ackReceived = false;
     sendCtx.startMs = Hal::ins().millis();
     if (BATTLE_LINK_PACKET_LOGS) {
-        Serial.printf("[BattleLink] sendVisitStatus active=%u remain=%u duration=%u speed=%u\n",
-                      status.flags & 1, status.remaining_s, status.duration_s, status.speed_x10);
+        Serial.printf("[BattleLink] sendVisitStatus active=%u remain=%u duration=%u speed=%u eat=%u play=%u\n",
+                      status.flags & 1, status.remaining_s, status.duration_s, status.speed_x10,
+                      status.guest_eat_count, status.guest_play_count);
     }
     if (!sendInternal(battlePeerMac, sendCtx.buf, sendCtx.len)) return false;
     sendState = SendState::SENDING;
@@ -1030,8 +1034,9 @@ void BattleLink::handleVisitStatus(const uint8_t* mac, const visit_status_t& sta
     pendingVisitStatusData = status;
     queueAck(mac, MSG_VISIT_STATUS);
     if (BATTLE_LINK_PACKET_LOGS) {
-        Serial.printf("[BattleLink] visit status received active=%u remain=%u duration=%u speed=%u\n",
-                      status.flags & 1, status.remaining_s, status.duration_s, status.speed_x10);
+        Serial.printf("[BattleLink] visit status received active=%u remain=%u duration=%u speed=%u eat=%u play=%u\n",
+                      status.flags & 1, status.remaining_s, status.duration_s, status.speed_x10,
+                      status.guest_eat_count, status.guest_play_count);
     }
 }
 

@@ -56,6 +56,7 @@ void MenuScene::onEnter() {
     if (debugTemperIndex < 0) debugTemperIndex = 0;
     if (debugTemperIndex > 5) debugTemperIndex = 5;
     attrEditActive = false;
+    giftQuantityActive = false;
     lastVisitStatusMs = 0;
 }
 
@@ -117,7 +118,9 @@ void MenuScene::serviceVisitLink(uint32_t nowMs) {
     if (link.sendVisitStatus(engine.getVisitRemainingMs(),
                              engine.getVisitDurationMs(),
                              engine.getGameSpeedX10(),
-                             true)) {
+                             true,
+                             engine.getVisitRemoteEatCount(),
+                             engine.getVisitRemotePlayCount())) {
         lastVisitStatusMs = nowMs;
     }
 }
@@ -139,7 +142,7 @@ void MenuScene::render() {
         return;
     }
 
-    if (mode == Mode::FOOD) {
+    if (mode == Mode::FOOD || mode == Mode::GIFT_FOOD) {
         drawFoodLayout();
     } else if (mode == Mode::WOOD) {
         drawWoodLayout();
@@ -158,6 +161,9 @@ void MenuScene::render() {
 
     if (attrEditActive) {
         drawAttrEditDialog();
+    }
+    if (giftQuantityActive) {
+        drawGiftQuantityDialog();
     }
 
     drawToast();
@@ -407,9 +413,55 @@ void MenuScene::drawAttrEditDialog() {
     }
 }
 
+void MenuScene::drawGiftQuantityDialog() {
+    LGFX_Sprite& canvas = Hal::ins().canvas();
+    float fs = PixelRenderer::getContentFontScale();
+
+    int boxW = 166;
+    int boxH = 70;
+    int boxX = (Hal::DISPLAY_W - boxW) / 2;
+    int boxY = (Hal::DISPLAY_H - boxH) / 2;
+    PixelRenderer::fillRect(boxX, boxY, boxW, boxH, PixelRenderer::rgb565(12, 12, 18));
+    canvas.drawRect(boxX, boxY, boxW, boxH, PixelRenderer::WHITE);
+
+    char title[32];
+    snprintf(title, sizeof(title), UiStrings::GIFT_AMOUNT_TITLE_FMT,
+             ItemCatalog::name(giftQuantityItemId), giftQuantityValue, giftQuantityMax);
+    PixelRenderer::applyTextStyle(fs);
+    int titleW = canvas.textWidth(title);
+    PixelRenderer::drawPixelText(boxX + (boxW - titleW) / 2, boxY + 10,
+                                 title, PixelRenderer::WHITE, fs);
+
+    static constexpr int BTN_COUNT = 3;
+    const char* labels[BTN_COUNT] = {UiStrings::MINUS, UiStrings::PLUS, UiStrings::YES_LOWER};
+    int btnW[BTN_COUNT] = {34, 34, 46};
+    int gap = 8;
+    int totalW = btnW[0] + btnW[1] + btnW[2] + gap * 2;
+    int x = boxX + (boxW - totalW) / 2;
+    int y = boxY + 42;
+    int btnH = 18;
+    for (int i = 0; i < BTN_COUNT; i++) {
+        bool focused = (i == giftQuantityButton);
+        uint16_t border = focused ? PixelRenderer::YELLOW : PixelRenderer::GRAY;
+        uint16_t text = focused ? PixelRenderer::YELLOW : PixelRenderer::WHITE;
+        PixelRenderer::fillRect(x, y, btnW[i], btnH, PixelRenderer::rgb565(24, 24, 30));
+        canvas.drawRect(x, y, btnW[i], btnH, border);
+        PixelRenderer::applyTextStyle(fs);
+        int tw = canvas.textWidth(labels[i]);
+        PixelRenderer::drawPixelText(x + (btnW[i] - tw) / 2,
+                                     y + (btnH - (int)(8 * fs)) / 2,
+                                     labels[i], text, fs);
+        x += btnW[i] + gap;
+    }
+}
+
 bool MenuScene::onButton(const ButtonEvent& ev) {
     if (sleepTransitionActive) {
         return true;
+    }
+
+    if (giftQuantityActive) {
+        return handleGiftQuantityButton(ev);
     }
 
     if (attrEditActive) {
@@ -449,6 +501,8 @@ bool MenuScene::onButton(const ButtonEvent& ev) {
             // 长按 B：返回上一级
             if (mode == Mode::FOOD) {
                 enterMode(Mode::MAIN);
+            } else if (mode == Mode::GIFT_FOOD) {
+                enterMode(Mode::GIFT);
             } else if (mode == Mode::TOY) {
                 enterMode(Mode::BOX);
             } else if (mode == Mode::BOWL) {
@@ -501,6 +555,19 @@ bool MenuScene::onButton(const ButtonEvent& ev) {
                     }
                 } else {
                     enterMode(Mode::BOX);
+                }
+            } else if (mode == Mode::GIFT_FOOD) {
+                if (isGiftFoodBackIndex(selected)) {
+                    enterMode(Mode::GIFT);
+                } else {
+                    FoodType type = giftFoodAt(selected);
+                    ItemId itemId = ItemCatalog::food(type);
+                    uint8_t count = GameEngine::ins().getBug().getItemCount(itemId);
+                    if (count == 0) {
+                        showToast(UiStrings::GIFT_NO_FOOD);
+                    } else {
+                        openGiftQuantity(itemId, count);
+                    }
                 }
             } else {
                 executeSelection();
@@ -653,17 +720,13 @@ void MenuScene::executeSelection() {
     }
 
     if (mode == Mode::GIFT) {
-        if (selected == GIFT_SEND_FOOD) {
-            FoodType type = (FoodType)GameEngine::ins().getFoodStyle();
-            ItemId itemId = ItemCatalog::food(type);
-            if (bug.getItemCount(itemId) == 0) {
+        if (selected == GIFT_FOOD) {
+            if (giftFoodCount() == 0) {
                 showToast(UiStrings::GIFT_NO_FOOD);
                 return;
             }
-            GameEngine::ins().setPendingGiftItem(itemId, 1);
-            GameEngine::ins().setLobbyMode(LobbyMode::LOBBY_GIFT_SEND);
-            nextScene = SCENE_LOBBY;
-        } else if (selected == GIFT_RECEIVE_FOOD) {
+            enterMode(Mode::GIFT_FOOD);
+        } else if (selected == GIFT_RECEIVE) {
             GameEngine::ins().clearPendingGiftItem();
             GameEngine::ins().setLobbyMode(LobbyMode::LOBBY_GIFT_RECEIVE);
             nextScene = SCENE_LOBBY;
@@ -824,6 +887,10 @@ void MenuScene::executeSelection() {
             enterMode(Mode::BOX);
             break;
         case SOCIAL:
+            if (GameEngine::ins().hasActiveVisitSession()) {
+                showToast(UiStrings::VISIT_SOCIAL_LOCKED);
+                break;
+            }
             enterMode(Mode::SOCIAL);
             break;
         case EXPLORE: {
@@ -856,6 +923,10 @@ void MenuScene::enterMode(Mode nextMode) {
         if (selected >= FOOD_ITEM_COUNT - 1) selected = 0;
         foodScroll = 0.0f;       // 让列表在首帧自然滚动到选中项
         foodConfirmTime = 0;     // 清除上一次确认反馈
+    }
+    else if (mode == Mode::GIFT_FOOD) {
+        foodScroll = 0.0f;
+        foodConfirmTime = 0;
     }
     else if (mode == Mode::TOY) {
         selected = GameEngine::ins().getToyStyle();
@@ -911,6 +982,8 @@ bool MenuScene::shouldStartSubmenuAtFirst(Mode fromMode, Mode toMode) const {
             return toMode == Mode::GIFT ||
                    toMode == Mode::FIGHT ||
                    toMode == Mode::VISIT;
+        case Mode::GIFT:
+            return toMode == Mode::GIFT_FOOD;
         case Mode::DEBUG:
             return toMode == Mode::DEBUG_STATE ||
                    toMode == Mode::DEBUG_ATTR;
@@ -921,6 +994,7 @@ bool MenuScene::shouldStartSubmenuAtFirst(Mode fromMode, Mode toMode) const {
 
 int MenuScene::itemCount() const {
     if (mode == Mode::FOOD) return FOOD_ITEM_COUNT;
+    if (mode == Mode::GIFT_FOOD) return giftFoodCount() + 1;
     if (mode == Mode::TOY) return TOY_ITEM_COUNT;
     if (mode == Mode::BOWL) return BOWL_ITEM_COUNT;
     if (mode == Mode::WOOD) return WOOD_ITEM_COUNT;
@@ -937,9 +1011,9 @@ int MenuScene::itemCount() const {
 }
 
 const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
-    if (mode == Mode::FOOD) {
-        if (index >= 0 && index < FOOD_ITEM_COUNT - 1) {
-            return FoodTypeInfo::name((FoodType)index);
+    if (mode == Mode::FOOD || mode == Mode::GIFT_FOOD) {
+        if (!isVisibleFoodBackIndex(index)) {
+            return FoodTypeInfo::name(visibleFoodAt(index));
         }
         return UiStrings::BACK;
     }
@@ -1004,8 +1078,8 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
 
     if (mode == Mode::GIFT) {
         switch (index) {
-            case GIFT_SEND_FOOD: return UiStrings::MENU_GIFT_SEND_FOOD;
-            case GIFT_RECEIVE_FOOD: return UiStrings::MENU_GIFT_RECEIVE_FOOD;
+            case GIFT_FOOD: return UiStrings::MENU_GIFT_FOOD;
+            case GIFT_RECEIVE: return UiStrings::MENU_GIFT_RECEIVE;
             case GIFT_BACK:
             default: return UiStrings::BACK;
         }
@@ -1238,6 +1312,92 @@ bool MenuScene::handleAttrEditButton(const ButtonEvent& ev) {
             attrEditActive = false;
             showToast(UiStrings::SAVED);
             Serial.printf("[Menu] Debug attr %s set to %.0f\n", attrName(attrEditIndex), attrEditValue);
+        }
+        return true;
+    }
+
+    return true;
+}
+
+int MenuScene::giftFoodCount() const {
+    const Bug& bug = GameEngine::ins().getBug();
+    int count = 0;
+    for (uint8_t i = 0; i < (uint8_t)FoodType::COUNT; ++i) {
+        if (bug.getFoodCount((FoodType)i) > 0) ++count;
+    }
+    return count;
+}
+
+FoodType MenuScene::giftFoodAt(int index) const {
+    const Bug& bug = GameEngine::ins().getBug();
+    int seen = 0;
+    for (uint8_t i = 0; i < (uint8_t)FoodType::COUNT; ++i) {
+        FoodType type = (FoodType)i;
+        if (bug.getFoodCount(type) == 0) continue;
+        if (seen == index) return type;
+        ++seen;
+    }
+    return FoodType::DROP;
+}
+
+bool MenuScene::isGiftFoodBackIndex(int index) const {
+    return index == giftFoodCount();
+}
+
+FoodType MenuScene::visibleFoodAt(int index) const {
+    if (mode == Mode::GIFT_FOOD) return giftFoodAt(index);
+    if (index < 0 || index >= (int)FoodType::COUNT) return FoodType::DROP;
+    return (FoodType)index;
+}
+
+bool MenuScene::isVisibleFoodBackIndex(int index) const {
+    if (mode == Mode::GIFT_FOOD) return isGiftFoodBackIndex(index);
+    return index == FOOD_BACK;
+}
+
+void MenuScene::openGiftQuantity(ItemId id, uint8_t maxAmount) {
+    giftQuantityItemId = id;
+    giftQuantityMax = maxAmount;
+    giftQuantityValue = 0;
+    giftQuantityButton = GIFT_QTY_INC;
+    clampGiftQuantityValue();
+    giftQuantityActive = true;
+}
+
+void MenuScene::clampGiftQuantityValue() {
+    if (giftQuantityValue > giftQuantityMax) giftQuantityValue = giftQuantityMax;
+}
+
+bool MenuScene::handleGiftQuantityButton(const ButtonEvent& ev) {
+    if (ev.action == BtnAction::LONG_PRESS && ev.btn == 1) {
+        giftQuantityActive = false;
+        return true;
+    }
+    if (ev.action != BtnAction::PRESSED) return true;
+
+    if (ev.btn == 1) {
+        giftQuantityButton++;
+        if (giftQuantityButton > GIFT_QTY_YES) giftQuantityButton = GIFT_QTY_DEC;
+        return true;
+    }
+
+    if (ev.btn == 0) {
+        if (giftQuantityButton == GIFT_QTY_DEC) {
+            if (giftQuantityValue > 0) --giftQuantityValue;
+        } else if (giftQuantityButton == GIFT_QTY_INC) {
+            if (giftQuantityValue < giftQuantityMax) ++giftQuantityValue;
+        } else if (giftQuantityButton == GIFT_QTY_YES) {
+            clampGiftQuantityValue();
+            if (giftQuantityValue == 0) {
+                showToast(UiStrings::GIFT_AMOUNT_ZERO);
+                return true;
+            }
+            GameEngine::ins().setPendingGiftItem(giftQuantityItemId, giftQuantityValue);
+            GameEngine::ins().setLobbyMode(LobbyMode::LOBBY_GIFT_SEND);
+            giftQuantityActive = false;
+            nextScene = SCENE_LOBBY;
+            Serial.printf("[Menu] Gift selected: %s x%u\n",
+                          ItemCatalog::name(giftQuantityItemId), giftQuantityValue);
         }
         return true;
     }
@@ -1496,6 +1656,8 @@ void MenuScene::drawFoodLayout() {
     Bug& bug = GameEngine::ins().getBug();
     LGFX_Sprite& canvas = Hal::ins().canvas();
     float fs = PixelRenderer::getContentFontScale();
+    bool giftMode = (mode == Mode::GIFT_FOOD);
+    int listCount = itemCount();
 
     static constexpr int LEFT_W = 78;
     static constexpr int RIGHT_X = LEFT_W + 8;
@@ -1507,7 +1669,7 @@ void MenuScene::drawFoodLayout() {
     static constexpr int MARK_X_OFS = 6;      // 文本与选择标记之间的距离
 
     // ---- 左侧可滚动列表 ----
-    int totalH = FOOD_ITEM_COUNT * ROW_H;
+    int totalH = listCount * ROW_H;
     int maxScroll = (totalH > VISIBLE_H) ? (totalH - VISIBLE_H) : 0;
     int targetScroll = selected * ROW_H - VISIBLE_H / 2 + ROW_H / 2;
     if (targetScroll < 0) targetScroll = 0;
@@ -1525,13 +1687,14 @@ void MenuScene::drawFoodLayout() {
     canvas.drawFastVLine(LEFT_W, 20, Hal::DISPLAY_H - 24, PixelRenderer::GRAY);
 
     // 绘制每个 item，仅绘制可见区域内的行
-    for (int i = 0; i < FOOD_ITEM_COUNT; i++) {
+    for (int i = 0; i < listCount; i++) {
         int y = LIST_Y_START + i * ROW_H - (int)foodScroll;
         if (y + ROW_H < LIST_Y_START || y > LIST_BOTTOM) continue;
 
         bool isSelected = (i == selected);
-        bool isFood = (i < FOOD_ITEM_COUNT - 1);
-        uint8_t count = isFood ? bug.getFoodCount((FoodType)i) : 1;
+        bool isFood = !isVisibleFoodBackIndex(i);
+        FoodType ft = isFood ? visibleFoodAt(i) : FoodType::DROP;
+        uint8_t count = isFood ? bug.getFoodCount(ft) : 1;
         bool hasStock = (count > 0);
 
         // 无库存的食物显示为灰色；选中时统一高亮为黄色，但无库存的黄色更灰一些
@@ -1543,10 +1706,10 @@ void MenuScene::drawFoodLayout() {
         }
 
         const char* label;
-        if (i == FOOD_ITEM_COUNT - 1) {
+        if (!isFood) {
             label = UiStrings::BACK;
         } else {
-            label = FoodTypeInfo::name((FoodType)i);
+            label = FoodTypeInfo::name(ft);
         }
 
         int textY = y + (ROW_H - (int)(8 * fs)) / 2;
@@ -1554,7 +1717,7 @@ void MenuScene::drawFoodLayout() {
         // 全局食物标记：在当前设置的食物名字前面绘制一个青色小菱形
         // 无库存的食物不能挂上菱形标记，也不能被选作全局食物
         int globalFood = GameEngine::ins().getFoodStyle();
-        if (i < FOOD_ITEM_COUNT - 1 && i == globalFood && hasStock) {
+        if (!giftMode && isFood && (uint8_t)ft == globalFood && hasStock) {
             int cx = TEXT_X - 8;
             int cy = textY + (int)(4 * fs);
             uint16_t diamondColor = PixelRenderer::CYAN;
@@ -1570,9 +1733,9 @@ void MenuScene::drawFoodLayout() {
     }
 
     // ---- 右侧详情面板 ----
-    if (selected >= 0 && selected < FOOD_ITEM_COUNT - 1) {
-        FoodType ft = (FoodType)selected;
-        int idx = selected;
+    if (selected >= 0 && selected < listCount && !isVisibleFoodBackIndex(selected)) {
+        FoodType ft = visibleFoodAt(selected);
+        int idx = (int)ft;
 
         // 菜单预览保持独立视觉大小，不跟随主界面食物资源放大。
         uint16_t foodOffset = pgm_read_word(&FoodAssets::SPRITE_FRAMES[idx].offset);
@@ -1621,9 +1784,10 @@ void MenuScene::drawFoodLayout() {
         };
         drawScrollableDescription(descLines, 3, descX, descY, descW,
                                   PixelRenderer::CREAM, fs, 0x100 + idx);
-    } else if (selected == FOOD_ITEM_COUNT - 1) {
+    } else if (selected == listCount - 1) {
         // Back 选中时的右侧提示
-        PixelRenderer::drawPixelText(RIGHT_X + 20, 80, UiStrings::BACK_TO_BOX,
+        PixelRenderer::drawPixelText(RIGHT_X + 20, 80,
+                                     giftMode ? UiStrings::BACK_TO_GIFT : UiStrings::BACK_TO_BOX,
                                      PixelRenderer::GRAY, fs);
     }
 }

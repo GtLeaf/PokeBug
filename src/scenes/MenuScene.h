@@ -1,5 +1,7 @@
 #pragma once
 #include "../core/Scene.h"
+#include "../game/FoodType.h"
+#include "../game/ItemCatalog.h"
 #include <cstddef>
 #include <cstdint>
 
@@ -27,6 +29,7 @@ private:
         TOY,
         SOCIAL,
         GIFT,
+        GIFT_FOOD,
         FIGHT,
         VISIT,
         EXPLORE,
@@ -58,7 +61,7 @@ private:
     static constexpr int FOOD_ITEM_COUNT = 7;
     static constexpr int TOY_ITEM_COUNT = 3; // None + Ball + Back
     static constexpr int SOCIAL_ITEM_COUNT = 4; // Gift + Fight + Visit + Back
-    static constexpr int GIFT_ITEM_COUNT = 3;   // Send Food + Receive Food + Back
+    static constexpr int GIFT_ITEM_COUNT = 3;   // Food + Receive + Back
     static constexpr int FIGHT_ITEM_COUNT = 3;  // Create + Search + Back
     static constexpr int VISIT_ITEM_COUNT = 3;  // Create + Search + Back
     static constexpr int EXPLORE_ITEM_COUNT = 6; // 4 locations + Cup + Back
@@ -82,6 +85,7 @@ private:
     int descriptionLineStep(float fs) const;
     void updateDescriptionScroll(int scrollKey, int maxScroll);
     void drawAttrEditDialog();
+    void drawGiftQuantityDialog();
     void executeSelection();
     void enterMode(Mode nextMode);
     bool shouldStartSubmenuAtFirst(Mode fromMode, Mode toMode) const;
@@ -98,6 +102,14 @@ private:
     void openAttrEdit(uint8_t index);
     bool handleAttrEditButton(const ButtonEvent& ev);
     void clampAttrEditValue();
+    int giftFoodCount() const;
+    FoodType giftFoodAt(int index) const;
+    bool isGiftFoodBackIndex(int index) const;
+    FoodType visibleFoodAt(int index) const;
+    bool isVisibleFoodBackIndex(int index) const;
+    void openGiftQuantity(ItemId id, uint8_t maxAmount);
+    bool handleGiftQuantityButton(const ButtonEvent& ev);
+    void clampGiftQuantityValue();
     void showToast(const char* msg, uint32_t durationMs = 2000);
     void drawToast();
     void serviceVisitLink(uint32_t nowMs);
@@ -177,8 +189,8 @@ private:
     };
 
     enum GiftItem {
-        GIFT_SEND_FOOD = 0,
-        GIFT_RECEIVE_FOOD,
+        GIFT_FOOD = 0,
+        GIFT_RECEIVE,
         GIFT_BACK,
     };
 
@@ -231,10 +243,21 @@ private:
         ATTR_EDIT_YES,
     };
 
+    enum GiftQuantityButton {
+        GIFT_QTY_DEC = 0,
+        GIFT_QTY_INC,
+        GIFT_QTY_YES,
+    };
+
     int debugStageIndex = 0; // 0~4 对应 Stage::EGG~ADULT
     int debugTemperIndex = 0; // 0~5 对应 Temperament
     bool attrEditActive = false;
     uint8_t attrEditIndex = 0;
     float attrEditValue = 1.0f;
     int attrEditButton = ATTR_EDIT_INC;
+    bool giftQuantityActive = false;
+    ItemId giftQuantityItemId = 0;
+    uint8_t giftQuantityMax = 0;
+    uint8_t giftQuantityValue = 0;
+    int giftQuantityButton = GIFT_QTY_INC;
 };
