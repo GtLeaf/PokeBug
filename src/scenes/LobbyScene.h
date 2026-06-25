@@ -94,7 +94,8 @@ private:
     static constexpr uint32_t HOST_TIMEOUT_MS = 30000;
     static constexpr uint32_t SEARCH_SCAN_MS = 1500;
     static constexpr uint32_t JOIN_TIMEOUT_MS = 5000;
-    static constexpr uint32_t GIFT_TIMEOUT_MS = 6000;
+    static constexpr uint32_t GIFT_JOIN_TIMEOUT_MS = 10000;
+    static constexpr uint32_t GIFT_TIMEOUT_MS = 15000;
     static constexpr uint32_t VISIT_SYNC_TIMEOUT_MS = 5000;
     static constexpr uint32_t MESSAGE_MS = 1500;
 };

@@ -27,7 +27,7 @@ bool careItemsNotNeeded(Stage stage) {
 }
 
 void MenuScene::onEnter() {
-    mode = Mode::MAIN;
+    mode = GameEngine::ins().getPrevSceneID() == SCENE_LOBBY ? Mode::SOCIAL : Mode::MAIN;
     Bug& bug = GameEngine::ins().getBug();
     if (careItemsNotNeeded(bug.getStage())) {
         bool changed = GameEngine::ins().getBowlStyle() != 0xFF ||
@@ -40,11 +40,11 @@ void MenuScene::onEnter() {
         if (changed) saveSettingsNow();
     }
 
-    // 从培养缸进入时重置；从子菜单返回时保持上次位置
+    // 从培养缸进入时重置；从 Lobby 回来时回到 social；从子菜单返回时保持上次位置。
     if (GameEngine::ins().getPrevSceneID() == SCENE_TERRARIUM) {
         selected = 0;
     } else {
-        selected = lastSelectedByMode[modeIndex(Mode::MAIN)];
+        selected = lastSelectedByMode[modeIndex(mode)];
     }
     animSelected = (float)selected;
 

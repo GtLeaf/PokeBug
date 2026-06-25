@@ -203,7 +203,8 @@ SceneID LobbyScene::update() {
                               (unsigned long)(now - stateStartMs));
                 lastJoinLogMs = now;
             }
-            if (now - stateStartMs >= JOIN_TIMEOUT_MS) {
+            uint32_t joinTimeoutMs = isGiftPurpose() ? GIFT_JOIN_TIMEOUT_MS : JOIN_TIMEOUT_MS;
+            if (now - stateStartMs >= joinTimeoutMs) {
                 Serial.printf("[Lobby] join timeout purpose=%d room=%u host=%02X:%02X:%02X:%02X:%02X:%02X elapsed=%lu\n",
                               (int)purpose, joinTargetRoomId,
                               joinTargetMac[0], joinTargetMac[1], joinTargetMac[2],
@@ -369,11 +370,18 @@ bool LobbyScene::onButton(const ButtonEvent& ev) {
             }
             return true;
         }
-    } else if (state == State::SEARCH_SCANNING) {
-        // 搜索过程中按 B 取消，回到模式选择（默认选中 SEARCH）
+    } else if (state == State::HOST_WAITING) {
+        // 创建房间后按 B 取消，关闭广播并返回上一级。
         if (ev.btn == 1) {
-            if (isDirectMenuPurpose()) nextScene = SCENE_MENU;
-            else enterModeSelect(Mode::SEARCH);
+            BattleLink::ins().stopRoom();
+            nextScene = SCENE_MENU;
+            return true;
+        }
+    } else if (state == State::SEARCH_SCANNING) {
+        // 搜索过程中按 B 取消，关闭扫描并返回社交菜单。
+        if (ev.btn == 1) {
+            BattleLink::ins().stopRoom();
+            nextScene = SCENE_MENU;
             return true;
         }
     } else if (state == State::SEARCH_LIST) {
@@ -388,6 +396,25 @@ bool LobbyScene::onButton(const ButtonEvent& ev) {
             if (roomCount > 0) {
                 enterJoining(selectedRoomIdx);
             }
+            return true;
+        }
+    } else if (state == State::JOINING) {
+        if (ev.btn == 1) {
+            BattleLink::ins().stopRoom();
+            nextScene = SCENE_MENU;
+            return true;
+        }
+    } else if (state == State::GIFT_WAITING) {
+        if (ev.btn == 1) {
+            BattleLink::ins().stopRoom();
+            nextScene = SCENE_MENU;
+            return true;
+        }
+    } else if (state == State::GIFT_SENDING) {
+        if (ev.btn == 1 && !giftSendStarted && !BattleLink::ins().isSending()) {
+            BattleLink::ins().stopRoom();
+            GameEngine::ins().clearPendingGiftItem();
+            nextScene = SCENE_MENU;
             return true;
         }
     }
@@ -611,6 +638,7 @@ void LobbyScene::drawHostWaiting() {
                            (isVisitPurpose() ? UiStrings::VISIT_WAITING : UiStrings::LOBBY_WAITING);
     snprintf(buf, sizeof(buf), "%s%.*s", waitText, dots, UiStrings::ELLIPSIS);
     PixelRenderer::drawPixelText(75, 100, buf, PixelRenderer::WHITE, 1);
+    PixelRenderer::drawPixelText(6, 122, UiStrings::EXPLORE_CANCEL, PixelRenderer::GRAY, 1);
 }
 
 void LobbyScene::drawSearchScanning() {
@@ -623,6 +651,7 @@ void LobbyScene::drawSearchScanning() {
     char buf[12];
     snprintf(buf, sizeof(buf), "%.*s", dots, UiStrings::ELLIPSIS);
     PixelRenderer::drawPixelText(110, 80, buf, PixelRenderer::WHITE, 1);
+    PixelRenderer::drawPixelText(6, 122, UiStrings::EXPLORE_CANCEL, PixelRenderer::GRAY, 1);
 }
 
 void LobbyScene::drawSearchList() {
@@ -654,6 +683,7 @@ void LobbyScene::drawJoining() {
     char buf[12];
     snprintf(buf, sizeof(buf), "%.*s", dots, UiStrings::ELLIPSIS);
     PixelRenderer::drawPixelText(110, 80, buf, PixelRenderer::WHITE, 1);
+    PixelRenderer::drawPixelText(6, 122, UiStrings::EXPLORE_CANCEL, PixelRenderer::GRAY, 1);
 }
 
 void LobbyScene::drawGiftWaiting() {
@@ -664,6 +694,7 @@ void LobbyScene::drawGiftWaiting() {
     char buf[12];
     snprintf(buf, sizeof(buf), "%.*s", dots, UiStrings::ELLIPSIS);
     PixelRenderer::drawPixelText(110, 80, buf, PixelRenderer::WHITE, 1);
+    PixelRenderer::drawPixelText(6, 122, UiStrings::EXPLORE_CANCEL, PixelRenderer::GRAY, 1);
 }
 
 void LobbyScene::drawGiftSending() {
@@ -674,6 +705,9 @@ void LobbyScene::drawGiftSending() {
     char buf[12];
     snprintf(buf, sizeof(buf), "%.*s", dots, UiStrings::ELLIPSIS);
     PixelRenderer::drawPixelText(110, 80, buf, PixelRenderer::WHITE, 1);
+    if (!giftSendStarted && !BattleLink::ins().isSending()) {
+        PixelRenderer::drawPixelText(6, 122, UiStrings::EXPLORE_CANCEL, PixelRenderer::GRAY, 1);
+    }
 }
 
 void LobbyScene::drawVisitSyncing() {
