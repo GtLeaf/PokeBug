@@ -1,5 +1,6 @@
 #pragma once
 #include "../core/Scene.h"
+#include "../core/TerrariumViewState.h"
 #include "../hardware/PixelRenderer.h"
 #include "../game/Bug.h"
 #include "../game/BugMind.h"
@@ -13,7 +14,10 @@ enum class AdultState {
     TURN,   // 原地转身
     SLIDE,  // 大角度倾斜：向低处滑落
     CLIMB,  // 倾斜恢复/小角度：向高处缓慢爬行
-    REST    // 夜间趴在腐木上休息
+    REST,   // 夜间趴在腐木上休息
+    THREATEN, // 被戳后的威吓姿态
+    ATTACK_DOWN, // 玩具蓄力下压
+    ATTACK_UP    // 玩具击出上挑
 };
 
 // 倾斜方向
@@ -29,6 +33,37 @@ enum class LarvaState {
     SLEEP,
 };
 
+struct AdultBeetleActor {
+    int x = 120;
+    int y = 80;
+    AdultState state = AdultState::IDLE;
+    bool faceRight = true;
+    bool turnTargetFaceRight = true;
+    bool walkAfterTurn = false;
+    bool slideAfterTurn = false;
+    bool climbAfterTurn = false;
+    bool walkTargetIsRest = false;
+    uint8_t turnFrameIndex = 0;
+    int targetX = 120;
+    int slideTargetX = 120;
+    int climbTargetX = 120;
+    bool tiltHighSideIsRight = true;
+    uint32_t stateTimer = 0;
+    uint32_t stateDuration = 0;
+
+    bool falling = false;
+    int fromY = -30;
+    int targetY = 125;
+    uint32_t startMs = 0;
+    uint32_t untilMs = 0;
+    uint32_t nextStepMs = 0;
+    uint32_t nextWanderMs = 0;
+    bool turning = false;
+    uint32_t turnStartMs = 0;
+    uint32_t threatenStartMs = 0;
+    uint32_t threatenEndMs = 0;
+};
+
 // 培养缸主场景
 class TerrariumScene : public Scene {
 public:
@@ -42,28 +77,29 @@ public:
     void persistViewState();
 
 private:
-    int bugX = 120;
-    int bugY = 80;
+    AdultBeetleActor localActor;
+    int& bugX = localActor.x;
+    int& bugY = localActor.y;
     uint32_t animFrame = 0;
 
     uint32_t resetPressStart = 0;
     bool resetting = false;
 
     // 成虫运动状态机
-    AdultState adultState = AdultState::IDLE;
-    bool faceRight = true;
-    bool turnTargetFaceRight = true;
-    bool walkAfterTurn = false;
-    bool slideAfterTurn = false;  // 转身后进入 SLIDE
-    bool climbAfterTurn = false;  // 转身后进入 CLIMB
-    bool walkTargetIsRest = false; // 当前 WALK 目标是否是睡眠点
-    uint8_t turnFrameIndex = 0;
-    int targetX = 120;
-    int slideTargetX = 0;         // SLIDE 目标位置
-    int climbTargetX = 0;         // CLIMB 目标位置
-    bool tiltHighSideIsRight = false;  // 高处是否在右侧
-    uint32_t stateTimer = 0;      // 当前状态已持续帧数
-    uint32_t stateDuration = 0;   // 当前状态目标持续帧数
+    AdultState& adultState = localActor.state;
+    bool& faceRight = localActor.faceRight;
+    bool& turnTargetFaceRight = localActor.turnTargetFaceRight;
+    bool& walkAfterTurn = localActor.walkAfterTurn;
+    bool& slideAfterTurn = localActor.slideAfterTurn;  // 转身后进入 SLIDE
+    bool& climbAfterTurn = localActor.climbAfterTurn;  // 转身后进入 CLIMB
+    bool& walkTargetIsRest = localActor.walkTargetIsRest; // 当前 WALK 目标是否是睡眠点
+    uint8_t& turnFrameIndex = localActor.turnFrameIndex;
+    int& targetX = localActor.targetX;
+    int& slideTargetX = localActor.slideTargetX;         // SLIDE 目标位置
+    int& climbTargetX = localActor.climbTargetX;         // CLIMB 目标位置
+    bool& tiltHighSideIsRight = localActor.tiltHighSideIsRight;  // 高处是否在右侧
+    uint32_t& stateTimer = localActor.stateTimer;      // 当前状态已持续帧数
+    uint32_t& stateDuration = localActor.stateDuration;   // 当前状态目标持续帧数
     uint8_t eatFrameInterval = 0; // EAT 动画每帧持续帧数
     uint8_t eatBitesThisSession = 0;
     uint32_t eatLastBiteMs = 0;   // 成虫咬食使用现实时间节奏，避免被游戏速度压缩
@@ -112,9 +148,14 @@ private:
     uint32_t toyLastHitMs = 0;
     uint32_t toyAttackStartMs = 0;
     bool toyCharging = false;
+    bool visitorToyCharging = false;
     uint32_t toyChargeStartMs = 0;
     uint32_t toyChargeDurationMs = 0;
     int toyChargeDir = 1;
+    uint32_t visitorToyChargeStartMs = 0;
+    uint32_t visitorToyChargeDurationMs = 0;
+    int visitorToyChargeDir = 1;
+    uint32_t visitorToyAttackStartMs = 0;
     uint32_t toyNoCatchUntilMs = 0;
     bool toyVisible = false;
     bool toyEntryActive = false;
@@ -126,6 +167,51 @@ private:
     int toyThrowTargetY = 100;
     int toyThrowArcH = 28;
     int toyThrowCurveX = 0;
+    int toyEntryTargetX = 120;
+    bool toyEntryTargetVisitor = false;
+
+    struct VisitorBug {
+        bool active = false;
+        AdultBeetleActor actor;
+        bool& falling = actor.falling;
+        int& x = actor.x;
+        int& y = actor.y;
+        int& fromY = actor.fromY;
+        int& targetY = actor.targetY;
+        uint8_t siz = 8;
+        uint8_t palette = 0x80;
+        uint8_t str = 1;
+        uint8_t strCap = 6;
+        uint8_t temperament = 0;
+        bool& faceRight = actor.faceRight;
+        uint32_t& startMs = actor.startMs;
+        uint32_t& untilMs = actor.untilMs;
+        int& targetX = actor.targetX;
+        uint32_t& nextStepMs = actor.nextStepMs;
+        uint32_t& nextWanderMs = actor.nextWanderMs;
+        bool& turning = actor.turning;
+        bool& turnTargetFaceRight = actor.turnTargetFaceRight;
+        uint32_t& turnStartMs = actor.turnStartMs;
+    };
+    VisitorBug visitor;
+    bool visitRecallConfirm = false;
+    bool visitPingInFlight = false;
+    uint8_t visitPingFailures = 0;
+    uint32_t lastVisitPingMs = 0;
+    uint32_t lastVisitStatusMs = 0;
+    uint32_t visitorIntentUntilMs = 0;
+    bool visitorEatRequested = false;
+    uint32_t lastVisitEatIntentMs = 0;
+    uint32_t visitEatRetryAfterMs = 0;
+    uint32_t nextVisitPlayIntentMs = 0;
+    bool pendingVisitEatResult = false;
+    bool pendingVisitEatSuccess = false;
+    uint8_t pendingVisitEatGain = 0;
+    uint8_t pendingVisitEatHunger = 0;
+    uint8_t pendingVisitEatFood = 0;
+    AdultState visitorLastLoggedState = AdultState::IDLE;
+    bool visitorStateLogInitialized = false;
+    uint32_t lastVisitorStateLogMs = 0;
 
     static constexpr int GROUND_Y = 125;   // 甲虫贴地时脚所在的 Y 坐标
     static constexpr int FOOD_X = 55;      // 食物盘旁站立位置（中心点）
@@ -168,6 +254,22 @@ private:
     static constexpr uint32_t TOY_DROP_MS = 420;
     static constexpr float TOY_CATCH_MAX_SPEED = 70.0f;
     static constexpr float TOY_TILT_ACCEL = 190.0f;
+    static constexpr uint32_t VISITOR_DROP_MS = 720;
+    static constexpr uint32_t VISITOR_STEP_MS = 140;
+    static constexpr uint32_t VISITOR_INTENT_STEP_MS = 70;
+    static constexpr uint32_t VISITOR_INTENT_MS = 1200;
+    static constexpr uint32_t VISITOR_IDLE_MIN_MS = 1200;
+    static constexpr uint32_t VISITOR_IDLE_MAX_MS = 3600;
+    static constexpr uint32_t VISITOR_TURN_MS = 520;
+    static constexpr uint32_t VISIT_PING_INTERVAL_MS = 5000;
+    static constexpr uint32_t VISIT_STATUS_INTERVAL_MS = 3000;
+    static constexpr uint32_t VISIT_EAT_INTENT_INTERVAL_MS = 8000;
+    static constexpr uint32_t VISIT_EAT_FAIL_RETRY_MS = 12000;
+    static constexpr uint32_t VISIT_PLAY_INTENT_MIN_MS = 18000;
+    static constexpr uint32_t VISIT_PLAY_INTENT_MAX_MS = 45000;
+    static constexpr uint8_t VISIT_EAT_HUNGER_THRESHOLD = 80;
+    static constexpr int VISITOR_EAT_DISTANCE_PX = 10;
+    static constexpr uint8_t VISIT_PING_MAX_FAILURES = 2;
 
     // 倾斜交互参数
     static constexpr float TILT_SLIDE_THRESHOLD_G = 1.0f;  // 超过此角度先向低处滑落
@@ -182,16 +284,53 @@ private:
     void drawWood();
     void drawToy();
     void drawStatusBar();
+    void drawVisitAwayOverlay();
+    void drawVisitRecallConfirm();
     void drawDeathScreen();
     void resetLocalViewState();
+    void startPendingVisitIfAny();
+    void restoreVisitorFromViewState(const TerrariumViewState& saved);
+    void updateVisitor(uint32_t nowMs);
+    void chooseVisitorTarget();
+    void scheduleVisitorWander(uint32_t nowMs);
+    void guideVisitorWalkTo(int targetX, uint32_t nowMs);
+    void logVisitorState(const char* reason, uint32_t nowMs);
+    void beginActorTurn(AdultBeetleActor& actor, bool targetFaceRight,
+                        bool continueWalking, uint32_t timer, uint32_t duration);
+    void beginActorWalkTo(AdultBeetleActor& actor, int x);
+    bool chooseVisitorForHostInteraction() const;
+    int hostInteractionTargetX(bool targetVisitor) const;
+    float hostInteractionTargetScale(bool targetVisitor) const;
+    void reactVisitorToHostPoke(uint32_t nowMs);
+    void applyTiltToVisitor(TiltDir dir, float magnitude);
+    void updateVisitGuestLink(uint32_t nowMs);
+    void updateVisitHostLink(uint32_t nowMs);
+    void applyVisitIntent(uint8_t intent, uint32_t nowMs);
+    void updateVisitorEating(uint32_t nowMs);
+    void queueVisitEatResult(bool success, uint8_t hungerGain, uint8_t newGuestHunger, uint8_t foodType);
+    bool flushVisitEatResult();
+    void drawVisitor();
+    void drawVisitorAdult(int x, int y);
+    float visitorAdultScale() const;
+    float visitorAdultDrawScale() const;
+    uint16_t visitorAdultColor() const;
     void resetToy();
     void updateToyPhysics(uint32_t nowMs);
     void startToyCharge(uint32_t nowMs, int pushDir);
     void triggerToyHit(uint32_t nowMs, int pushDir, float chargeRatio);
+    void reactLocalToToyImpact(uint32_t nowMs, int pushDir);
+    void reactVisitorToToyImpact(uint32_t nowMs, int pushDir);
+    void reboundToyFromEntryImpact(uint32_t nowMs, int pushDir, float beetleTop,
+                                   const ToySpec& spec);
+    void startVisitorToyCharge(uint32_t nowMs, int pushDir);
+    void triggerVisitorToyHit(uint32_t nowMs, int pushDir, float chargeRatio);
     void deflectToyFromBeetle(int pushDir);
-    bool startToyButtonInteraction(uint32_t nowMs);
-    void startToyArcThrow(uint32_t nowMs);
-    void startToyDrop(uint32_t nowMs);
+    void deflectToyFromVisitor(uint32_t nowMs, int pushDir);
+    void handleToyVisitorCollision(uint32_t nowMs, const ToySpec& spec,
+                                   float left, float right);
+    bool startToyButtonInteraction(uint32_t nowMs, bool allowVisitorTarget = true);
+    void startToyArcThrow(uint32_t nowMs, int targetX, float targetScale, bool targetVisitor);
+    void startToyDrop(uint32_t nowMs, int targetX, float targetScale, bool targetVisitor);
     void finishToyEntry(uint32_t nowMs);
     void drawToyBall(int centerX, int centerY, int radius, uint8_t phase);
     void drawToyEntry();
@@ -203,6 +342,8 @@ private:
     uint8_t toyInterestPercent(Temperament temperament) const;
     uint32_t toyChargeDurationFor(Temperament temperament) const;
     float toyStrengthPower(const Bug& bug) const;
+    Temperament visitorTemperament() const;
+    float visitorToyStrengthPower() const;
 
     void drawEgg(int x, int y, uint8_t palette);
     void drawLarva(int x, int y, uint8_t palette);
@@ -244,12 +385,14 @@ private:
     static constexpr uint32_t THREATEN_RETURN_MS = 300; // 结束前反向播放，避免直接跳回站姿
     static constexpr uint32_t POKE_REACTION_MS = THREATEN_PLAY_MS + THREATEN_HOLD_MS + THREATEN_RETURN_MS;
     bool pokeFingerFromRight = false;
+    bool pokeFingerTargetVisitor = false;
     uint8_t pokeFingerFrameIndex = 0;
     int8_t pokeFingerYOffset = 0;
-    void startPokeFeedback(uint32_t now, uint32_t durationMs, bool wasPoked);
+    void startPokeFeedback(uint32_t now, uint32_t durationMs, bool wasPoked, bool targetVisitor = false);
     void drawLarvaPoked(int x, int y, uint8_t palette);
     void drawPokeCooldownHint(int x, int y);
     void drawPokeAction();
+    int getPokeTargetX() const;
     int getPokeTargetY() const;
 
     static const uint16_t PALETTE[4][2];

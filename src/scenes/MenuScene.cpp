@@ -13,19 +13,7 @@
 #include "../game/NpcGenerator.h"
 #include <cmath>
 
-int MenuScene::lastSelected = 0;
-int MenuScene::lastBoxSelected = 0;
-int MenuScene::lastWoodSelected = 0;
-int MenuScene::lastBowlSelected = 0;
-int MenuScene::lastFoodSelected = 0;
-int MenuScene::lastToySelected = 0;
-int MenuScene::lastSocialSelected = 0;
-int MenuScene::lastGiftSelected = 0;
-int MenuScene::lastFightSelected = 0;
-int MenuScene::lastExploreSelected = 0;
-int MenuScene::lastDebugSelected = 0;
-int MenuScene::lastDebugStateSelected = 0;
-int MenuScene::lastDebugAttrSelected = 0;
+int MenuScene::lastSelectedByMode[(int)MenuScene::Mode::COUNT] = {};
 
 namespace {
 
@@ -53,7 +41,7 @@ void MenuScene::onEnter() {
     if (GameEngine::ins().getPrevSceneID() == SCENE_TERRARIUM) {
         selected = 0;
     } else {
-        selected = lastSelected;
+        selected = lastSelectedByMode[modeIndex(Mode::MAIN)];
     }
     animSelected = (float)selected;
 
@@ -73,33 +61,7 @@ void MenuScene::onExit() {
         sleepTransitionActive = false;
     }
 
-    if (mode == Mode::FOOD) {
-        lastFoodSelected = selected;
-    } else if (mode == Mode::TOY) {
-        lastToySelected = selected;
-    } else if (mode == Mode::BOWL) {
-        lastBowlSelected = selected;
-    } else if (mode == Mode::WOOD) {
-        lastWoodSelected = selected;
-    } else if (mode == Mode::BOX) {
-        lastBoxSelected = selected;
-    } else if (mode == Mode::SOCIAL) {
-        lastSocialSelected = selected;
-    } else if (mode == Mode::GIFT) {
-        lastGiftSelected = selected;
-    } else if (mode == Mode::FIGHT) {
-        lastFightSelected = selected;
-    } else if (mode == Mode::EXPLORE) {
-        lastExploreSelected = selected;
-    } else if (mode == Mode::DEBUG) {
-        lastDebugSelected = selected;
-    } else if (mode == Mode::DEBUG_STATE) {
-        lastDebugStateSelected = selected;
-    } else if (mode == Mode::DEBUG_ATTR) {
-        lastDebugAttrSelected = selected;
-    } else {
-        lastSelected = selected;
-    }
+    lastSelectedByMode[modeIndex(mode)] = selected;
 }
 
 
@@ -455,6 +417,8 @@ bool MenuScene::onButton(const ButtonEvent& ev) {
                 enterMode(Mode::SOCIAL);
             } else if (mode == Mode::FIGHT) {
                 enterMode(Mode::SOCIAL);
+            } else if (mode == Mode::VISIT) {
+                enterMode(Mode::SOCIAL);
             } else if (mode == Mode::SOCIAL) {
                 enterMode(Mode::MAIN);
             } else if (mode == Mode::EXPLORE) {
@@ -636,6 +600,8 @@ void MenuScene::executeSelection() {
             enterMode(Mode::GIFT);
         } else if (selected == SOCIAL_FIGHT) {
             enterMode(Mode::FIGHT);
+        } else if (selected == SOCIAL_VISIT) {
+            enterMode(Mode::VISIT);
         } else if (selected == SOCIAL_BACK) {
             enterMode(Mode::MAIN);
         }
@@ -671,7 +637,20 @@ void MenuScene::executeSelection() {
             GameEngine::ins().setLobbyMode(LobbyMode::LOBBY_SEARCH);
             nextScene = SCENE_LOBBY;
         } else if (selected == FIGHT_BACK) {
-            enterMode(Mode::MAIN);
+            enterMode(Mode::SOCIAL);
+        }
+        return;
+    }
+
+    if (mode == Mode::VISIT) {
+        if (selected == VISIT_CREATE) {
+            GameEngine::ins().setLobbyMode(LobbyMode::LOBBY_VISIT_CREATE);
+            nextScene = SCENE_LOBBY;
+        } else if (selected == VISIT_SEARCH) {
+            GameEngine::ins().setLobbyMode(LobbyMode::LOBBY_VISIT_SEARCH);
+            nextScene = SCENE_LOBBY;
+        } else if (selected == VISIT_BACK) {
+            enterMode(Mode::SOCIAL);
         }
         return;
     }
@@ -823,23 +802,12 @@ void MenuScene::executeSelection() {
 }
 
 void MenuScene::enterMode(Mode nextMode) {
-    if (mode == Mode::FOOD) lastFoodSelected = selected;
-    else if (mode == Mode::TOY) lastToySelected = selected;
-    else if (mode == Mode::BOWL) lastBowlSelected = selected;
-    else if (mode == Mode::WOOD) lastWoodSelected = selected;
-    else if (mode == Mode::BOX) lastBoxSelected = selected;
-    else if (mode == Mode::SOCIAL) lastSocialSelected = selected;
-    else if (mode == Mode::GIFT) lastGiftSelected = selected;
-    else if (mode == Mode::FIGHT) lastFightSelected = selected;
-    else if (mode == Mode::EXPLORE) lastExploreSelected = selected;
-    else if (mode == Mode::DEBUG) lastDebugSelected = selected;
-    else if (mode == Mode::DEBUG_STATE) lastDebugStateSelected = selected;
-    else if (mode == Mode::DEBUG_ATTR) lastDebugAttrSelected = selected;
-    else lastSelected = selected;
+    Mode fromMode = mode;
+    lastSelectedByMode[modeIndex(mode)] = selected;
 
     mode = nextMode;
+    selected = lastSelectedByMode[modeIndex(mode)];
     if (mode == Mode::FOOD) {
-        // 默认定位到当前选中的食物（与培养缸短按 A 保持一致）
         selected = GameEngine::ins().getFoodStyle();
         if (selected >= FOOD_ITEM_COUNT - 1) selected = 0;
         foodScroll = 0.0f;       // 让列表在首帧自然滚动到选中项
@@ -859,20 +827,13 @@ void MenuScene::enterMode(Mode nextMode) {
         if (selected >= WOOD_ITEM_COUNT - 2) selected = 0; // 排除 Place 和 Back
         woodScroll = 0.0f;
     }
-    else if (mode == Mode::BOX) selected = lastBoxSelected;
-    else if (mode == Mode::SOCIAL) selected = lastSocialSelected;
-    else if (mode == Mode::GIFT) selected = lastGiftSelected;
-    else if (mode == Mode::FIGHT) selected = lastFightSelected;
     else if (mode == Mode::EXPLORE) {
-        selected = lastExploreSelected;
         if (selected >= EXPLORE_ITEM_COUNT - 1) selected = 0;
     }
     else if (mode == Mode::DEBUG) {
-        selected = lastDebugSelected;
         if (selected >= DEBUG_ITEM_COUNT - 1) selected = 0;
     }
     else if (mode == Mode::DEBUG_STATE) {
-        selected = lastDebugStateSelected;
         debugStageIndex = (int)GameEngine::ins().getBug().getStage();
         if (debugStageIndex < 0) debugStageIndex = 0;
         if (debugStageIndex > 4) debugStageIndex = 4;
@@ -880,11 +841,38 @@ void MenuScene::enterMode(Mode nextMode) {
         if (debugTemperIndex < 0) debugTemperIndex = 0;
         if (debugTemperIndex > 5) debugTemperIndex = 5;
     }
-    else if (mode == Mode::DEBUG_ATTR) selected = lastDebugAttrSelected;
-    else selected = lastSelected;
+
+    if (shouldStartSubmenuAtFirst(fromMode, nextMode)) {
+        selected = 0;
+    }
+
     int count = itemCount();
     if (selected >= count) selected = 0;
     animSelected = (float)selected;
+}
+
+bool MenuScene::shouldStartSubmenuAtFirst(Mode fromMode, Mode toMode) const {
+    switch (fromMode) {
+        case Mode::MAIN:
+            return toMode == Mode::BOX ||
+                   toMode == Mode::SOCIAL ||
+                   toMode == Mode::EXPLORE ||
+                   toMode == Mode::DEBUG;
+        case Mode::BOX:
+            return toMode == Mode::FOOD ||
+                   toMode == Mode::WOOD ||
+                   toMode == Mode::BOWL ||
+                   toMode == Mode::TOY;
+        case Mode::SOCIAL:
+            return toMode == Mode::GIFT ||
+                   toMode == Mode::FIGHT ||
+                   toMode == Mode::VISIT;
+        case Mode::DEBUG:
+            return toMode == Mode::DEBUG_STATE ||
+                   toMode == Mode::DEBUG_ATTR;
+        default:
+            return false;
+    }
 }
 
 int MenuScene::itemCount() const {
@@ -896,6 +884,7 @@ int MenuScene::itemCount() const {
     if (mode == Mode::SOCIAL) return SOCIAL_ITEM_COUNT;
     if (mode == Mode::GIFT) return GIFT_ITEM_COUNT;
     if (mode == Mode::FIGHT) return FIGHT_ITEM_COUNT;
+    if (mode == Mode::VISIT) return VISIT_ITEM_COUNT;
     if (mode == Mode::EXPLORE) return EXPLORE_ITEM_COUNT;
     if (mode == Mode::DEBUG) return DEBUG_ITEM_COUNT;
     if (mode == Mode::DEBUG_STATE) return DEBUG_STATE_ITEM_COUNT;
@@ -963,6 +952,7 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
         switch (index) {
             case SOCIAL_GIFT: return UiStrings::MENU_SOCIAL_GIFT;
             case SOCIAL_FIGHT: return UiStrings::MENU_SOCIAL_FIGHT;
+            case SOCIAL_VISIT: return UiStrings::MENU_SOCIAL_VISIT;
             case SOCIAL_BACK:
             default: return UiStrings::BACK;
         }
@@ -982,6 +972,15 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
             case FIGHT_CREATE: return UiStrings::MENU_FIGHT_CREATE;
             case FIGHT_SEARCH: return UiStrings::MENU_FIGHT_SEARCH;
             case FIGHT_BACK:
+            default: return UiStrings::BACK;
+        }
+    }
+
+    if (mode == Mode::VISIT) {
+        switch (index) {
+            case VISIT_CREATE: return UiStrings::MENU_FIGHT_CREATE;
+            case VISIT_SEARCH: return UiStrings::MENU_FIGHT_SEARCH;
+            case VISIT_BACK:
             default: return UiStrings::BACK;
         }
     }

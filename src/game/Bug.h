@@ -143,6 +143,7 @@ public:
 
     // 自主进食：幼虫/蛹期在 Bug::update 中调用；成虫由 TerrariumScene 在 EAT 状态时调用
     bool eatFromTray(uint64_t now, bool forceBite = false);
+    bool consumeTrayBiteForVisitor(uint8_t& hungerGain, FoodType& foodType);
     // 成虫真正趴在腐木上休息时调用；连续休息才获得 END 成长
     void recordWoodRest(uint64_t now);
 

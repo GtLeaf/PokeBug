@@ -17,6 +17,28 @@ enum class LobbyMode {
     LOBBY_SEARCH,
     LOBBY_GIFT_SEND,
     LOBBY_GIFT_RECEIVE,
+    LOBBY_VISIT_CREATE,
+    LOBBY_VISIT_SEARCH,
+};
+
+struct VisitBugSnapshot {
+    bool active = false;
+    uint8_t siz = 8;
+    uint8_t palette = 0x80;
+    uint8_t hunger = 100;
+    uint8_t motivation = 50;
+    uint8_t str = 1;
+    uint8_t strCap = 6;
+    uint8_t temperament = 0;
+};
+
+struct VisitSession {
+    bool active = false;
+    bool asHost = false;
+    uint32_t startMs = 0;
+    uint32_t durationMs = 0;
+    uint8_t speedX10 = 10;
+    VisitBugSnapshot remoteBug;
 };
 
 // 本地 NPC 对战上下文：由 MenuScene/ExploreScene/CupScene 写入，BattleScene 读取
@@ -87,6 +109,31 @@ public:
     // 游戏速度（1 / 2 / 4 / 8… 影响虚拟时间）
     float getGameSpeed() const { return gameSpeed; }
     void setGameSpeed(float speed) { gameSpeed = speed; }
+    static float gameSpeedFromX10(uint8_t speedX10) {
+        if (speedX10 == 0 || speedX10 < 5) return 1.0f;
+        if (speedX10 > 80) return 8.0f;
+        return speedX10 / 10.0f;
+    }
+    bool setGameSpeedFromX10(uint8_t speedX10) {
+        float next = gameSpeedFromX10(speedX10);
+        float diff = gameSpeed > next ? gameSpeed - next : next - gameSpeed;
+        if (diff < 0.01f) return false;
+        gameSpeed = next;
+        return true;
+    }
+    void saveSettingsSnapshot() {
+        SaveManager::ins().saveSettings(
+            PixelRenderer::getContentFontScale(),
+            Hal::ins().getBrightness(),
+            gameSpeed,
+            idleTimeoutIndex,
+            mainSceneBg,
+            woodStyle,
+            bowlStyle,
+            foodStyle,
+            toyStyle
+        );
+    }
 
     // 虚拟游戏时间（ms）
     uint64_t getGameNow() const { return gameNow; }
@@ -205,6 +252,97 @@ public:
         pendingGiftItem.amount = 0;
     }
 
+    static constexpr uint32_t VISIT_MAX_MS = 30UL * 60UL * 1000UL;
+
+    void setPendingVisitBug(uint8_t siz, uint8_t palette, uint8_t hunger = 100, uint8_t motivation = 50,
+                            uint8_t str = 1, uint8_t strCap = 6, uint8_t temperament = 0) {
+        pendingVisitBug.active = true;
+        pendingVisitBug.siz = siz;
+        pendingVisitBug.palette = palette;
+        pendingVisitBug.hunger = hunger;
+        pendingVisitBug.motivation = motivation;
+        pendingVisitBug.str = str;
+        pendingVisitBug.strCap = strCap;
+        pendingVisitBug.temperament = temperament;
+    }
+    bool hasPendingVisitBug() const { return pendingVisitBug.active; }
+    VisitBugSnapshot takePendingVisitBug() {
+        VisitBugSnapshot out = pendingVisitBug;
+        pendingVisitBug.active = false;
+        return out;
+    }
+    void startVisitSession(bool asHost, uint8_t siz, uint8_t palette,
+                           uint8_t hunger, uint8_t motivation,
+                           uint8_t str = 1,
+                           uint8_t strCap = 6,
+                           uint8_t temperament = 0,
+                           uint8_t speedX10 = 10,
+                           uint32_t durationMs = VISIT_MAX_MS) {
+        visitSession.active = true;
+        visitSession.asHost = asHost;
+        visitSession.startMs = Hal::ins().millis();
+        visitSession.durationMs = durationMs > VISIT_MAX_MS ? VISIT_MAX_MS : durationMs;
+        if (speedX10 == 0) speedX10 = 10;
+        visitSession.speedX10 = speedX10;
+        visitSession.remoteBug.active = true;
+        visitSession.remoteBug.siz = siz;
+        visitSession.remoteBug.palette = palette;
+        visitSession.remoteBug.hunger = hunger;
+        visitSession.remoteBug.motivation = motivation;
+        visitSession.remoteBug.str = str;
+        visitSession.remoteBug.strCap = strCap < 1 ? 1 : strCap;
+        visitSession.remoteBug.temperament = temperament;
+    }
+    void clearVisitSession() { visitSession = VisitSession(); }
+    void syncVisitTiming(uint32_t remainingMs, uint32_t durationMs, uint8_t speedX10) {
+        if (!visitSession.active) return;
+        if (durationMs == 0 || durationMs > VISIT_MAX_MS) durationMs = VISIT_MAX_MS;
+        if (remainingMs > durationMs) remainingMs = durationMs;
+        if (speedX10 == 0) speedX10 = 10;
+        visitSession.durationMs = durationMs;
+        visitSession.speedX10 = speedX10;
+        uint32_t elapsedMs = durationMs - remainingMs;
+        uint32_t realElapsedMs = (uint32_t)(((uint64_t)elapsedMs * 10ULL) / speedX10);
+        uint32_t now = Hal::ins().millis();
+        visitSession.startMs = now >= realElapsedMs ? now - realElapsedMs : 0;
+    }
+    bool hasActiveVisitSession() {
+        if (!visitSession.active) return false;
+        if (getVisitElapsedMs() >= visitSession.durationMs) {
+            clearVisitSession();
+            return false;
+        }
+        return true;
+    }
+    bool isVisitHost() { return hasActiveVisitSession() && visitSession.asHost; }
+    bool isVisitGuest() { return hasActiveVisitSession() && !visitSession.asHost; }
+    bool isGameSpeedLocked() { return hasActiveVisitSession(); }
+    uint32_t getVisitRemainingMs() {
+        if (!hasActiveVisitSession()) return 0;
+        uint32_t elapsed = getVisitElapsedMs();
+        return elapsed >= visitSession.durationMs ? 0 : visitSession.durationMs - elapsed;
+    }
+    uint32_t getVisitDurationMs() const { return visitSession.durationMs; }
+    const VisitBugSnapshot& getVisitRemoteBug() const { return visitSession.remoteBug; }
+    void setVisitRemoteHunger(uint8_t hunger) {
+        if (hunger > 100) hunger = 100;
+        visitSession.remoteBug.hunger = hunger;
+    }
+
+    uint8_t getGameSpeedX10() const {
+        float speed = gameSpeed;
+        if (speed < 0.1f) speed = 1.0f;
+        uint16_t encoded = (uint16_t)(speed * 10.0f + 0.5f);
+        if (encoded < 1) encoded = 1;
+        if (encoded > 255) encoded = 255;
+        return (uint8_t)encoded;
+    }
+    uint32_t getVisitElapsedMs() const {
+        if (!visitSession.active) return 0;
+        uint32_t realElapsed = Hal::ins().millis() - visitSession.startMs;
+        return (uint32_t)(((uint64_t)realElapsed * visitSession.speedX10) / 10ULL);
+    }
+
     // 本地 NPC 对战上下文
     PendingNpcBattle& pendingNpcBattle() { return npcBattle; }
     void clearPendingNpcBattle() { npcBattle.active = false; }
@@ -281,6 +419,8 @@ private:
 
     LobbyMode lobbyMode = LobbyMode::LOBBY_DEFAULT;
     ItemStack pendingGiftItem;
+    VisitBugSnapshot pendingVisitBug;
+    VisitSession visitSession;
     PendingNpcBattle npcBattle;
     NpcBattleResult npcResult;
 

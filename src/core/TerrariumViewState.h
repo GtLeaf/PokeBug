@@ -27,4 +27,16 @@ struct TerrariumViewState {
     uint32_t restResumeAllowedMs = 0;
     uint32_t foodRefillGraceUntilMs = 0;
     uint32_t alertUntilMs = 0;
+
+    bool visitorActive = false;
+    bool visitorFalling = false;
+    int visitorX = 168;
+    int visitorY = 125;
+    int visitorFromY = -30;
+    int visitorTargetY = 125;
+    uint8_t visitorSiz = 8;
+    uint8_t visitorPalette = 0x80;
+    bool visitorFaceRight = false;
+    uint32_t visitorRemainingMs = 0;
+    uint32_t visitorDropElapsedMs = 0;
 };

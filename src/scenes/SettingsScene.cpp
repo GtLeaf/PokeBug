@@ -69,7 +69,9 @@ bool SettingsScene::onButton(const ButtonEvent& ev) {
                 cycleFontSize();
                 break;
             case ITEM_GAME_SPEED:
-                cycleGameSpeed();
+                if (!GameEngine::ins().isGameSpeedLocked()) {
+                    cycleGameSpeed();
+                }
                 break;
             case ITEM_IDLE_TIME:
                 cycleIdleTime();
@@ -146,6 +148,9 @@ void SettingsScene::renderMenu() {
             PixelRenderer::fillRect(4, y, 4, (int)(8 * fs), PixelRenderer::YELLOW);
         }
 
+        if (i == ITEM_GAME_SPEED && GameEngine::ins().isGameSpeedLocked() && i != cursor) {
+            color = PixelRenderer::GRAY;
+        }
         PixelRenderer::drawPixelText(14, y, items[i], color);
 
         char buf[16];
@@ -177,7 +182,10 @@ void SettingsScene::renderMenu() {
         if (hasValue) {
             PixelRenderer::applyTextStyle(fs);
             int valW = canvas.textWidth(buf);
-            PixelRenderer::drawPixelText(Hal::DISPLAY_W - valW - 8, y, buf, PixelRenderer::CYAN, fs);
+            uint16_t valueColor = (i == ITEM_GAME_SPEED && GameEngine::ins().isGameSpeedLocked())
+                                  ? PixelRenderer::GRAY
+                                  : PixelRenderer::CYAN;
+            PixelRenderer::drawPixelText(Hal::DISPLAY_W - valW - 8, y, buf, valueColor, fs);
         }
 
         if (i < ITEM_COUNT - 1) {

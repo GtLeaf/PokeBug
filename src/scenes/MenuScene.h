@@ -18,7 +18,7 @@ public:
     bool onButton(const ButtonEvent& ev) override;
 
 private:
-    enum class Mode {
+    enum class Mode : uint8_t {
         MAIN,
         BOX,
         WOOD,
@@ -28,10 +28,12 @@ private:
         SOCIAL,
         GIFT,
         FIGHT,
+        VISIT,
         EXPLORE,
         DEBUG,
         DEBUG_STATE,
         DEBUG_ATTR,
+        COUNT,
     };
 
     Mode mode = Mode::MAIN;
@@ -48,28 +50,17 @@ private:
     char toastText[64] = {0};
     uint64_t toastEndMs = 0;
     char cupClosedToast[40] = {0};
-    static int lastSelected;
-    static int lastBoxSelected;
-    static int lastWoodSelected;
-    static int lastBowlSelected;
-    static int lastFoodSelected;
-    static int lastToySelected;
-    static int lastSocialSelected;
-    static int lastGiftSelected;
-    static int lastFightSelected;
-    static int lastExploreSelected;
-    static int lastDebugSelected;
-    static int lastDebugStateSelected;
-    static int lastDebugAttrSelected;
+    static int lastSelectedByMode[(int)Mode::COUNT];
     static constexpr int MAIN_ITEM_COUNT = 7;
     static constexpr int BOX_ITEM_COUNT = 7;
     static constexpr int WOOD_ITEM_COUNT = 7; // None + 5 种风格 + Back
     static constexpr int BOWL_ITEM_COUNT = 4; // 3 种风格 + Back
     static constexpr int FOOD_ITEM_COUNT = 7;
     static constexpr int TOY_ITEM_COUNT = 3; // None + Ball + Back
-    static constexpr int SOCIAL_ITEM_COUNT = 3; // Gift + Fight + Back
+    static constexpr int SOCIAL_ITEM_COUNT = 4; // Gift + Fight + Visit + Back
     static constexpr int GIFT_ITEM_COUNT = 3;   // Send Food + Receive Food + Back
     static constexpr int FIGHT_ITEM_COUNT = 3;  // Create + Search + Back
+    static constexpr int VISIT_ITEM_COUNT = 3;  // Create + Search + Back
     static constexpr int EXPLORE_ITEM_COUNT = 6; // 4 locations + Cup + Back
     static constexpr int DEBUG_ITEM_COUNT = 4; // Beetle + Attr + VS NPC + Back
     static constexpr int DEBUG_STATE_ITEM_COUNT = 3; // Stage + Temper + Back
@@ -93,6 +84,8 @@ private:
     void drawAttrEditDialog();
     void executeSelection();
     void enterMode(Mode nextMode);
+    bool shouldStartSubmenuAtFirst(Mode fromMode, Mode toMode) const;
+    static int modeIndex(Mode mode) { return (int)mode; }
     int itemCount() const;
     const char* itemLabel(int index, char* buf, size_t bufSize) const;
     void saveSettingsNow();
@@ -177,6 +170,7 @@ private:
     enum SocialItem {
         SOCIAL_GIFT = 0,
         SOCIAL_FIGHT,
+        SOCIAL_VISIT,
         SOCIAL_BACK,
     };
 
@@ -190,6 +184,12 @@ private:
         FIGHT_CREATE = 0,
         FIGHT_SEARCH,
         FIGHT_BACK,
+    };
+
+    enum VisitItem {
+        VISIT_CREATE = 0,
+        VISIT_SEARCH,
+        VISIT_BACK,
     };
 
     enum ExploreItem {

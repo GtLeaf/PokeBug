@@ -20,14 +20,20 @@ enum BattleMsgType : uint8_t {
     MSG_JOIN_ACK      = 10,  // 房主确认/拒绝加入
     MSG_BATTLE_READY  = 11,  // 从机汇报节奏输入后的 MOT
     MSG_GIFT_ITEM     = 12,  // 礼物道具
+    MSG_VISIT_RECALL  = 13,  // 访客主动召回甲虫
+    MSG_VISIT_PING    = 14,  // Visit 心跳，用于检测房主是否仍可达
+    MSG_VISIT_STATUS  = 15,  // 房主权威 Visit 状态
+    MSG_VISIT_INTENT  = 16,  // 访客侧互动意图
+    MSG_VISIT_EAT_RESULT = 17, // 房主判定访客进食结果
     MSG_ACK           = 0x80,
 };
 
-static constexpr uint8_t BATTLE_PROTOCOL_VERSION = 3;
+static constexpr uint8_t BATTLE_PROTOCOL_VERSION = 4;
 
 enum RoomPurpose : uint8_t {
     ROOM_PURPOSE_BATTLE = 0,
     ROOM_PURPOSE_GIFT   = 1,
+    ROOM_PURPOSE_VISIT  = 2,
 };
 
 // 房间广播包 9 bytes
@@ -62,7 +68,7 @@ struct __attribute__((packed)) battle_ready_t {
     uint8_t my_mot;         // 从机当前 MOT（含节奏加成）
 };
 
-// 属性同步包 10 bytes
+// 属性同步包 13 bytes
 struct __attribute__((packed)) battle_sync_t {
     uint8_t type;
     uint8_t version;        // BATTLE_PROTOCOL_VERSION
@@ -74,6 +80,9 @@ struct __attribute__((packed)) battle_sync_t {
     uint8_t motivation;
     uint8_t hunger;
     uint8_t palette_id;
+    uint8_t visit_speed_x10;
+    uint8_t str_cap;
+    uint8_t temperament;
 };
 
 // 回合结果包 12 bytes（主机 authoritative，包含双方状态与 ATB 快照）
@@ -106,6 +115,45 @@ struct __attribute__((packed)) gift_item_t {
     uint16_t transfer_id;   // 同一 peer 下用于重试去重
     uint16_t item_id;
     uint8_t amount;
+};
+
+struct __attribute__((packed)) visit_recall_t {
+    uint8_t type;
+    uint8_t version;        // BATTLE_PROTOCOL_VERSION
+};
+
+struct __attribute__((packed)) visit_ping_t {
+    uint8_t type;
+    uint8_t version;        // BATTLE_PROTOCOL_VERSION
+};
+
+struct __attribute__((packed)) visit_status_t {
+    uint8_t type;
+    uint8_t version;        // BATTLE_PROTOCOL_VERSION
+    uint8_t flags;          // bit0=active
+    uint16_t remaining_s;   // 主机权威剩余秒数
+    uint16_t duration_s;    // 主机权威总秒数
+    uint8_t speed_x10;      // 主机游戏速度 * 10
+};
+
+enum VisitIntentCode : uint8_t {
+    VISIT_INTENT_PLAY = 1,
+    VISIT_INTENT_EAT  = 2,
+};
+
+struct __attribute__((packed)) visit_intent_t {
+    uint8_t type;
+    uint8_t version;        // BATTLE_PROTOCOL_VERSION
+    uint8_t intent;
+};
+
+struct __attribute__((packed)) visit_eat_result_t {
+    uint8_t type;
+    uint8_t version;        // BATTLE_PROTOCOL_VERSION
+    uint8_t success;
+    uint8_t hunger_gain;
+    uint8_t new_guest_hunger;
+    uint8_t food_type;
 };
 
 // 确认包 2 bytes
@@ -164,6 +212,11 @@ public:
     bool sendRound(const battle_round_t& round);
     bool sendResult(bool win);
     bool sendGiftItem(uint16_t itemId, uint8_t amount);
+    bool sendVisitRecall();
+    bool sendVisitPing();
+    bool sendVisitStatus(uint32_t remainingMs, uint32_t durationMs, uint8_t speedX10, bool active);
+    bool sendVisitIntent(uint8_t intent);
+    bool sendVisitEatResult(bool success, uint8_t hungerGain, uint8_t newGuestHunger, uint8_t foodType);
 
     // 取出接收到的数据（非阻塞，取一次后清空）
     bool takeReceivedSync(battle_sync_t& out);
@@ -171,6 +224,10 @@ public:
     bool takeReceivedRound(battle_round_t& out);
     bool takeReceivedResult(bool& outWin);
     bool takeReceivedGift(gift_item_t& out);
+    bool takeReceivedVisitRecall();
+    bool takeReceivedVisitStatus(visit_status_t& out);
+    bool takeReceivedVisitIntent(uint8_t& outIntent);
+    bool takeReceivedVisitEatResult(visit_eat_result_t& out);
 
     // 当前发送是否完成/成功
     bool isSending() const { return sendState == SendState::SENDING; }
@@ -239,6 +296,13 @@ private:
     battle_ready_t pendingReadyData;
     bool pendingGift = false;
     gift_item_t pendingGiftData;
+    bool pendingVisitRecall = false;
+    bool pendingVisitStatus = false;
+    visit_status_t pendingVisitStatusData;
+    bool pendingVisitIntent = false;
+    uint8_t pendingVisitIntentData = 0;
+    bool pendingVisitEatResult = false;
+    visit_eat_result_t pendingVisitEatResultData;
     bool lastGiftSeen = false;
     uint8_t lastGiftPeerMac[6] = {0};
     uint16_t lastGiftTransferId = 0;
@@ -271,6 +335,11 @@ private:
     void handleRound(const uint8_t* mac, const battle_round_t& round);
     void handleResult(const uint8_t* mac, const battle_result_t& result);
     void handleGiftItem(const uint8_t* mac, const gift_item_t& gift);
+    void handleVisitRecall(const uint8_t* mac, const visit_recall_t& recall);
+    void handleVisitPing(const uint8_t* mac, const visit_ping_t& ping);
+    void handleVisitStatus(const uint8_t* mac, const visit_status_t& status);
+    void handleVisitIntent(const uint8_t* mac, const visit_intent_t& intent);
+    void handleVisitEatResult(const uint8_t* mac, const visit_eat_result_t& result);
     void handleAck(const uint8_t* mac, const ack_msg_t& ack);
 
     void queueAck(const uint8_t mac[6], uint8_t ackedType);

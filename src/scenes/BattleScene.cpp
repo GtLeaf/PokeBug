@@ -219,7 +219,7 @@ void BattleScene::initFromBug() {
 bool BattleScene::buildSync() {
     Bug& bug = GameEngine::ins().getBug();
     uint8_t hunger = bug.getHunger();
-    battle_sync_t sync;
+    battle_sync_t sync = {};
     sync.type = MSG_BATTLE_SYNC;
     sync.siz = (uint8_t)roundf(bug.getSiz());
     sync.str = battleStatWithHunger(bug.getStr(), hunger);
@@ -229,6 +229,9 @@ bool BattleScene::buildSync() {
     sync.motivation = bug.getMot();
     sync.hunger = hunger;
     sync.palette_id = battlePaletteCode(bug.getTemperament(), bug.getAdultDepth());
+    sync.visit_speed_x10 = 10;
+    sync.str_cap = bug.getStrCap();
+    sync.temperament = (uint8_t)bug.getTemperament();
     return BattleLink::ins().sendSync(sync);
 }
 

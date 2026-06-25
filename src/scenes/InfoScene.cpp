@@ -134,9 +134,7 @@ void InfoScene::renderStatus() {
     PixelRenderer::drawPixelText(marginX, y, buf, PixelRenderer::WHITE, fs);
     y += rowStep;
 
-    snprintf(buf, sizeof(buf), "%s: %d  %s: %d",
-             UiStrings::HUN, bug.getHunger(),
-             UiStrings::DROP, bug.getFoodCount(FoodType::DROP));
+    snprintf(buf, sizeof(buf), "%s: %d", UiStrings::HUN, bug.getHunger());
     PixelRenderer::drawPixelText(marginX, y, buf, PixelRenderer::WHITE, fs);
 }
 

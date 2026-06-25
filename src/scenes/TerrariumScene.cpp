@@ -1,6 +1,7 @@
 #include "TerrariumScene.h"
 #include "../core/GameEngine.h"
 #include "../core/UiStrings.h"
+#include "../hardware/BattleLink.h"
 #include "../hardware/Hal.h"
 #include "../assets/MainSceneAssets.h"
 #include "../assets/HerculesEggSprites.h"
@@ -24,9 +25,43 @@ namespace {
 
 constexpr int PUPA_BOTTOM_MARGIN_PX = 0;
 constexpr int PUPA_POKE_SHAKE_PX = 3;
+constexpr bool VISITOR_DEBUG_LOGS = false;
+constexpr float TOY_BEETLE_HIT_HALF_W = 34.0f;
+constexpr float TOY_BEETLE_HIT_TOP = 44.0f;
+constexpr float TOY_BEETLE_HIT_BOTTOM = 2.0f;
 
 bool isMobileBeetleStage(Stage stage) {
     return stage == Stage::ADULT || stage == Stage::JUVENILE;
+}
+
+bool circleHitsRect(float cx, float cy, float radius,
+                    float left, float top, float right, float bottom) {
+    float closestX = cx;
+    if (closestX < left) closestX = left;
+    if (closestX > right) closestX = right;
+    float closestY = cy;
+    if (closestY < top) closestY = top;
+    if (closestY > bottom) closestY = bottom;
+
+    float dx = cx - closestX;
+    float dy = cy - closestY;
+    return dx * dx + dy * dy <= radius * radius;
+}
+
+const char* adultStateName(AdultState state) {
+    switch (state) {
+        case AdultState::IDLE:        return "IDLE";
+        case AdultState::WALK:        return "WALK";
+        case AdultState::EAT:         return "EAT";
+        case AdultState::TURN:        return "TURN";
+        case AdultState::SLIDE:       return "SLIDE";
+        case AdultState::CLIMB:       return "CLIMB";
+        case AdultState::REST:        return "REST";
+        case AdultState::THREATEN:    return "THREATEN";
+        case AdultState::ATTACK_DOWN: return "ATTACK_DOWN";
+        case AdultState::ATTACK_UP:   return "ATTACK_UP";
+    }
+    return "?";
 }
 
 uint16_t adultHueMain(Temperament temperament) {
@@ -91,6 +126,20 @@ void TerrariumScene::onEnter() {
     animFrame = 0;
     resetPressStart = 0;
     resetting = false;
+    visitRecallConfirm = false;
+    visitPingInFlight = false;
+    visitPingFailures = 0;
+    lastVisitPingMs = Hal::ins().millis();
+    lastVisitStatusMs = Hal::ins().millis();
+    visitorIntentUntilMs = 0;
+    visitorEatRequested = false;
+    lastVisitEatIntentMs = 0;
+    visitEatRetryAfterMs = 0;
+    nextVisitPlayIntentMs = Hal::ins().millis() + random(VISIT_PLAY_INTENT_MIN_MS,
+                                                         VISIT_PLAY_INTENT_MAX_MS + 1);
+    pendingVisitEatResult = false;
+    visitorStateLogInitialized = false;
+    lastVisitorStateLogMs = 0;
     resetToy();
 
     Bug& bug = GameEngine::ins().getBug();
@@ -107,7 +156,7 @@ void TerrariumScene::onEnter() {
         bugX = saved.bugX;
         bugY = saved.bugY;
         animFrame = saved.animFrame;
-        adultState = saved.adultState <= (uint8_t)AdultState::REST ?
+        adultState = saved.adultState <= (uint8_t)AdultState::ATTACK_UP ?
                      (AdultState)saved.adultState : AdultState::IDLE;
         faceRight = saved.faceRight;
         turnTargetFaceRight = saved.turnTargetFaceRight;
@@ -128,10 +177,13 @@ void TerrariumScene::onEnter() {
         foodRefillGraceUntilMs = saved.foodRefillGraceUntilMs;
         alertUntilMs = saved.alertUntilMs;
         mind.resetActivityTimer(Hal::ins().millis());
+        restoreVisitorFromViewState(saved);
+        startPendingVisitIfAny();
         return;
     }
 
     resetLocalViewState();
+    startPendingVisitIfAny();
 }
 
 void TerrariumScene::onExit() {
@@ -165,6 +217,24 @@ void TerrariumScene::persistViewState() {
         state.restResumeAllowedMs = restResumeAllowedMs;
         state.foodRefillGraceUntilMs = foodRefillGraceUntilMs;
         state.alertUntilMs = alertUntilMs;
+
+        uint32_t nowMs = Hal::ins().millis();
+        if (visitor.active && nowMs < visitor.untilMs) {
+            state.visitorActive = true;
+            state.visitorFalling = visitor.falling;
+            state.visitorX = visitor.x;
+            state.visitorY = visitor.y;
+            state.visitorFromY = visitor.fromY;
+            state.visitorTargetY = visitor.targetY;
+            state.visitorSiz = visitor.siz;
+            state.visitorPalette = visitor.palette;
+            state.visitorFaceRight = visitor.faceRight;
+            state.visitorRemainingMs = visitor.untilMs - nowMs;
+            state.visitorDropElapsedMs = visitor.falling ? nowMs - visitor.startMs : VISITOR_DROP_MS;
+            if (state.visitorDropElapsedMs > VISITOR_DROP_MS) {
+                state.visitorDropElapsedMs = VISITOR_DROP_MS;
+            }
+        }
         GameEngine::ins().saveTerrariumViewState(state);
     } else {
         GameEngine::ins().clearTerrariumViewState();
@@ -203,6 +273,692 @@ void TerrariumScene::resetLocalViewState() {
     setIdleDuration();
 }
 
+void TerrariumScene::restoreVisitorFromViewState(const TerrariumViewState& saved) {
+    visitor.active = false;
+    if (!saved.visitorActive || saved.visitorRemainingMs == 0) return;
+
+    uint32_t nowMs = Hal::ins().millis();
+    visitor.active = true;
+    visitor.falling = saved.visitorFalling;
+    visitor.x = saved.visitorX;
+    visitor.y = saved.visitorY;
+    visitor.fromY = saved.visitorFromY;
+    visitor.targetY = saved.visitorTargetY;
+    visitor.siz = saved.visitorSiz;
+    visitor.palette = saved.visitorPalette;
+    visitor.str = 1;
+    visitor.strCap = 6;
+    visitor.temperament = visitor.palette & 0x07;
+    visitor.faceRight = saved.visitorFaceRight;
+    visitor.untilMs = nowMs + saved.visitorRemainingMs;
+    beginActorWalkTo(visitor.actor, visitor.x);
+    visitor.actor.state = AdultState::IDLE;
+    visitor.nextStepMs = nowMs + VISITOR_STEP_MS;
+    visitor.nextWanderMs = nowMs + random(VISITOR_IDLE_MIN_MS, VISITOR_IDLE_MAX_MS + 1);
+    visitor.turning = false;
+
+    if (visitor.falling) {
+        uint32_t dropElapsed = saved.visitorDropElapsedMs;
+        if (dropElapsed >= VISITOR_DROP_MS) {
+            visitor.falling = false;
+            visitor.y = visitor.targetY;
+            visitor.startMs = nowMs >= VISITOR_DROP_MS ? nowMs - VISITOR_DROP_MS : 0;
+        } else {
+            visitor.startMs = nowMs >= dropElapsed ? nowMs - dropElapsed : 0;
+        }
+    } else {
+        visitor.y = visitor.targetY;
+        visitor.startMs = nowMs >= VISITOR_DROP_MS ? nowMs - VISITOR_DROP_MS : 0;
+    }
+    logVisitorState("restore", nowMs);
+}
+
+void TerrariumScene::startPendingVisitIfAny() {
+    GameEngine& engine = GameEngine::ins();
+    if (engine.hasActiveVisitSession()) {
+        uint32_t remainingMs = engine.getVisitRemainingMs();
+        if (remainingMs == 0) {
+            visitor.active = false;
+            return;
+        }
+
+        if (!engine.isVisitHost()) {
+            visitor.active = false;
+            return;
+        }
+
+        const VisitBugSnapshot& remote = engine.getVisitRemoteBug();
+        if (visitor.active) {
+            visitor.untilMs = Hal::ins().millis() + remainingMs;
+            return;
+        }
+
+        Bug& bug = engine.getBug();
+        if (!isMobileBeetleStage(bug.getStage()) || bug.isDead()) {
+            visitor.active = false;
+            return;
+        }
+
+        uint32_t nowMs = Hal::ins().millis();
+        visitor.active = true;
+        visitor.falling = true;
+        visitor.siz = remote.siz;
+        visitor.palette = remote.palette;
+        visitor.str = remote.str;
+        visitor.strCap = remote.strCap;
+        visitor.temperament = remote.temperament;
+        visitor.x = bugX < 120 ? 170 : 70;
+        visitor.fromY = TOY_TANK_TOP - 34;
+        visitor.targetY = GROUND_Y;
+        visitor.y = visitor.fromY;
+        visitor.faceRight = visitor.x < bugX;
+        visitor.startMs = nowMs;
+        visitor.untilMs = nowMs + remainingMs;
+        beginActorWalkTo(visitor.actor, visitor.x);
+        visitor.actor.state = AdultState::IDLE;
+        visitor.nextStepMs = nowMs + VISITOR_STEP_MS;
+        visitor.nextWanderMs = 0;
+        visitor.turning = false;
+        chooseVisitorTarget();
+        logVisitorState("spawn-session", nowMs);
+        return;
+    }
+
+    if (!GameEngine::ins().hasPendingVisitBug()) return;
+
+    VisitBugSnapshot pending = GameEngine::ins().takePendingVisitBug();
+    Bug& bug = GameEngine::ins().getBug();
+    if (!isMobileBeetleStage(bug.getStage()) || bug.isDead()) {
+        visitor.active = false;
+        return;
+    }
+
+    uint32_t nowMs = Hal::ins().millis();
+    visitor.active = true;
+    visitor.falling = true;
+    visitor.siz = pending.siz;
+    visitor.palette = pending.palette;
+    visitor.str = pending.str;
+    visitor.strCap = pending.strCap;
+    visitor.temperament = pending.temperament;
+    visitor.x = bugX < 120 ? 170 : 70;
+    visitor.fromY = TOY_TANK_TOP - 34;
+    visitor.targetY = GROUND_Y;
+    visitor.y = visitor.fromY;
+    visitor.faceRight = visitor.x < bugX;
+    visitor.startMs = nowMs;
+    visitor.untilMs = nowMs + GameEngine::VISIT_MAX_MS;
+    beginActorWalkTo(visitor.actor, visitor.x);
+    visitor.actor.state = AdultState::IDLE;
+    visitor.nextStepMs = nowMs + VISITOR_STEP_MS;
+    visitor.nextWanderMs = 0;
+    visitor.turning = false;
+    chooseVisitorTarget();
+    logVisitorState("spawn-pending", nowMs);
+}
+
+void TerrariumScene::updateVisitor(uint32_t nowMs) {
+    if (!visitor.active) return;
+    if (nowMs >= visitor.untilMs) {
+        visitor.active = false;
+        return;
+    }
+
+    if (visitor.falling) {
+        uint32_t elapsed = nowMs - visitor.startMs;
+        if (elapsed >= VISITOR_DROP_MS) {
+            visitor.falling = false;
+            visitor.y = visitor.targetY;
+            visitor.actor.stateTimer = 0;
+            visitor.nextStepMs = nowMs + VISITOR_STEP_MS;
+            logVisitorState("landed", nowMs);
+        } else {
+            float t = (float)elapsed / (float)VISITOR_DROP_MS;
+            float ease = 1.0f - (1.0f - t) * (1.0f - t);
+            visitor.y = (int)(visitor.fromY + (visitor.targetY - visitor.fromY) * ease);
+        }
+    } else {
+        visitor.y = visitor.targetY;
+        if (visitor.actor.state != AdultState::TURN && visitor.turning) {
+            logVisitorState("clear-stale-turning", nowMs);
+            visitor.turning = false;
+        }
+        visitor.actor.stateTimer++;
+        if (!visitorStateLogInitialized ||
+            visitor.actor.state != visitorLastLoggedState ||
+            (visitor.actor.state == AdultState::TURN &&
+             nowMs - lastVisitorStateLogMs >= 700)) {
+            logVisitorState("tick", nowMs);
+        }
+        if (visitor.actor.state == AdultState::THREATEN) {
+            if (nowMs >= visitor.actor.threatenEndMs) {
+                visitor.actor.state = AdultState::IDLE;
+                visitor.actor.stateTimer = 0;
+                scheduleVisitorWander(nowMs);
+                logVisitorState("threaten-done", nowMs);
+            }
+            return;
+        }
+        if (visitor.actor.state == AdultState::ATTACK_DOWN) {
+            return;
+        }
+        if (visitor.actor.state == AdultState::ATTACK_UP) {
+            if (nowMs - visitorToyAttackStartMs >= TOY_ATTACK_UP_MS) {
+                visitor.actor.state = AdultState::IDLE;
+                visitor.actor.stateTimer = 0;
+                scheduleVisitorWander(nowMs);
+                logVisitorState("attack-done", nowMs);
+            }
+            return;
+        }
+        if (visitor.actor.state == AdultState::EAT) {
+            if (visitor.actor.stateTimer >= visitor.actor.stateDuration) {
+                visitor.actor.state = AdultState::IDLE;
+                visitor.actor.stateTimer = 0;
+                scheduleVisitorWander(nowMs);
+                logVisitorState("eat-done", nowMs);
+            }
+            return;
+        }
+        if (nowMs >= visitor.nextStepMs) {
+            if (visitor.turning) {
+                if (nowMs - visitor.turnStartMs >= VISITOR_TURN_MS) {
+                    visitor.turning = false;
+                    visitor.faceRight = visitor.turnTargetFaceRight;
+                    visitor.actor.stateTimer = 0;
+                    if (visitor.actor.slideAfterTurn) {
+                        visitor.actor.slideAfterTurn = false;
+                        visitor.actor.state = AdultState::SLIDE;
+                    } else if (visitor.actor.climbAfterTurn) {
+                        visitor.actor.climbAfterTurn = false;
+                        visitor.actor.state = AdultState::CLIMB;
+                    } else if (visitor.actor.walkAfterTurn &&
+                               abs(visitor.x - visitor.targetX) > 1) {
+                        visitor.actor.state = AdultState::WALK;
+                    } else {
+                        visitor.actor.state = AdultState::IDLE;
+                    }
+                    logVisitorState("turn-done", nowMs);
+                } else {
+                    visitor.nextStepMs = nowMs + VISITOR_STEP_MS;
+                    return;
+                }
+            }
+
+            if (visitor.actor.state == AdultState::SLIDE) {
+                int dx = (visitor.actor.slideTargetX > visitor.x) ? 1 : -1;
+                visitor.faceRight = dx > 0;
+                visitor.x += dx * TILT_SLIDE_STEP;
+                if (visitor.x < MIN_X) visitor.x = MIN_X;
+                if (visitor.x > MAX_X) visitor.x = MAX_X;
+                if (visitor.x == visitor.actor.slideTargetX ||
+                    (dx > 0 && visitor.x >= visitor.actor.slideTargetX) ||
+                    (dx < 0 && visitor.x <= visitor.actor.slideTargetX)) {
+                    bool needFaceRight = visitor.actor.tiltHighSideIsRight;
+                    if (needFaceRight != visitor.faceRight) {
+                        beginActorTurn(visitor.actor, needFaceRight, true, nowMs, VISITOR_TURN_MS);
+                        visitor.actor.climbAfterTurn = true;
+                    } else {
+                        visitor.actor.state = AdultState::CLIMB;
+                        visitor.actor.stateTimer = 0;
+                        logVisitorState("slide-to-climb", nowMs);
+                    }
+                }
+                visitor.nextStepMs = nowMs + VISITOR_STEP_MS;
+                return;
+            }
+
+            if (visitor.actor.state == AdultState::CLIMB) {
+                if (abs(visitor.actor.climbTargetX - visitor.x) <= 1) {
+                    visitor.actor.state = AdultState::IDLE;
+                    visitor.actor.stateTimer = 0;
+                    scheduleVisitorWander(nowMs);
+                    visitor.nextStepMs = nowMs + VISITOR_STEP_MS;
+                    logVisitorState("climb-done", nowMs);
+                    return;
+                }
+                int dx = (visitor.actor.climbTargetX > visitor.x) ? 1 : -1;
+                visitor.faceRight = dx > 0;
+                if ((visitor.actor.stateTimer % TILT_CLIMB_SPEED_INTERVAL) == 0) {
+                    visitor.x += dx;
+                    if (visitor.x < MIN_X) visitor.x = MIN_X;
+                    if (visitor.x > MAX_X) visitor.x = MAX_X;
+                }
+                if (abs(visitor.actor.climbTargetX - visitor.x) <= 1) {
+                    visitor.actor.state = AdultState::IDLE;
+                    visitor.actor.stateTimer = 0;
+                    scheduleVisitorWander(nowMs);
+                    logVisitorState("climb-done", nowMs);
+                }
+                visitor.nextStepMs = nowMs + VISITOR_STEP_MS;
+                return;
+            }
+
+            if (abs(visitor.x - visitor.targetX) <= 1) {
+                if (visitor.nextWanderMs == 0) {
+                    visitor.actor.state = AdultState::IDLE;
+                    scheduleVisitorWander(nowMs);
+                    logVisitorState("arrived-idle", nowMs);
+                }
+                if (nowMs < visitor.nextWanderMs) {
+                    visitor.nextStepMs = nowMs + VISITOR_STEP_MS;
+                    return;
+                }
+                visitor.nextWanderMs = 0;
+                chooseVisitorTarget();
+            }
+            if (visitor.x < visitor.targetX) {
+                if (!visitor.faceRight) {
+                    beginActorTurn(visitor.actor, true, true, nowMs, VISITOR_TURN_MS);
+                    visitor.nextStepMs = nowMs + VISITOR_STEP_MS;
+                    return;
+                }
+                visitor.actor.state = AdultState::WALK;
+                visitor.x++;
+            } else if (visitor.x > visitor.targetX) {
+                if (visitor.faceRight) {
+                    beginActorTurn(visitor.actor, false, true, nowMs, VISITOR_TURN_MS);
+                    visitor.nextStepMs = nowMs + VISITOR_STEP_MS;
+                    return;
+                }
+                visitor.actor.state = AdultState::WALK;
+                visitor.x--;
+            }
+            visitor.nextStepMs = nowMs + (nowMs < visitorIntentUntilMs ? VISITOR_INTENT_STEP_MS : VISITOR_STEP_MS);
+        }
+    }
+}
+
+void TerrariumScene::chooseVisitorTarget() {
+    int left = MIN_X + 8;
+    int right = MAX_X - 8;
+    if (left >= right) {
+        beginActorWalkTo(visitor.actor, visitor.x);
+        visitor.actor.state = AdultState::IDLE;
+        logVisitorState("choose-idle", Hal::ins().millis());
+        return;
+    }
+
+    int next = random(left, right + 1);
+    if (abs(next - bugX) < 32) {
+        next = bugX < (left + right) / 2 ? random((left + right) / 2, right + 1)
+                                         : random(left, (left + right) / 2 + 1);
+    }
+    beginActorWalkTo(visitor.actor, next);
+    visitor.actor.state = AdultState::WALK;
+    logVisitorState("choose-target", Hal::ins().millis());
+}
+
+void TerrariumScene::scheduleVisitorWander(uint32_t nowMs) {
+    visitor.nextWanderMs = nowMs + random(VISITOR_IDLE_MIN_MS, VISITOR_IDLE_MAX_MS + 1);
+}
+
+void TerrariumScene::logVisitorState(const char* reason, uint32_t nowMs) {
+    visitorLastLoggedState = visitor.actor.state;
+    visitorStateLogInitialized = true;
+    lastVisitorStateLogMs = nowMs;
+    if (!VISITOR_DEBUG_LOGS) return;
+
+    int32_t nextStepIn = (int32_t)(visitor.nextStepMs - nowMs);
+    int32_t nextWanderIn = visitor.nextWanderMs == 0 ? 0 : (int32_t)(visitor.nextWanderMs - nowMs);
+    int32_t intentIn = visitorIntentUntilMs == 0 ? 0 : (int32_t)(visitorIntentUntilMs - nowMs);
+    Serial.printf("[Visitor] %s state=%s x=%d target=%d face=%u turnTarget=%u turning=%u fall=%u timer=%lu dur=%lu nextStep=%ld wander=%ld intent=%ld\n",
+                  reason,
+                  adultStateName(visitor.actor.state),
+                  visitor.x,
+                  visitor.targetX,
+                  visitor.faceRight ? 1 : 0,
+                  visitor.turnTargetFaceRight ? 1 : 0,
+                  visitor.turning ? 1 : 0,
+                  visitor.falling ? 1 : 0,
+                  (unsigned long)visitor.actor.stateTimer,
+                  (unsigned long)visitor.actor.stateDuration,
+                  (long)nextStepIn,
+                  (long)nextWanderIn,
+                  (long)intentIn);
+}
+
+void TerrariumScene::guideVisitorWalkTo(int targetX, uint32_t nowMs) {
+    beginActorWalkTo(visitor.actor, targetX);
+    visitor.nextWanderMs = 0;
+    visitorIntentUntilMs = nowMs + VISITOR_INTENT_MS;
+
+    if (visitor.actor.state == AdultState::TURN ||
+        visitor.actor.state == AdultState::THREATEN ||
+        visitor.actor.state == AdultState::ATTACK_DOWN ||
+        visitor.actor.state == AdultState::ATTACK_UP ||
+        visitor.actor.state == AdultState::EAT) {
+        logVisitorState("guide-defer", nowMs);
+        return;
+    }
+
+    visitor.actor.state = AdultState::WALK;
+    visitor.actor.stateTimer = 0;
+    visitor.turning = false;
+    visitor.nextStepMs = nowMs;
+    logVisitorState("guide-walk", nowMs);
+}
+
+void TerrariumScene::beginActorTurn(AdultBeetleActor& actor, bool targetFaceRight,
+                                    bool continueWalking, uint32_t timer,
+                                    uint32_t duration) {
+    actor.state = AdultState::TURN;
+    actor.turnTargetFaceRight = targetFaceRight;
+    actor.walkAfterTurn = continueWalking;
+    actor.slideAfterTurn = false;
+    actor.climbAfterTurn = false;
+    if (!continueWalking) actor.walkTargetIsRest = false;
+    actor.turnFrameIndex = random(HerculesAdultSprites::TURN_FRAME_COUNT);
+    actor.stateTimer = 0;
+    actor.stateDuration = duration;
+    actor.turning = true;
+    actor.turnStartMs = timer;
+    if (&actor == &visitor.actor) {
+        logVisitorState("turn-start", timer);
+    }
+}
+
+void TerrariumScene::beginActorWalkTo(AdultBeetleActor& actor, int x) {
+    actor.targetX = x;
+    if (actor.targetX < MIN_X) actor.targetX = MIN_X;
+    if (actor.targetX > MAX_X) actor.targetX = MAX_X;
+}
+
+bool TerrariumScene::chooseVisitorForHostInteraction() const {
+    bool available = visitor.active && !visitor.falling;
+    bool selected = available && random(2) == 0;
+    if (VISITOR_DEBUG_LOGS) {
+        Serial.printf("[Visitor] choose-interaction available=%u selected=%u x=%d state=%s\n",
+                      available ? 1 : 0,
+                      selected ? 1 : 0,
+                      visitor.x,
+                      adultStateName(visitor.actor.state));
+    }
+    return selected;
+}
+
+int TerrariumScene::hostInteractionTargetX(bool targetVisitor) const {
+    return targetVisitor ? visitor.x : bugX;
+}
+
+float TerrariumScene::hostInteractionTargetScale(bool targetVisitor) const {
+    return targetVisitor ? visitorAdultScale() : GameEngine::ins().getBug().getAdultScale();
+}
+
+void TerrariumScene::reactVisitorToHostPoke(uint32_t nowMs) {
+    int dir = pokeFingerFromRight ? -1 : 1;
+    visitor.x += dir * 5;
+    if (visitor.x < MIN_X) visitor.x = MIN_X;
+    if (visitor.x > MAX_X) visitor.x = MAX_X;
+    visitor.faceRight = pokeFingerFromRight;
+    beginActorWalkTo(visitor.actor, visitor.x);
+    visitor.actor.state = AdultState::THREATEN;
+    visitor.actor.stateTimer = 0;
+    visitor.actor.stateDuration = POKE_REACTION_MS;
+    visitor.actor.threatenStartMs = nowMs;
+    visitor.actor.threatenEndMs = nowMs + POKE_REACTION_MS;
+    visitorIntentUntilMs = nowMs + VISITOR_INTENT_MS;
+    visitor.turning = false;
+    visitor.nextWanderMs = visitor.actor.threatenEndMs;
+    logVisitorState("poke-threaten", nowMs);
+}
+
+void TerrariumScene::applyTiltToVisitor(TiltDir dir, float magnitude) {
+    if (!visitor.active || visitor.falling) return;
+    if (visitor.actor.state == AdultState::EAT) return;
+    if (visitor.actor.state == AdultState::TURN) {
+        logVisitorState("tilt-defer-turn", Hal::ins().millis());
+        return;
+    }
+    if (visitor.actor.state == AdultState::ATTACK_DOWN ||
+        visitor.actor.state == AdultState::ATTACK_UP) {
+        return;
+    }
+    if (visitor.actor.state == AdultState::THREATEN &&
+        magnitude <= TILT_SLIDE_THRESHOLD_G) {
+        return;
+    }
+
+    uint32_t nowMs = Hal::ins().millis();
+    bool lowIsLeft = (dir == TiltDir::LEFT);
+    visitor.actor.tiltHighSideIsRight = !lowIsLeft;
+
+    int highTarget = visitor.x + (visitor.actor.tiltHighSideIsRight
+                                  ? TILT_CLIMB_DISTANCE
+                                  : -TILT_CLIMB_DISTANCE);
+    if (highTarget < MIN_X) highTarget = MIN_X;
+    if (highTarget > MAX_X) highTarget = MAX_X;
+    visitor.actor.climbTargetX = highTarget;
+
+    visitor.nextWanderMs = 0;
+    visitor.nextStepMs = nowMs;
+    visitorIntentUntilMs = nowMs + VISITOR_INTENT_MS;
+
+    if (magnitude > TILT_SLIDE_THRESHOLD_G) {
+        int lowTarget = visitor.x + (lowIsLeft ? -TILT_SLIDE_DISTANCE : TILT_SLIDE_DISTANCE);
+        if (lowTarget < MIN_X) lowTarget = MIN_X;
+        if (lowTarget > MAX_X) lowTarget = MAX_X;
+        visitor.actor.slideTargetX = lowTarget;
+
+        bool needFaceRight = !visitor.actor.tiltHighSideIsRight;
+        if (needFaceRight != visitor.faceRight) {
+            beginActorTurn(visitor.actor, needFaceRight, true, nowMs, VISITOR_TURN_MS);
+            visitor.actor.slideAfterTurn = true;
+            logVisitorState("tilt-slide-turn", nowMs);
+        } else {
+            visitor.actor.state = AdultState::SLIDE;
+            visitor.actor.stateTimer = 0;
+            visitor.turning = false;
+            logVisitorState("tilt-slide", nowMs);
+        }
+        return;
+    }
+
+    bool needFaceRight = visitor.actor.tiltHighSideIsRight;
+    if (needFaceRight != visitor.faceRight) {
+        beginActorTurn(visitor.actor, needFaceRight, true, nowMs, VISITOR_TURN_MS);
+        visitor.actor.climbAfterTurn = true;
+        logVisitorState("tilt-climb-turn", nowMs);
+    } else {
+        visitor.actor.state = AdultState::CLIMB;
+        visitor.actor.stateTimer = 0;
+        visitor.turning = false;
+        logVisitorState("tilt-climb", nowMs);
+    }
+}
+
+void TerrariumScene::updateVisitGuestLink(uint32_t nowMs) {
+    BattleLink& link = BattleLink::ins();
+    if (!link.isBattlePeerSet()) {
+        GameEngine::ins().clearVisitSession();
+        visitRecallConfirm = false;
+        Serial.println("[Terrarium] Visit auto recalled: no peer");
+        return;
+    }
+
+    visit_status_t status;
+    if (link.takeReceivedVisitStatus(status)) {
+        if ((status.flags & 1) == 0 || status.remaining_s == 0) {
+            GameEngine::ins().clearVisitSession();
+            visitRecallConfirm = false;
+            visitPingInFlight = false;
+            Serial.println("[Terrarium] Visit ended by host status");
+            return;
+        }
+        GameEngine::ins().syncVisitTiming((uint32_t)status.remaining_s * 1000UL,
+                                          (uint32_t)status.duration_s * 1000UL,
+                                          status.speed_x10);
+        if (GameEngine::ins().setGameSpeedFromX10(status.speed_x10)) {
+            GameEngine::ins().saveSettingsSnapshot();
+            Serial.printf("[Terrarium] Visit guest synced host game speed=%u\n",
+                          status.speed_x10);
+        }
+        visitPingFailures = 0;
+        lastVisitPingMs = nowMs;
+    }
+
+    visit_eat_result_t eatResult;
+    if (link.takeReceivedVisitEatResult(eatResult)) {
+        if (eatResult.success && eatResult.hunger_gain > 0) {
+            GameEngine::ins().getBug().modHunger((int8_t)eatResult.hunger_gain);
+            GameEngine::ins().forceSave();
+            visitEatRetryAfterMs = nowMs + 2000;
+            Serial.printf("[Terrarium] Visit eat success gain=%u localHun=%u\n",
+                          eatResult.hunger_gain,
+                          GameEngine::ins().getBug().getHunger());
+        } else {
+            visitEatRetryAfterMs = nowMs + VISIT_EAT_FAIL_RETRY_MS;
+            Serial.println("[Terrarium] Visit eat failed");
+        }
+    }
+
+    if (visitPingInFlight && !link.isSending()) {
+        bool ok = link.takeLastSendSuccess();
+        visitPingInFlight = false;
+        lastVisitPingMs = nowMs;
+        if (ok) {
+            visitPingFailures = 0;
+        } else if (++visitPingFailures >= VISIT_PING_MAX_FAILURES) {
+            GameEngine::ins().clearVisitSession();
+            visitRecallConfirm = false;
+            Serial.println("[Terrarium] Visit auto recalled: host unreachable");
+            return;
+        }
+    }
+
+    if (!visitPingInFlight &&
+        nowMs - lastVisitPingMs >= VISIT_PING_INTERVAL_MS &&
+        link.sendVisitPing()) {
+        visitPingInFlight = true;
+    }
+
+    Bug& bug = GameEngine::ins().getBug();
+    if (bug.getHunger() < VISIT_EAT_HUNGER_THRESHOLD &&
+        nowMs >= visitEatRetryAfterMs &&
+        nowMs - lastVisitEatIntentMs >= VISIT_EAT_INTENT_INTERVAL_MS &&
+        !link.isSending() &&
+        link.sendVisitIntent(VISIT_INTENT_EAT)) {
+        lastVisitEatIntentMs = nowMs;
+        return;
+    }
+
+    if (nowMs >= nextVisitPlayIntentMs && !link.isSending() &&
+        link.sendVisitIntent(VISIT_INTENT_PLAY)) {
+        nextVisitPlayIntentMs = nowMs + random(VISIT_PLAY_INTENT_MIN_MS,
+                                               VISIT_PLAY_INTENT_MAX_MS + 1);
+    }
+}
+
+void TerrariumScene::updateVisitHostLink(uint32_t nowMs) {
+    BattleLink& link = BattleLink::ins();
+    uint8_t intent = 0;
+    while (link.takeReceivedVisitIntent(intent)) {
+        applyVisitIntent(intent, nowMs);
+    }
+    updateVisitorEating(nowMs);
+
+    if (!link.isBattlePeerSet() || link.isSending()) return;
+    if (flushVisitEatResult()) return;
+    if (nowMs - lastVisitStatusMs < VISIT_STATUS_INTERVAL_MS) return;
+    if (link.sendVisitStatus(GameEngine::ins().getVisitRemainingMs(),
+                             GameEngine::ins().getVisitDurationMs(),
+                             GameEngine::ins().getGameSpeedX10(),
+                             GameEngine::ins().isVisitHost())) {
+        lastVisitStatusMs = nowMs;
+    }
+}
+
+void TerrariumScene::applyVisitIntent(uint8_t intent, uint32_t nowMs) {
+    if (!visitor.active || visitor.falling) return;
+    if (intent == VISIT_INTENT_EAT) {
+        visitorEatRequested = true;
+        visitorIntentUntilMs = nowMs + VISITOR_INTENT_MS;
+        if (GameEngine::ins().getBug().hasFoodInTray() &&
+            GameEngine::ins().getBug().getFoodAmount() > 0) {
+            guideVisitorWalkTo(FOOD_X, nowMs);
+        } else {
+            queueVisitEatResult(false, 0, GameEngine::ins().getVisitRemoteBug().hunger, 0);
+            visitorEatRequested = false;
+            logVisitorState("intent-eat-no-food", nowMs);
+        }
+        Serial.println("[Terrarium] Visit eat intent received");
+        return;
+    }
+    if (intent != VISIT_INTENT_PLAY) return;
+    visitorIntentUntilMs = nowMs + VISITOR_INTENT_MS;
+    if (toyVisible) {
+        guideVisitorWalkTo((int)roundf(toyX), nowMs);
+    } else {
+        chooseVisitorTarget();
+        visitor.nextStepMs = nowMs;
+        logVisitorState("intent-play-no-toy", nowMs);
+    }
+    Serial.println("[Terrarium] Visit intent applied");
+}
+
+void TerrariumScene::updateVisitorEating(uint32_t nowMs) {
+    if (!visitorEatRequested || !visitor.active || visitor.falling) return;
+
+    Bug& bug = GameEngine::ins().getBug();
+    if (!bug.hasFoodInTray() || bug.getFoodAmount() == 0) {
+        queueVisitEatResult(false, 0, GameEngine::ins().getVisitRemoteBug().hunger, 0);
+        visitorEatRequested = false;
+        visitor.actor.state = AdultState::IDLE;
+        logVisitorState("eat-no-food", nowMs);
+        return;
+    }
+
+    guideVisitorWalkTo(FOOD_X, nowMs);
+    if (abs(visitor.x - FOOD_X) > VISITOR_EAT_DISTANCE_PX) return;
+
+    uint8_t gain = 0;
+    FoodType foodType = bug.getFoodInTrayType();
+    if (!bug.consumeTrayBiteForVisitor(gain, foodType)) {
+        queueVisitEatResult(false, 0, GameEngine::ins().getVisitRemoteBug().hunger, (uint8_t)foodType);
+        visitorEatRequested = false;
+        visitor.actor.state = AdultState::IDLE;
+        logVisitorState("eat-failed", nowMs);
+        return;
+    }
+
+    uint8_t newHunger = GameEngine::ins().getVisitRemoteBug().hunger;
+    uint16_t h = (uint16_t)newHunger + gain;
+    newHunger = h > 100 ? 100 : (uint8_t)h;
+    GameEngine::ins().setVisitRemoteHunger(newHunger);
+    queueVisitEatResult(true, gain, newHunger, (uint8_t)foodType);
+    visitorEatRequested = false;
+    visitor.actor.state = AdultState::EAT;
+    visitor.actor.stateTimer = 0;
+    visitor.actor.stateDuration = EAT_MIN_EXIT_FRAMES;
+    visitor.faceRight = false;
+    beginActorWalkTo(visitor.actor, visitor.x);
+    logVisitorState("eat-start", nowMs);
+    GameEngine::ins().forceSave();
+    Serial.printf("[Terrarium] Visitor ate food=%u gain=%u newHun=%u\n",
+                  (uint8_t)foodType, gain, newHunger);
+}
+
+void TerrariumScene::queueVisitEatResult(bool success, uint8_t hungerGain,
+                                         uint8_t newGuestHunger, uint8_t foodType) {
+    pendingVisitEatResult = true;
+    pendingVisitEatSuccess = success;
+    pendingVisitEatGain = hungerGain;
+    pendingVisitEatHunger = newGuestHunger > 100 ? 100 : newGuestHunger;
+    pendingVisitEatFood = foodType;
+}
+
+bool TerrariumScene::flushVisitEatResult() {
+    if (!pendingVisitEatResult) return false;
+    if (!BattleLink::ins().sendVisitEatResult(pendingVisitEatSuccess,
+                                              pendingVisitEatGain,
+                                              pendingVisitEatHunger,
+                                              pendingVisitEatFood)) {
+        return false;
+    }
+    pendingVisitEatResult = false;
+    return true;
+}
+
 void TerrariumScene::resetToy() {
     toyType = toyTypeForStyle(GameEngine::ins().getToyStyle());
     const ToySpec& spec = currentToySpec();
@@ -220,9 +976,19 @@ void TerrariumScene::resetToy() {
     toyLastHitMs = 0;
     toyAttackStartMs = 0;
     toyCharging = false;
+    visitorToyCharging = false;
     toyChargeStartMs = 0;
     toyChargeDurationMs = 0;
     toyChargeDir = 1;
+    visitorToyChargeStartMs = 0;
+    visitorToyChargeDurationMs = 0;
+    visitorToyChargeDir = 1;
+    visitorToyAttackStartMs = 0;
+    if (visitor.actor.state == AdultState::ATTACK_DOWN ||
+        visitor.actor.state == AdultState::ATTACK_UP) {
+        visitor.actor.state = AdultState::IDLE;
+        visitor.actor.stateTimer = 0;
+    }
     toyNoCatchUntilMs = 0;
 }
 
@@ -320,6 +1086,28 @@ float TerrariumScene::toyStrengthPower(const Bug& bug) const {
     return power;
 }
 
+Temperament TerrariumScene::visitorTemperament() const {
+    uint8_t t = visitor.temperament;
+    if (t > (uint8_t)Temperament::SPIRIT) t = visitor.palette & 0x07;
+    if (t > (uint8_t)Temperament::SPIRIT) t = (uint8_t)Temperament::BALANCED;
+    return (Temperament)t;
+}
+
+float TerrariumScene::visitorToyStrengthPower() const {
+    float cap = visitor.strCap < 1 ? 1.0f : (float)visitor.strCap;
+    float ratio = cap <= 1.0f ? 0.0f : ((float)visitor.str - 1.0f) / (cap - 1.0f);
+    if (ratio < 0.0f) ratio = 0.0f;
+    if (ratio > 1.0f) ratio = 1.0f;
+
+    Temperament temperament = visitorTemperament();
+    float power = 0.55f + ratio * 0.75f;
+    if (temperament == Temperament::BRUTE) power += 0.12f;
+    if (temperament == Temperament::SPIRIT) power -= 0.08f;
+    if (power < 0.42f) power = 0.42f;
+    if (power > 1.35f) power = 1.35f;
+    return power;
+}
+
 void TerrariumScene::startToyCharge(uint32_t nowMs, int pushDir) {
     Bug& bug = GameEngine::ins().getBug();
     if (pushDir == 0) pushDir = faceRight ? 1 : -1;
@@ -349,6 +1137,36 @@ void TerrariumScene::startToyCharge(uint32_t nowMs, int pushDir) {
     walkTargetIsRest = false;
 }
 
+void TerrariumScene::startVisitorToyCharge(uint32_t nowMs, int pushDir) {
+    if (!visitor.active || visitor.falling) return;
+    Temperament temperament = visitorTemperament();
+    if (pushDir == 0) pushDir = visitor.faceRight ? 1 : -1;
+    if (random(100) >= toyInterestPercent(temperament)) {
+        deflectToyFromVisitor(nowMs, pushDir);
+        toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_REBOUND_MS;
+        return;
+    }
+
+    const ToySpec& spec = currentToySpec();
+    visitor.faceRight = pushDir > 0;
+    visitorToyCharging = true;
+    visitorToyChargeStartMs = nowMs;
+    visitorToyChargeDurationMs = toyChargeDurationFor(temperament);
+    visitorToyChargeDir = pushDir;
+    visitor.actor.state = AdultState::ATTACK_DOWN;
+    visitor.actor.stateTimer = 0;
+    visitor.actor.stateDuration = (visitorToyChargeDurationMs / 50) + 8;
+    visitor.turning = false;
+    visitor.nextWanderMs = 0;
+    toyVx = 0.0f;
+    toyVy = 0.0f;
+    toySpin = 0.0f;
+    toyX = visitor.x + pushDir * (34.0f * visitorAdultScale() + spec.radius - 1.0f);
+    toyY = (float)(TOY_TANK_BOTTOM - spec.radius);
+    if (toyX < TOY_TANK_LEFT + spec.radius) toyX = TOY_TANK_LEFT + spec.radius;
+    if (toyX > TOY_TANK_RIGHT - spec.radius) toyX = TOY_TANK_RIGHT - spec.radius;
+}
+
 void TerrariumScene::triggerToyHit(uint32_t nowMs, int pushDir, float chargeRatio) {
     Bug& bug = GameEngine::ins().getBug();
     const ToySpec& spec = currentToySpec();
@@ -370,11 +1188,100 @@ void TerrariumScene::triggerToyHit(uint32_t nowMs, int pushDir, float chargeRati
     toyChargeStartMs = 0;
 }
 
+void TerrariumScene::reactLocalToToyImpact(uint32_t nowMs, int pushDir) {
+    Bug& bug = GameEngine::ins().getBug();
+    if (bug.getStage() != Stage::ADULT || bug.isDead()) return;
+    if (adultState == AdultState::REST || adultState == AdultState::EAT) return;
+
+    faceRight = pushDir >= 0;
+    turnTargetFaceRight = faceRight;
+    pokeReactionStartMs = nowMs;
+    pokeReactionWasPoked = true;
+    pokeThreatenEndMs = nowMs + POKE_REACTION_MS;
+    alertUntilMs = nowMs + random(ALERT_MIN_MS, ALERT_MAX_MS + 1);
+    adultState = AdultState::IDLE;
+    stateTimer = 0;
+    setIdleDuration();
+}
+
+void TerrariumScene::reactVisitorToToyImpact(uint32_t nowMs, int pushDir) {
+    if (!visitor.active || visitor.falling) return;
+    if (visitor.actor.state == AdultState::REST || visitor.actor.state == AdultState::EAT) return;
+    if (visitor.actor.state == AdultState::ATTACK_DOWN ||
+        visitor.actor.state == AdultState::ATTACK_UP) {
+        return;
+    }
+
+    visitorToyCharging = false;
+    visitorToyChargeStartMs = 0;
+    visitor.faceRight = pushDir >= 0;
+    beginActorWalkTo(visitor.actor, visitor.x);
+    visitor.actor.state = AdultState::THREATEN;
+    visitor.actor.stateTimer = 0;
+    visitor.actor.stateDuration = POKE_REACTION_MS;
+    visitor.actor.threatenStartMs = nowMs;
+    visitor.actor.threatenEndMs = nowMs + POKE_REACTION_MS;
+    visitorIntentUntilMs = nowMs + VISITOR_INTENT_MS;
+    visitor.turning = false;
+    visitor.nextWanderMs = visitor.actor.threatenEndMs;
+    logVisitorState("toy-impact-threaten", nowMs);
+}
+
+void TerrariumScene::reboundToyFromEntryImpact(uint32_t nowMs, int pushDir,
+                                               float beetleTop, const ToySpec& spec) {
+    if (pushDir == 0) pushDir = 1;
+    toyY = beetleTop - (float)spec.radius - 3.0f;
+    if (toyY < TOY_TANK_TOP + spec.radius) toyY = (float)(TOY_TANK_TOP + spec.radius);
+    if (toyX < TOY_TANK_LEFT + spec.radius) toyX = (float)(TOY_TANK_LEFT + spec.radius);
+    if (toyX > TOY_TANK_RIGHT - spec.radius) toyX = (float)(TOY_TANK_RIGHT - spec.radius);
+
+    float vx = fabsf(toyVx) * 0.58f;
+    float minVx = spec.baseImpulse * 0.42f + (float)random(0, 36);
+    if (vx < minVx) vx = minVx;
+    toyVx = vx * 0.9f * (float)pushDir;
+    float vy = fabsf(toyVy) * 0.70f;
+    float minVy = spec.liftImpulse * 1.05f + (float)random(0, 46);
+    if (vy < minVy) vy = minVy;
+    toyVy = -vy * 0.9f;
+    toySpin = (float)(pushDir * random(9, 17)) * 0.9f;
+    toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_REBOUND_MS;
+}
+
+void TerrariumScene::triggerVisitorToyHit(uint32_t nowMs, int pushDir, float chargeRatio) {
+    const ToySpec& spec = currentToySpec();
+    if (pushDir == 0) pushDir = visitor.faceRight ? 1 : -1;
+    if (chargeRatio < 0.0f) chargeRatio = 0.0f;
+    if (chargeRatio > 1.0f) chargeRatio = 1.0f;
+
+    float power = visitorToyStrengthPower();
+    float chargeBonus = 0.72f + chargeRatio * 0.70f;
+    float massScale = spec.mass <= 0.1f ? 1.0f : (1.0f / spec.mass);
+    visitor.faceRight = pushDir > 0;
+    toyVx = pushDir * spec.baseImpulse * power * chargeBonus * massScale;
+    toyVy = -spec.liftImpulse * (0.72f + power * 0.35f) * chargeBonus * massScale;
+    toySpin = pushDir * (7.0f + 10.0f * power + 4.0f * chargeRatio);
+    toyLastHitMs = nowMs;
+    toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_HIT_MS;
+    visitorToyCharging = false;
+    visitorToyChargeStartMs = 0;
+    visitorToyAttackStartMs = nowMs;
+    visitor.actor.state = AdultState::ATTACK_UP;
+    visitor.actor.stateTimer = 0;
+    visitor.actor.stateDuration = (TOY_ATTACK_UP_MS / 50) + 4;
+}
+
 void TerrariumScene::updateToyPhysics(uint32_t nowMs) {
     if (!isToyEnabled()) {
         toyVisible = false;
         toyEntryActive = false;
         toyCharging = false;
+        visitorToyCharging = false;
+        visitorToyAttackStartMs = 0;
+        if (visitor.actor.state == AdultState::ATTACK_DOWN ||
+            visitor.actor.state == AdultState::ATTACK_UP) {
+            visitor.actor.state = AdultState::IDLE;
+            visitor.actor.stateTimer = 0;
+        }
         return;
     }
 
@@ -401,6 +1308,22 @@ void TerrariumScene::updateToyPhysics(uint32_t nowMs) {
         uint32_t elapsed = nowMs - toyChargeStartMs;
         if (elapsed >= toyChargeDurationMs) {
             triggerToyHit(nowMs, toyChargeDir, 1.0f);
+        }
+        toyLastUpdateMs = nowMs;
+        return;
+    }
+
+    if (visitorToyCharging) {
+        visitorToyChargeDir = visitorToyChargeDir >= 0 ? 1 : -1;
+        visitor.faceRight = visitorToyChargeDir > 0;
+        toyX = visitor.x + visitorToyChargeDir *
+               (34.0f * visitorAdultScale() + spec.radius - 1.0f);
+        toyY = (float)(TOY_TANK_BOTTOM - spec.radius);
+        if (toyX < TOY_TANK_LEFT + spec.radius) toyX = TOY_TANK_LEFT + spec.radius;
+        if (toyX > TOY_TANK_RIGHT - spec.radius) toyX = TOY_TANK_RIGHT - spec.radius;
+        uint32_t elapsed = nowMs - visitorToyChargeStartMs;
+        if (elapsed >= visitorToyChargeDurationMs) {
+            triggerVisitorToyHit(nowMs, visitorToyChargeDir, 1.0f);
         }
         toyLastUpdateMs = nowMs;
         return;
@@ -459,26 +1382,20 @@ void TerrariumScene::updateToyPhysics(uint32_t nowMs) {
         if (fabsf(toySpin) < 0.4f) toySpin = 0.0f;
     }
 
+    handleToyVisitorCollision(nowMs, spec, left, right);
+
     Bug& bug = GameEngine::ins().getBug();
     if (adultState == AdultState::REST || adultState == AdultState::EAT) return;
 
     float adultScale = bug.getAdultScale();
-    float beetleHalfW = 34.0f * adultScale;
-    float beetleTop = GROUND_Y - 30.0f * adultScale;
-    float beetleBottom = GROUND_Y - 2.0f;
+    float beetleHalfW = TOY_BEETLE_HIT_HALF_W * adultScale;
+    float beetleTop = GROUND_Y - TOY_BEETLE_HIT_TOP * adultScale;
+    float beetleBottom = GROUND_Y - TOY_BEETLE_HIT_BOTTOM;
     float beetleLeft = bugX - beetleHalfW;
     float beetleRight = bugX + beetleHalfW;
 
-    float closestX = toyX;
-    if (closestX < beetleLeft) closestX = beetleLeft;
-    if (closestX > beetleRight) closestX = beetleRight;
-    float closestY = toyY;
-    if (closestY < beetleTop) closestY = beetleTop;
-    if (closestY > beetleBottom) closestY = beetleBottom;
-
-    float dx = toyX - closestX;
-    float dy = toyY - closestY;
-    if (dx * dx + dy * dy <= (float)(spec.radius * spec.radius)) {
+    if (circleHitsRect(toyX, toyY, (float)spec.radius,
+                       beetleLeft, beetleTop, beetleRight, beetleBottom)) {
         int pushDir = toyX >= bugX ? 1 : -1;
         toyX = pushDir > 0 ? beetleRight + spec.radius + 1.0f
                            : beetleLeft - spec.radius - 1.0f;
@@ -507,17 +1424,96 @@ void TerrariumScene::deflectToyFromBeetle(int pushDir) {
     toySpin *= -0.4f;
 }
 
-bool TerrariumScene::startToyButtonInteraction(uint32_t nowMs) {
-    if (!isToyEnabled()) return false;
-    if (toyEntryActive) return true;
+void TerrariumScene::deflectToyFromVisitor(uint32_t nowMs, int pushDir) {
+    if (pushDir == 0) pushDir = toyX >= visitor.x ? 1 : -1;
+    toyVx = fabsf(toyVx) * (float)pushDir * 0.52f;
+    if (fabsf(toyVx) < 32.0f) toyVx = 32.0f * (float)pushDir;
+    if (toyVy < 28.0f) toyVy = 28.0f;
+    toySpin = -(float)pushDir * (fabsf(toySpin) + 3.0f);
+    toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_REBOUND_MS;
+}
+
+void TerrariumScene::handleToyVisitorCollision(uint32_t nowMs, const ToySpec& spec,
+                                               float left, float right) {
+    if (!visitor.active || visitor.falling) return;
+    if (visitor.actor.state == AdultState::REST || visitor.actor.state == AdultState::EAT) return;
+
+    float scale = visitorAdultScale();
+    float beetleHalfW = TOY_BEETLE_HIT_HALF_W * scale;
+    float beetleTop = (float)visitor.targetY - TOY_BEETLE_HIT_TOP * scale;
+    float beetleBottom = (float)visitor.targetY - TOY_BEETLE_HIT_BOTTOM;
+    float beetleLeft = (float)visitor.x - beetleHalfW;
+    float beetleRight = (float)visitor.x + beetleHalfW;
+
+    if (!circleHitsRect(toyX, toyY, (float)spec.radius,
+                        beetleLeft, beetleTop, beetleRight, beetleBottom)) {
+        return;
+    }
+
+    int pushDir = toyX >= visitor.x ? 1 : -1;
+    bool betweenBeetles = (toyX > (float)min(bugX, visitor.x) &&
+                           toyX < (float)max(bugX, visitor.x));
+    bool nearBack = fabsf(toyX - visitor.x) < beetleHalfW * 0.55f;
+    if (betweenBeetles || nearBack) {
+        int rollDir = visitor.x >= bugX ? 1 : -1;
+        toyX = (float)visitor.x + rollDir * (beetleHalfW * 0.65f + (float)spec.radius);
+        if (toyX < left) toyX = left;
+        if (toyX > right) toyX = right;
+        toyY = beetleTop - (float)spec.radius - 1.0f;
+        if (toyY < TOY_TANK_TOP + spec.radius) toyY = (float)(TOY_TANK_TOP + spec.radius);
+        toyVx = (float)(rollDir * random(58, 112));
+        toyVy = (float)random(24, 56);
+        toySpin = (float)(rollDir * random(6, 13));
+        toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_REBOUND_MS;
+        return;
+    }
+
+    toyX = pushDir > 0 ? beetleRight + spec.radius + 1.0f
+                       : beetleLeft - spec.radius - 1.0f;
+    if (toyX < left) toyX = left;
+    if (toyX > right) toyX = right;
+    float speed = sqrtf(toyVx * toyVx + toyVy * toyVy);
+    bool toyMovingIntoVisitor = (pushDir > 0 && toyVx < -20.0f) ||
+                                (pushDir < 0 && toyVx > 20.0f);
+    bool canReact = nowMs >= toyNoCatchUntilMs &&
+                    nowMs - toyLastHitMs >= TOY_HIT_COOLDOWN_MS &&
+                    speed <= TOY_CATCH_MAX_SPEED &&
+                    !toyMovingIntoVisitor;
+    if (canReact) {
+        startVisitorToyCharge(nowMs, pushDir);
+    } else {
+        deflectToyFromVisitor(nowMs, pushDir);
+    }
+}
+
+bool TerrariumScene::startToyButtonInteraction(uint32_t nowMs, bool allowVisitorTarget) {
+    if (!isToyEnabled()) {
+        Serial.println("[Terrarium] B toy interaction skipped: toy disabled/poke style");
+        return false;
+    }
+    if (toyEntryActive) {
+        Serial.println("[Terrarium] B toy interaction consumed: entry active");
+        return true;
+    }
     toyType = toyTypeForStyle(GameEngine::ins().getToyStyle());
     ToyButtonInteraction interaction = toyButtonInteractionForStyle(GameEngine::ins().getToyStyle());
+    bool targetVisitor = allowVisitorTarget &&
+                         GameEngine::ins().isVisitHost() &&
+                         chooseVisitorForHostInteraction();
+    if (VISITOR_DEBUG_LOGS) {
+        Serial.printf("[Terrarium] B toy interaction style=%u interaction=%u targetVisitor=%u\n",
+                      GameEngine::ins().getToyStyle(),
+                      (uint8_t)interaction,
+                      targetVisitor ? 1 : 0);
+    }
+    int interactionX = hostInteractionTargetX(targetVisitor);
+    float interactionScale = hostInteractionTargetScale(targetVisitor);
     switch (interaction) {
         case ToyButtonInteraction::THROW_ARC:
-            startToyArcThrow(nowMs);
+            startToyArcThrow(nowMs, interactionX, interactionScale, targetVisitor);
             return true;
         case ToyButtonInteraction::DROP_DOWN:
-            startToyDrop(nowMs);
+            startToyDrop(nowMs, interactionX, interactionScale, targetVisitor);
             return true;
         case ToyButtonInteraction::POKE:
         default:
@@ -525,9 +1521,11 @@ bool TerrariumScene::startToyButtonInteraction(uint32_t nowMs) {
     }
 }
 
-void TerrariumScene::startToyArcThrow(uint32_t nowMs) {
+void TerrariumScene::startToyArcThrow(uint32_t nowMs, int targetX, float targetScale, bool targetVisitor) {
     if (!isToyEnabled()) return;
     const ToySpec& spec = currentToySpec();
+    toyEntryTargetX = targetX;
+    toyEntryTargetVisitor = targetVisitor;
     toyVisible = false;
     toyCharging = false;
     toyEntryActive = true;
@@ -535,8 +1533,8 @@ void TerrariumScene::startToyArcThrow(uint32_t nowMs) {
     toyEntryStartMs = nowMs;
     toyThrowFromX = 120 + random(-42, 43);
     toyThrowFromY = Hal::DISPLAY_H + 18;
-    toyThrowTargetX = bugX + random(-24, 25);
-    toyThrowTargetY = GROUND_Y - (int)(42.0f * GameEngine::ins().getBug().getAdultScale()) +
+    toyThrowTargetX = targetX + random(-24, 25);
+    toyThrowTargetY = GROUND_Y - (int)(42.0f * targetScale) +
                       random(-7, 8);
     if (toyThrowTargetY < TOY_TANK_TOP + spec.radius) toyThrowTargetY = TOY_TANK_TOP + spec.radius;
     if (toyThrowTargetY > TOY_TANK_BOTTOM - spec.radius) toyThrowTargetY = TOY_TANK_BOTTOM - spec.radius;
@@ -550,16 +1548,18 @@ void TerrariumScene::startToyArcThrow(uint32_t nowMs) {
     toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_HIT_MS;
 }
 
-void TerrariumScene::startToyDrop(uint32_t nowMs) {
+void TerrariumScene::startToyDrop(uint32_t nowMs, int targetX, float targetScale, bool targetVisitor) {
     if (!isToyEnabled()) return;
     const ToySpec& spec = currentToySpec();
+    toyEntryTargetX = targetX;
+    toyEntryTargetVisitor = targetVisitor;
     toyVisible = false;
     toyCharging = false;
     toyEntryActive = true;
     toyEntryInteraction = ToyButtonInteraction::DROP_DOWN;
     toyEntryStartMs = nowMs;
-    toyThrowTargetX = bugX + random(-18, 19);
-    toyThrowTargetY = GROUND_Y - (int)(40.0f * GameEngine::ins().getBug().getAdultScale()) +
+    toyThrowTargetX = targetX + random(-18, 19);
+    toyThrowTargetY = GROUND_Y - (int)(40.0f * targetScale) +
                       random(-5, 7);
     if (toyThrowTargetY < TOY_TANK_TOP + spec.radius) toyThrowTargetY = TOY_TANK_TOP + spec.radius;
     if (toyThrowTargetY > TOY_TANK_BOTTOM - spec.radius) toyThrowTargetY = TOY_TANK_BOTTOM - spec.radius;
@@ -585,7 +1585,7 @@ void TerrariumScene::finishToyEntry(uint32_t nowMs) {
     if (toyY < TOY_TANK_TOP + spec.radius) toyY = TOY_TANK_TOP + spec.radius;
     if (toyY > TOY_TANK_BOTTOM - spec.radius) toyY = TOY_TANK_BOTTOM - spec.radius;
 
-    int pushDir = toyX >= bugX ? 1 : -1;
+    int pushDir = toyX >= toyEntryTargetX ? 1 : -1;
     if (finishedInteraction == ToyButtonInteraction::DROP_DOWN) {
         toyVx = (float)(pushDir * random(80, 151));
         toyVy = -(float)random(90, 151);
@@ -598,14 +1598,42 @@ void TerrariumScene::finishToyEntry(uint32_t nowMs) {
     toyLastHitMs = nowMs;
     toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_HIT_MS;
     toyLastUpdateMs = nowMs;
+    bool entryHit = false;
+    if (toyEntryTargetVisitor && visitor.active && !visitor.falling) {
+        float scale = visitorAdultScale();
+        float beetleHalfW = TOY_BEETLE_HIT_HALF_W * scale;
+        float beetleTop = (float)visitor.targetY - TOY_BEETLE_HIT_TOP * scale;
+        float beetleBottom = (float)visitor.targetY - TOY_BEETLE_HIT_BOTTOM;
+        float beetleLeft = (float)visitor.x - beetleHalfW;
+        float beetleRight = (float)visitor.x + beetleHalfW;
+        if (circleHitsRect(toyX, toyY, (float)spec.radius,
+                           beetleLeft, beetleTop, beetleRight, beetleBottom)) {
+            reactVisitorToToyImpact(nowMs, pushDir);
+            reboundToyFromEntryImpact(nowMs, pushDir, beetleTop, spec);
+            entryHit = true;
+        }
+        if (!entryHit) {
+            guideVisitorWalkTo(toyThrowTargetX, nowMs);
+        }
+    } else {
+        Bug& bug = GameEngine::ins().getBug();
+        if (isMobileBeetleStage(bug.getStage()) && !bug.isDead()) {
+            float scale = bug.getAdultScale();
+            float beetleHalfW = TOY_BEETLE_HIT_HALF_W * scale;
+            float beetleTop = GROUND_Y - TOY_BEETLE_HIT_TOP * scale;
+            float beetleBottom = GROUND_Y - TOY_BEETLE_HIT_BOTTOM;
+            float beetleLeft = (float)bugX - beetleHalfW;
+            float beetleRight = (float)bugX + beetleHalfW;
+            if (circleHitsRect(toyX, toyY, (float)spec.radius,
+                               beetleLeft, beetleTop, beetleRight, beetleBottom)) {
+                reactLocalToToyImpact(nowMs, pushDir);
+                reboundToyFromEntryImpact(nowMs, pushDir, beetleTop, spec);
+                entryHit = true;
+            }
+        }
+    }
 
-    pokeReactionStartMs = nowMs;
-    pokeReactionWasPoked = true;
-    pokeThreatenEndMs = nowMs + POKE_REACTION_MS;
     alertUntilMs = nowMs + random(ALERT_MIN_MS, ALERT_MAX_MS + 1);
-    adultState = AdultState::IDLE;
-    stateTimer = 0;
-    setIdleDuration();
 }
 
 void TerrariumScene::drawToyBall(int centerX, int centerY, int radius, uint8_t phase) {
@@ -723,8 +1751,33 @@ void TerrariumScene::updateLarvaState(Bug& bug, uint32_t nowMs) {
 SceneID TerrariumScene::update() {
     animFrame++;
 
+    GameEngine& engine = GameEngine::ins();
     Bug& bug = GameEngine::ins().getBug();
     uint32_t nowMs = Hal::ins().millis();
+    if (BattleLink::ins().isBattlePeerSet()) {
+        BattleLink::ins().update();
+        if (BattleLink::ins().takeReceivedVisitRecall()) {
+            engine.clearVisitSession();
+            visitor.active = false;
+            visitRecallConfirm = false;
+            visitPingInFlight = false;
+            Serial.println("[Terrarium] Visit recalled by peer");
+        }
+    }
+    if (engine.isVisitGuest()) {
+        updateVisitGuestLink(nowMs);
+        bug.setSleeping(false);
+        visitor.active = false;
+        return nextScene;
+    }
+    if (!engine.hasActiveVisitSession()) {
+        visitor.active = false;
+        visitPingInFlight = false;
+    } else if (engine.isVisitHost() && visitor.active) {
+        updateVisitHostLink(nowMs);
+        visitor.untilMs = nowMs + engine.getVisitRemainingMs();
+    }
+
     if (bug.getStage() == Stage::ADULT) {
         bug.setSleeping(adultState == AdultState::REST);
     } else if (bug.getStage() == Stage::LARVA && !bug.isDead()) {
@@ -764,6 +1817,8 @@ SceneID TerrariumScene::update() {
     if (bug.getStage() == Stage::ADULT && !bug.isDead()) {
         updateTilt();
     }
+
+    updateVisitor(nowMs);
 
     // 戳反应计时
     if (pokeReactionEndMs != 0 && Hal::ins().millis() > pokeReactionEndMs) {
@@ -808,10 +1863,19 @@ void TerrariumScene::render() {
     drawBackground();
     drawFoodTray();
     drawWood();
+    if (GameEngine::ins().isVisitGuest()) {
+        drawVisitAwayOverlay();
+        if (visitRecallConfirm) {
+            drawVisitRecallConfirm();
+        }
+        return;
+    }
+
+    drawBug();
+    drawVisitor();
     if (isMobileBeetleStage(bug.getStage()) && !bug.isDead()) {
         drawToy();
     }
-    drawBug();
     drawToyEntry();
     drawPokeAction();
     drawStatusBar();
@@ -824,6 +1888,41 @@ void TerrariumScene::render() {
 bool TerrariumScene::onButton(const ButtonEvent& ev) {
     Bug& bug = GameEngine::ins().getBug();
     if (bug.isDead()) return false;  // 死亡画面只接受 A+B 长按，由 update 处理
+
+    if (GameEngine::ins().isVisitGuest()) {
+        if (visitRecallConfirm) {
+            if (ev.btn == 0 && ev.action == BtnAction::PRESSED) {
+                if (!BattleLink::ins().isSending() &&
+                    (BattleLink::ins().sendVisitRecall() || !BattleLink::ins().isBattlePeerSet())) {
+                    GameEngine::ins().clearVisitSession();
+                    visitRecallConfirm = false;
+                    visitPingInFlight = false;
+                    Serial.println("[Terrarium] Visit recall confirmed");
+                }
+                return true;
+            }
+            if (ev.btn == 1 && ev.action == BtnAction::PRESSED) {
+                visitRecallConfirm = false;
+                return true;
+            }
+            return true;
+        }
+        if (ev.btn == 0 && ev.action == BtnAction::LONG_PRESS) {
+            nextScene = SCENE_MENU;
+            return true;
+        }
+        if (ev.btn == 0 && ev.action == BtnAction::PRESSED) {
+            return true;
+        }
+        if (ev.btn == 1 && ev.action == BtnAction::PRESSED) {
+            visitRecallConfirm = true;
+            return true;
+        }
+        if (ev.btn == 1) {
+            return true;
+        }
+        return false;
+    }
 
     if (ev.btn == 0 && ev.action == BtnAction::PRESSED) {
         uint64_t gameNow = GameEngine::ins().getGameNow();
@@ -843,8 +1942,9 @@ bool TerrariumScene::onButton(const ButtonEvent& ev) {
     }
     if (ev.btn == 1 && ev.action == BtnAction::PRESSED) {
         uint64_t gameNow = GameEngine::ins().getGameNow();
+        uint32_t now = Hal::ins().millis();
         if (isMobileBeetleStage(bug.getStage()) &&
-            startToyButtonInteraction(Hal::ins().millis())) {
+            startToyButtonInteraction(now, true)) {
             Serial.printf("[Terrarium] Toy interaction style=%u\n",
                           GameEngine::ins().getToyStyle());
             return true;
@@ -857,9 +1957,22 @@ bool TerrariumScene::onButton(const ButtonEvent& ev) {
             return true;
         }
         // 其他阶段短按 B：戳甲虫
+        bool targetVisitor = GameEngine::ins().isVisitHost() && chooseVisitorForHostInteraction();
+        Serial.printf("[Terrarium] B poke targetVisitor=%u visitHost=%u visitorActive=%u falling=%u toyStyle=%u\n",
+                      targetVisitor ? 1 : 0,
+                      GameEngine::ins().isVisitHost() ? 1 : 0,
+                      visitor.active ? 1 : 0,
+                      visitor.falling ? 1 : 0,
+                      GameEngine::ins().getToyStyle());
+        if (targetVisitor) {
+            startPokeFeedback(now, 600, true, true);
+            reactVisitorToHostPoke(now);
+            Serial.println("[Terrarium] Poked visitor bug");
+            return true;
+        }
+
         bool ok = bug.poke(gameNow);
         if (ok) {
-            uint32_t now = Hal::ins().millis();
             mind.onPoked(now);
             // 若已在 threaten 持续阶段（已播完动作、正 hold 最后一帧），只重置持续时间，
             // 不要从第 0 帧重新播放。
@@ -1015,6 +2128,146 @@ void TerrariumScene::drawBug() {
             drawAdult(bugX, GROUND_Y, pal);
             break;
     }
+}
+
+float TerrariumScene::visitorAdultScale() const {
+    if (visitor.siz < 6) return 0.9f;
+    if (visitor.siz < 14) return 1.0f;
+    if (visitor.siz < 22) return 1.1f;
+    return 1.2f;
+}
+
+float TerrariumScene::visitorAdultDrawScale() const {
+    float scale = visitorAdultScale();
+    return scale < 1.0f ? 1.0f : scale;
+}
+
+uint16_t TerrariumScene::visitorAdultColor() const {
+    if ((visitor.palette & 0x80) != 0) {
+        uint8_t temper = visitor.palette & 0x07;
+        if (temper > (uint8_t)Temperament::SPIRIT) temper = (uint8_t)Temperament::BRUTE;
+        uint8_t bucket = (visitor.palette >> 3) & 0x03;
+        float depth = (float)bucket / 3.0f;
+        return adultDepthColor((Temperament)temper, depth);
+    }
+
+    switch (visitor.palette & 0x03) {
+        case 1: return 0x0400;
+        case 2: return 0xFE00;
+        case 3: return 0xE71C;
+        case 0:
+        default:
+            return adultHueMain(Temperament::BRUTE);
+    }
+}
+
+void TerrariumScene::drawVisitorAdult(int x, int y) {
+    const HerculesAdultSprites::RleFrame* frames = HerculesAdultSprites::WALK_FRAMES;
+    const uint16_t* data = HerculesAdultSprites::WALK_RLE;
+    uint8_t frameCount = HerculesAdultSprites::WALK_FRAME_COUNT;
+    uint8_t frameIndex = visitor.falling ? 0 : (animFrame / 14) % frameCount;
+    bool flipSprite = !visitor.faceRight;
+
+    if (visitor.actor.state == AdultState::THREATEN) {
+        frames = HerculesAdultSprites::THREATEN_FRAMES;
+        data = HerculesAdultSprites::THREATEN_RLE;
+        frameCount = HerculesAdultSprites::THREATEN_FRAME_COUNT;
+        uint32_t elapsed = Hal::ins().millis() - visitor.actor.threatenStartMs;
+        if (elapsed < THREATEN_PLAY_MS) {
+            frameIndex = (elapsed * frameCount) / THREATEN_PLAY_MS;
+            if (frameIndex >= frameCount) frameIndex = frameCount - 1;
+        } else if (elapsed < THREATEN_PLAY_MS + THREATEN_HOLD_MS) {
+            frameIndex = frameCount - 1;
+        } else {
+            uint32_t returnElapsed = elapsed - THREATEN_PLAY_MS - THREATEN_HOLD_MS;
+            uint8_t reverseStep = (returnElapsed * frameCount) / THREATEN_RETURN_MS;
+            frameIndex = reverseStep >= frameCount ? 0 : (frameCount - 1 - reverseStep);
+        }
+        flipSprite = !visitor.faceRight;
+    } else if (visitor.actor.state == AdultState::ATTACK_DOWN) {
+        frames = HerculesAdultSprites::ATTACK_DOWN_FRAMES;
+        data = HerculesAdultSprites::ATTACK_DOWN_RLE;
+        frameCount = HerculesAdultSprites::ATTACK_DOWN_FRAME_COUNT;
+        uint32_t elapsed = Hal::ins().millis() - visitorToyChargeStartMs;
+        uint32_t duration = visitorToyChargeDurationMs == 0 ? 1 : visitorToyChargeDurationMs;
+        frameIndex = (elapsed * frameCount) / duration;
+        if (frameIndex >= frameCount) frameIndex = frameCount - 1;
+        flipSprite = !visitor.faceRight;
+    } else if (visitor.actor.state == AdultState::ATTACK_UP) {
+        uint32_t elapsed = Hal::ins().millis() - visitorToyAttackStartMs;
+        frames = HerculesAdultSprites::ATTACK_UP_FRAMES;
+        data = HerculesAdultSprites::ATTACK_UP_RLE;
+        frameCount = HerculesAdultSprites::ATTACK_UP_FRAME_COUNT;
+        frameIndex = (elapsed * frameCount) / TOY_ATTACK_UP_MS;
+        if (frameIndex >= frameCount) frameIndex = frameCount - 1;
+        flipSprite = !visitor.faceRight;
+    } else if (visitor.actor.state == AdultState::EAT) {
+        frames = HerculesAdultSprites::EAT_FRAMES;
+        data = HerculesAdultSprites::EAT_RLE;
+        frameCount = HerculesAdultSprites::EAT_FRAME_COUNT;
+        frameIndex = (visitor.actor.stateTimer / EAT_FRAME_INTERVAL_MIN) % frameCount;
+        flipSprite = !visitor.faceRight;
+    } else if (visitor.actor.state == AdultState::TURN) {
+        frames = HerculesAdultSprites::TURN_FRAMES;
+        data = HerculesAdultSprites::TURN_RLE;
+        frameCount = HerculesAdultSprites::TURN_FRAME_COUNT;
+        frameIndex = visitor.actor.turnFrameIndex;
+        if (frameIndex >= frameCount) frameIndex = frameCount - 1;
+        flipSprite = false;
+    } else if (visitor.actor.state == AdultState::REST) {
+        uint32_t getDownFrames = HerculesAdultSprites::SLEEP_GETDOWN_FRAME_COUNT *
+                                 REST_GETDOWN_FRAME_INTERVAL;
+        if (visitor.actor.stateTimer < getDownFrames) {
+            frames = HerculesAdultSprites::SLEEP_GETDOWN_FRAMES;
+            data = HerculesAdultSprites::SLEEP_GETDOWN_RLE;
+            frameCount = HerculesAdultSprites::SLEEP_GETDOWN_FRAME_COUNT;
+            frameIndex = visitor.actor.stateTimer / REST_GETDOWN_FRAME_INTERVAL;
+            if (frameIndex >= frameCount) frameIndex = frameCount - 1;
+        } else {
+            frames = HerculesAdultSprites::SLEEP_BREATH_FRAMES;
+            data = HerculesAdultSprites::SLEEP_BREATH_RLE;
+            frameCount = HerculesAdultSprites::SLEEP_BREATH_FRAME_COUNT;
+            frameIndex = ((visitor.actor.stateTimer - getDownFrames) / REST_BREATH_FRAME_INTERVAL) % frameCount;
+        }
+        flipSprite = !visitor.faceRight;
+    } else if (visitor.actor.state == AdultState::SLIDE) {
+        frameIndex = 0;
+        flipSprite = !visitor.faceRight;
+    } else if (visitor.actor.state == AdultState::CLIMB) {
+        frameIndex = (animFrame / 20) % frameCount;
+        flipSprite = !visitor.faceRight;
+    } else if (visitor.actor.state == AdultState::IDLE) {
+        frameIndex = 0;
+    }
+
+    uint16_t offset = pgm_read_word(&frames[frameIndex].offset);
+    uint16_t length = pgm_read_word(&frames[frameIndex].length);
+    uint8_t frameW = pgm_read_byte(&frames[frameIndex].width);
+    uint8_t frameH = pgm_read_byte(&frames[frameIndex].height);
+    float scale = visitorAdultDrawScale();
+    uint16_t color = visitorAdultColor();
+    int drawX = (int)(x - (frameW * scale) / 2.0f);
+    int drawY = (int)(y - frameH * scale);
+    if (visitor.faceRight && visitor.actor.state != AdultState::TURN) {
+        drawX -= 2;
+    }
+
+    PixelRenderer::drawRgb565RleMappedScaled(drawX,
+                                             drawY,
+                                             frameW,
+                                             frameH,
+                                             data, offset, length,
+                                             scale,
+                                             HerculesAdultSprites::PALETTE_KEY, color,
+                                             HerculesAdultSprites::PALETTE_KEY, color,
+                                             HerculesAdultSprites::PALETTE_KEY, color,
+                                             flipSprite);
+}
+
+void TerrariumScene::drawVisitor() {
+    if (!visitor.active) return;
+    int drawY = visitor.y;
+    drawVisitorAdult(visitor.x, drawY);
 }
 
 void TerrariumScene::drawEgg(int x, int y, uint8_t palette) {
@@ -1216,20 +2469,12 @@ bool TerrariumScene::wantsToEat() {
 }
 
 void TerrariumScene::startTurn(bool targetFaceRight, bool continueWalking) {
-    adultState = AdultState::TURN;
-    turnTargetFaceRight = targetFaceRight;
-    walkAfterTurn = continueWalking;
-    if (!continueWalking) walkTargetIsRest = false;
-    turnFrameIndex = random(HerculesAdultSprites::TURN_FRAME_COUNT);
-    stateTimer = 0;
-    stateDuration = TURN_DURATION_FRAMES;
+    beginActorTurn(localActor, targetFaceRight, continueWalking, 0, TURN_DURATION_FRAMES);
 }
 
 // 开始向目标位置行走
 void TerrariumScene::startWalkTo(int x, bool restTarget) {
-    targetX = x;
-    if (targetX < MIN_X) targetX = MIN_X;
-    if (targetX > MAX_X) targetX = MAX_X;
+    beginActorWalkTo(localActor, x);
     walkTargetIsRest = restTarget;
 
     bool needFaceRight = (targetX > bugX);
@@ -1415,6 +2660,7 @@ void TerrariumScene::updateAdultMovement() {
         case AdultState::TURN:
             // 转身动画完成后朝向已改变，进入对应后续状态
             if (stateTimer >= stateDuration) {
+                localActor.turning = false;
                 faceRight = turnTargetFaceRight;
                 stateTimer = 0;
                 if (slideAfterTurn) {
@@ -1566,6 +2812,14 @@ void TerrariumScene::updateAdultMovement() {
                 }
             }
             break;
+
+        case AdultState::THREATEN:
+        case AdultState::ATTACK_DOWN:
+        case AdultState::ATTACK_UP:
+            adultState = AdultState::IDLE;
+            stateTimer = 0;
+            setIdleDuration();
+            break;
     }
 }
 
@@ -1594,6 +2848,7 @@ void TerrariumScene::updateJuvenileMovement() {
 
         case AdultState::TURN:
             if (stateTimer >= stateDuration) {
+                localActor.turning = false;
                 faceRight = turnTargetFaceRight;
                 stateTimer = 0;
                 if (walkAfterTurn) {
@@ -1631,6 +2886,9 @@ void TerrariumScene::updateJuvenileMovement() {
         case AdultState::REST:
         case AdultState::SLIDE:
         case AdultState::CLIMB:
+        case AdultState::THREATEN:
+        case AdultState::ATTACK_DOWN:
+        case AdultState::ATTACK_UP:
         default:
             adultState = AdultState::IDLE;
             stateTimer = 0;
@@ -1695,6 +2953,8 @@ void TerrariumScene::drawWood() {
 
 void TerrariumScene::drawStatusBar() {
     Bug& bug = GameEngine::ins().getBug();
+    if (GameEngine::ins().isVisitGuest()) return;
+
     LGFX_Sprite& canvas = Hal::ins().canvas();
     float fs = PixelRenderer::getContentFontScale();
 
@@ -1738,6 +2998,125 @@ void TerrariumScene::drawStatusBar() {
     int weatherX = Hal::DISPLAY_W - ICON_SIZE - 5;
     int heartX = weatherX - ICON_GAP - ICON_SIZE;
     int totalRows = ICON_SIZE;
+
+    auto drawHeartMeter = [&](int x, int y, uint8_t value) {
+        int rows = (value * totalRows + 50) / 100;
+        if (rows < 1 && value > 0) rows = 1;
+        if (rows > totalRows) rows = totalRows;
+        for (int row = 0; row < totalRows; row++) {
+            uint16_t mask = HEART_MASK[row];
+            bool fill = (row >= totalRows - rows);
+            uint16_t c = fill ? PixelRenderer::RED : PixelRenderer::GRAY;
+            for (int col = 0; col < ICON_SIZE; col++) {
+                if (mask & (1 << (ICON_SIZE - 1 - col))) {
+                    PixelRenderer::fillRect(x + col, y + row, 1, 1, c);
+                }
+            }
+        }
+    };
+    auto hungerColor = [](uint8_t hunger) {
+        return hunger > 50 ? PixelRenderer::GREEN :
+               (hunger > 20 ? PixelRenderer::YELLOW : PixelRenderer::RED);
+    };
+    auto drawHourglassMeter = [&](int x, int y, uint32_t remaining, uint32_t duration) {
+        static const uint16_t HOURGLASS_MASK[9] = {
+            0b111111111,
+            0b011111110,
+            0b001111100,
+            0b000111000,
+            0b000010000,
+            0b000111000,
+            0b001111100,
+            0b011111110,
+            0b111111111,
+        };
+        int rows = duration == 0 ? 0 : (int)(((uint64_t)remaining * totalRows + duration / 2) / duration);
+        if (rows < 1 && remaining > 0) rows = 1;
+        if (rows > totalRows) rows = totalRows;
+        for (int row = 0; row < totalRows; row++) {
+            uint16_t mask = HOURGLASS_MASK[row];
+            bool fill = (row >= totalRows - rows);
+            uint16_t c = fill ? PixelRenderer::YELLOW : PixelRenderer::GRAY;
+            for (int col = 0; col < ICON_SIZE; col++) {
+                if (mask & (1 << (ICON_SIZE - 1 - col))) {
+                    PixelRenderer::fillRect(x + col, y + row, 1, 1, c);
+                }
+            }
+        }
+    };
+
+    if (GameEngine::ins().isVisitHost()) {
+        const VisitBugSnapshot& guest = GameEngine::ins().getVisitRemoteBug();
+        static const uint16_t WEATHER_SUN_VISIT[9] = {
+            0b100010001,
+            0b010010010,
+            0b001111100,
+            0b011111110,
+            0b111111111,
+            0b011111110,
+            0b001111100,
+            0b010010010,
+            0b100010001,
+        };
+        static const uint16_t WEATHER_CLOUD_VISIT[9] = {
+            0b000000000,
+            0b000111000,
+            0b001111100,
+            0b011111110,
+            0b111111111,
+            0b111111111,
+            0b011111110,
+            0b000000000,
+            0b000000000,
+        };
+        int statusW = (weatherX + ICON_SIZE) - heartX;
+        int hostHeartX = heartX;
+        int guestHeartX = hostHeartX - ICON_GAP - statusW;
+        int guestBarX = guestHeartX;
+        int guestHourglassX = guestBarX + statusW - ICON_SIZE;
+        if (guestHeartX < 0) {
+            guestHeartX = 0;
+            guestBarX = 0;
+            guestHourglassX = statusW - ICON_SIZE;
+        }
+        int barY = iconY + ICON_SIZE + 3;
+        int barH = 4;
+        int panelX = (timeX < guestBarX ? timeX : guestBarX) - 4;
+        if (panelX < 0) panelX = 0;
+        int panelW = Hal::DISPLAY_W - panelX;
+        int panelH = barY + barH + 3;
+        for (int y = 0; y < panelH; y++) {
+            for (int x = panelX; x < panelX + panelW; x++) {
+                if (((x + y) & 1) == 0) {
+                    PixelRenderer::fillRect(x, y, 1, 1, PixelRenderer::BLACK);
+                }
+            }
+        }
+
+        PixelRenderer::drawPixelText(timeX + 1, timeY + 1, clockBuf, PixelRenderer::BLACK, fs);
+        PixelRenderer::drawPixelText(timeX, timeY, clockBuf, PixelRenderer::WHITE, fs);
+        drawHeartMeter(guestHeartX, iconY, guest.motivation);
+        drawHourglassMeter(guestHourglassX, iconY,
+                           GameEngine::ins().getVisitRemainingMs(),
+                           GameEngine::ins().getVisitDurationMs());
+        drawHeartMeter(hostHeartX, iconY, bug.getMot());
+        uint32_t gameDay = GameEngine::ins().getCurrentGameDay();
+        bool cloudy = (gameDay % 3 == 0);
+        drawIcon(weatherX, iconY,
+                 cloudy ? WEATHER_CLOUD_VISIT : WEATHER_SUN_VISIT,
+                 ICON_SIZE, ICON_SIZE,
+                 cloudy ? PixelRenderer::WHITE : PixelRenderer::YELLOW);
+        PixelRenderer::drawProgressBar(guestBarX, barY, statusW, barH,
+                                       guest.hunger / 100.0f,
+                                       hungerColor(guest.hunger),
+                                       PixelRenderer::GRAY);
+        PixelRenderer::drawProgressBar(heartX, barY, statusW, barH,
+                                       bug.getHunger() / 100.0f,
+                                       hungerColor(bug.getHunger()),
+                                       PixelRenderer::GRAY);
+        return;
+    }
+
     int fillRows = (mot * totalRows + 50) / 100;
     if (fillRows < 1 && mot > 0) fillRows = 1;
     if (fillRows > totalRows) fillRows = totalRows;
@@ -1799,11 +3178,66 @@ void TerrariumScene::drawStatusBar() {
     uint16_t iconColor = cloudy ? PixelRenderer::WHITE : PixelRenderer::YELLOW;
     drawIcon(weatherX, iconY, icon, ICON_SIZE, ICON_SIZE, iconColor);
 
-    uint16_t hColor = bug.getHunger() > 50 ? PixelRenderer::GREEN :
-                      (bug.getHunger() > 20 ? PixelRenderer::YELLOW : PixelRenderer::RED);
+    uint16_t hColor = hungerColor(bug.getHunger());
     int barX = heartX;
     int barW = (weatherX + ICON_SIZE) - heartX;
     PixelRenderer::drawProgressBar(barX, barY, barW, barH, bug.getHunger() / 100.0f, hColor, PixelRenderer::GRAY);
+}
+
+void TerrariumScene::drawVisitAwayOverlay() {
+    LGFX_Sprite& canvas = Hal::ins().canvas();
+    uint32_t remainingMs = GameEngine::ins().getVisitRemainingMs();
+    uint32_t minutes = (remainingMs + 59999UL) / 60000UL;
+    if (minutes < 1 && remainingMs > 0) minutes = 1;
+
+    char line2[24];
+    snprintf(line2, sizeof(line2), UiStrings::VISIT_LEFT_FMT, (unsigned)minutes);
+    const char* line3 = UiStrings::VISIT_RECALL_HINT;
+
+    float titleFs = 2.0f;
+    float bodyFs = PixelRenderer::getContentFontScale();
+    int titleY = 56;
+    int bodyY = 78;
+    int hintY = 98;
+
+    PixelRenderer::applyTextStyle(titleFs);
+    int titleW = canvas.textWidth(UiStrings::VISIT_AWAY_TITLE);
+    PixelRenderer::applyTextStyle(bodyFs);
+    int bodyW = canvas.textWidth(line2);
+    PixelRenderer::applyTextStyle(1.0f);
+    int hintW = canvas.textWidth(line3);
+
+    int titleX = (Hal::DISPLAY_W - titleW) / 2;
+    int bodyX = (Hal::DISPLAY_W - bodyW) / 2;
+    int hintX = (Hal::DISPLAY_W - hintW) / 2;
+
+    PixelRenderer::fillRect(42, 45, 156, 72, PixelRenderer::BLACK);
+    PixelRenderer::drawPixelText(titleX + 1, titleY + 1, UiStrings::VISIT_AWAY_TITLE, PixelRenderer::BLACK, titleFs);
+    PixelRenderer::drawPixelText(titleX, titleY, UiStrings::VISIT_AWAY_TITLE, PixelRenderer::WHITE, titleFs);
+    PixelRenderer::drawPixelText(bodyX + 1, bodyY + 1, line2, PixelRenderer::BLACK, bodyFs);
+    PixelRenderer::drawPixelText(bodyX, bodyY, line2, PixelRenderer::YELLOW, bodyFs);
+    PixelRenderer::drawPixelText(hintX, hintY, line3, PixelRenderer::GRAY, 1.0f);
+}
+
+void TerrariumScene::drawVisitRecallConfirm() {
+    LGFX_Sprite& canvas = Hal::ins().canvas();
+    int x = 38;
+    int y = 48;
+    int w = 164;
+    int h = 54;
+    PixelRenderer::fillRect(x, y, w, h, PixelRenderer::BLACK);
+    PixelRenderer::fillRect(x + 2, y + 2, w - 4, h - 4, 0x2104);
+
+    float titleFs = PixelRenderer::getContentFontScale();
+    PixelRenderer::applyTextStyle(titleFs);
+    int titleW = canvas.textWidth(UiStrings::VISIT_RECALL_CONFIRM);
+    int titleX = x + (w - titleW) / 2;
+    PixelRenderer::drawPixelText(titleX, y + 12, UiStrings::VISIT_RECALL_CONFIRM, PixelRenderer::WHITE, titleFs);
+
+    PixelRenderer::applyTextStyle(1.0f);
+    int navW = canvas.textWidth(UiStrings::VISIT_RECALL_NAV);
+    int navX = x + (w - navW) / 2;
+    PixelRenderer::drawPixelText(navX, y + 34, UiStrings::VISIT_RECALL_NAV, PixelRenderer::YELLOW, 1.0f);
 }
 
 void TerrariumScene::drawDeathScreen() {
@@ -1889,6 +3323,10 @@ void TerrariumScene::onTilt(TiltDir dir, float magnitude) {
     const char* highSideStr = (dir == TiltDir::LEFT) ? "RIGHT" : "LEFT";
     Serial.printf("[Tilt] onTilt low=%s high=%s mag=%.2f adultState=%d bugX=%d\n",
                   lowSideStr, highSideStr, magnitude, (int)adultState, bugX);
+
+    if (GameEngine::ins().isVisitHost()) {
+        applyTiltToVisitor(dir, magnitude);
+    }
 
     if (adultState == AdultState::EAT) {
         Serial.println("[Tilt] ignored: eating");
@@ -1977,7 +3415,15 @@ void TerrariumScene::drawLarvaPoked(int x, int y, uint8_t palette) {
     drawLarva(x + shake, y, palette);
 }
 
+int TerrariumScene::getPokeTargetX() const {
+    return pokeFingerTargetVisitor && visitor.active ? visitor.x : bugX;
+}
+
 int TerrariumScene::getPokeTargetY() const {
+    if (pokeFingerTargetVisitor && visitor.active) {
+        return GROUND_Y - 20;
+    }
+
     Bug& bug = GameEngine::ins().getBug();
     switch (bug.getStage()) {
         case Stage::EGG:
@@ -1993,10 +3439,11 @@ int TerrariumScene::getPokeTargetY() const {
     }
 }
 
-void TerrariumScene::startPokeFeedback(uint32_t now, uint32_t durationMs, bool wasPoked) {
+void TerrariumScene::startPokeFeedback(uint32_t now, uint32_t durationMs, bool wasPoked, bool targetVisitor) {
     pokeFingerStartMs = now;
     pokeReactionEndMs = now + durationMs;
     pokeReactionWasPoked = wasPoked;
+    pokeFingerTargetVisitor = targetVisitor;
     if (wasPoked) {
         pokeFingerFromRight = random(2) == 0;
         pokeFingerFrameIndex = random(ActionAssets::FINGER_FRAME_COUNT);
@@ -2037,7 +3484,7 @@ void TerrariumScene::drawPokeAction() {
 
     static constexpr int CONTACT_OFFSET_X = 18;
 
-    const int targetX = bugX + (pokeFingerFromRight ? CONTACT_OFFSET_X : -CONTACT_OFFSET_X);
+    const int targetX = getPokeTargetX() + (pokeFingerFromRight ? CONTACT_OFFSET_X : -CONTACT_OFFSET_X);
     const int targetY = getPokeTargetY() + pokeFingerYOffset;
     uint8_t frameW = pgm_read_byte(&ActionAssets::FINGER_FRAMES[frameIndex].width);
     uint8_t frameH = pgm_read_byte(&ActionAssets::FINGER_FRAMES[frameIndex].height);

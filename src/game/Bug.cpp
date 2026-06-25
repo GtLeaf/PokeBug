@@ -647,6 +647,20 @@ bool Bug::eatFromTray(uint64_t now, bool forceBite) {
     return true;
 }
 
+bool Bug::consumeTrayBiteForVisitor(uint8_t& hungerGain, FoodType& foodType) {
+    hungerGain = 0;
+    foodType = trayFoodType;
+    if (foodAmount == 0 || !foodInTray) return false;
+
+    foodAmount--;
+    hungerGain = FoodTypeInfo::hungerPerBite(trayFoodType);
+    foodType = trayFoodType;
+    if (foodAmount == 0) {
+        foodInTray = false;
+    }
+    return true;
+}
+
 void Bug::recordWoodRest(uint64_t now) {
     if (stage != Stage::ADULT || !woodPlaced || hunger < 50) {
         restStartTime = 0;
