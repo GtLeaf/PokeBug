@@ -154,10 +154,8 @@ void SettingsScene::renderMenu() {
             hasValue = true;
         } else if (i == ITEM_FONT_SIZE) {
             float curFs = PixelRenderer::getContentFontScale();
-            if (curFs < 1.1f)       snprintf(buf, sizeof(buf), "1");
-            else if (curFs < 1.3f)  snprintf(buf, sizeof(buf), "2");
-            else if (curFs < 1.6f)  snprintf(buf, sizeof(buf), "3");
-            else                    snprintf(buf, sizeof(buf), "4");
+            if (curFs < 1.65f) snprintf(buf, sizeof(buf), "%s", UiStrings::FONT_M);
+            else               snprintf(buf, sizeof(buf), "%s", UiStrings::FONT_L);
             hasValue = true;
         } else if (i == ITEM_GAME_SPEED) {
             snprintf(buf, sizeof(buf), "%.1fx", GameEngine::ins().getGameSpeed());
@@ -176,7 +174,7 @@ void SettingsScene::renderMenu() {
         }
 
         if (hasValue) {
-            canvas.setTextSize(fs);
+            PixelRenderer::applyTextStyle(fs);
             int valW = canvas.textWidth(buf);
             PixelRenderer::drawPixelText(Hal::DISPLAY_W - valW - 8, y, buf, PixelRenderer::CYAN, fs);
         }
@@ -189,10 +187,8 @@ void SettingsScene::renderMenu() {
 
 void SettingsScene::cycleFontSize() {
     float fs = PixelRenderer::getContentFontScale();
-    if (fs < 1.1f)       GameEngine::ins().setFontScale(1.25f);
-    else if (fs < 1.3f)  GameEngine::ins().setFontScale(1.5f);
-    else if (fs < 1.6f)  GameEngine::ins().setFontScale(1.75f);
-    else                 GameEngine::ins().setFontScale(1.0f);
+    if (fs < 1.65f) GameEngine::ins().setFontScale(1.75f);
+    else            GameEngine::ins().setFontScale(1.5f);
     saveSettingsNow();
 }
 

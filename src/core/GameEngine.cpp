@@ -10,6 +10,7 @@
 #include "../scenes/ExploreScene.h"
 #include "../scenes/CupScene.h"
 #include "../game/ItemCatalog.h"
+#include "../assets/BowlAssets.h"
 
 GameEngine& GameEngine::ins() {
     static GameEngine instance;
@@ -62,7 +63,7 @@ void GameEngine::begin() {
     uint8_t loadedFood = 0;
     if (SaveManager::ins().loadSettings(loadedFont, loadedBri, loadedSpeed, loadedIdle,
                                         loadedBg, loadedWood, loadedBowl, loadedFood)) {
-        fontScale = loadedFont;
+        setFontScale(loadedFont);
         brightness = loadedBri;
         gameSpeed = loadedSpeed;
         idleTimeoutIndex = loadedIdle;
@@ -72,7 +73,6 @@ void GameEngine::begin() {
         setFoodStyle(loadedFood);
         bug.setFoodTray(bowlStyle == 0xFF ? 0 : bowlStyle + 1, (FoodType)foodStyle);
         bug.setWood(woodStyle);
-        PixelRenderer::setContentFontScale(fontScale);
         Hal::ins().setBrightness(brightness);
         Serial.printf("[Engine] Settings loaded: font=%.2f bri=%d speed=%.1f idle=%d bg=%d wood=%d bowl=%d food=%d\n",
                       fontScale, brightness, gameSpeed, idleTimeoutIndex,
@@ -452,13 +452,13 @@ void GameEngine::cycleMainSceneBg() {
 
 const char* GameEngine::getMainSceneBgName() const {
     switch (mainSceneBg) {
-        case BG_BEGINNER: return "Girl";
-        case BG_CHILD_ROOM: return "Boy";
-        case BG_ENTOMOLOGIST: return "Lab";
-        case BG_SCHOOL: return "School";
+        case BG_BEGINNER: return UiStrings::BG_GIRL;
+        case BG_CHILD_ROOM: return UiStrings::BG_BOY;
+        case BG_ENTOMOLOGIST: return UiStrings::BG_LAB;
+        case BG_SCHOOL: return UiStrings::BG_SCHOOL;
         case BG_MOSS:
         default:
-            return "Room";
+            return UiStrings::BG_ROOM;
     }
 }
 
@@ -510,11 +510,11 @@ bool GameEngine::isBowlStyleUnlocked(uint8_t id) const {
 const char* GameEngine::getBowlStyleName() const {
     if (bowlStyle == 0xFF) return UiStrings::WOOD_NONE;
     switch (bowlStyle) {
-        case 1: return "Block";
-        case 2: return "Root";
+        case 1: return BowlAssets::NAME[1];
+        case 2: return BowlAssets::NAME[2];
         case 0:
         default:
-            return "Low";
+            return BowlAssets::NAME[0];
     }
 }
 
@@ -529,16 +529,7 @@ void GameEngine::cycleFoodStyle() {
 }
 
 const char* GameEngine::getFoodStyleName() const {
-    switch (foodStyle) {
-        case 1: return "Cube";
-        case 2: return "Slice";
-        case 3: return "Citrus";
-        case 4: return "Jelly";
-        case 5: return "Berry";
-        case 0:
-        default:
-            return "Drop";
-    }
+    return FoodTypeInfo::name((FoodType)foodStyle);
 }
 
 void GameEngine::setExploreLocation(uint8_t id) {
@@ -548,32 +539,32 @@ void GameEngine::setExploreLocation(uint8_t id) {
 
 const char* GameEngine::getExploreLocationName() const {
     switch (exploreLocation) {
-        case EXPLORE_BACK_HILL: return "Back Hill";
-        case EXPLORE_RIVERSIDE: return "Riverside";
-        case EXPLORE_OLD_WOODS: return "Old Woods";
+        case EXPLORE_BACK_HILL: return UiStrings::LOCATION_BACK_HILL;
+        case EXPLORE_RIVERSIDE: return UiStrings::LOCATION_RIVERSIDE;
+        case EXPLORE_OLD_WOODS: return UiStrings::LOCATION_OLD_WOODS;
         case EXPLORE_PARK:
         default:
-            return "Park";
+            return UiStrings::LOCATION_PARK;
     }
 }
 
 const char* GameEngine::getTimeOfDayName() const {
     switch (timeOfDay) {
-        case TIME_AFTERNOON: return "Afternoon";
-        case TIME_EVENING: return "Evening";
+        case TIME_AFTERNOON: return UiStrings::TIME_AFTERNOON;
+        case TIME_EVENING: return UiStrings::TIME_EVENING;
         case TIME_MORNING:
         default:
-            return "Morning";
+            return UiStrings::TIME_MORNING;
     }
 }
 
 const char* GameEngine::getTimeOfDayShortName() const {
     switch (timeOfDay) {
-        case TIME_AFTERNOON: return "AFT";
-        case TIME_EVENING: return "EVE";
+        case TIME_AFTERNOON: return UiStrings::TIME_SHORT_AFTERNOON;
+        case TIME_EVENING: return UiStrings::TIME_SHORT_EVENING;
         case TIME_MORNING:
         default:
-            return "MOR";
+            return UiStrings::TIME_SHORT_MORNING;
     }
 }
 

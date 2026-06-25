@@ -446,7 +446,7 @@ const char* Bug::getTemperamentName() const {
         case Temperament::BRUTE:     return UiStrings::TEMP_BRUTE;
         case Temperament::BALANCED:  return UiStrings::TEMP_BALANCED;
         case Temperament::SPIRIT:    return UiStrings::TEMP_SPIRIT;
-        default: return "?";
+        default: return UiStrings::UNKNOWN_SHORT;
     }
 }
 

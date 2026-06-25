@@ -11,6 +11,7 @@
 #include "../assets/BowlAssets.h"
 #include "../assets/MenuAssets.h"
 #include "../game/NpcGenerator.h"
+#include <cmath>
 
 int MenuScene::lastSelected = 0;
 int MenuScene::lastBoxSelected = 0;
@@ -166,7 +167,7 @@ void MenuScene::drawBattery() {
     uint16_t color = (level < 20) ? PixelRenderer::RED : PixelRenderer::GREEN;
 
     LGFX_Sprite& canvas = Hal::ins().canvas();
-    canvas.setTextSize(fs);
+    PixelRenderer::applyTextStyle(fs);
     int w = canvas.textWidth(buf);
     int x = Hal::DISPLAY_W - w - (int)(6 * fs);
     PixelRenderer::drawPixelText(x, 6, buf, color, fs);
@@ -247,7 +248,7 @@ void MenuScene::drawList() {
         // 右侧说明文字，与色块垂直中心对齐；未选中时半透明（灰色）
         char label[24];
         const char* desc = itemLabel(i, label, sizeof(label));
-        canvas.setTextSize(fs);
+        PixelRenderer::applyTextStyle(fs);
         int tw = canvas.textWidth(desc);
         int th = (int)(8 * fs);
         int descX = (boxX + leftW + (int)(10 * fs) + Hal::DISPLAY_W) / 2 - 10;
@@ -355,16 +356,16 @@ void MenuScene::drawAttrEditDialog() {
     canvas.drawRect(boxX, boxY, boxW, boxH, PixelRenderer::WHITE);
 
     char title[24];
-    snprintf(title, sizeof(title), "%s %.0f/%u",
+    snprintf(title, sizeof(title), UiStrings::MENU_ATTR_EDIT_TITLE_FMT,
              attrName(attrEditIndex), attrEditValue,
              GameEngine::ins().getBug().debugGetAttrCap(attrEditIndex));
-    canvas.setTextSize(fs);
+    PixelRenderer::applyTextStyle(fs);
     int titleW = canvas.textWidth(title);
     PixelRenderer::drawPixelText(boxX + (boxW - titleW) / 2, boxY + 10,
                                  title, PixelRenderer::WHITE, fs);
 
     static constexpr int BTN_COUNT = 3;
-    const char* labels[BTN_COUNT] = {"-", "+", "yes"};
+    const char* labels[BTN_COUNT] = {UiStrings::MINUS, UiStrings::PLUS, UiStrings::YES_LOWER};
     int btnW[BTN_COUNT] = {34, 34, 46};
     int gap = 8;
     int totalW = btnW[0] + btnW[1] + btnW[2] + gap * 2;
@@ -377,7 +378,7 @@ void MenuScene::drawAttrEditDialog() {
         uint16_t text = focused ? PixelRenderer::YELLOW : PixelRenderer::WHITE;
         PixelRenderer::fillRect(x, y, btnW[i], btnH, PixelRenderer::rgb565(24, 24, 30));
         canvas.drawRect(x, y, btnW[i], btnH, border);
-        canvas.setTextSize(fs);
+        PixelRenderer::applyTextStyle(fs);
         int tw = canvas.textWidth(labels[i]);
         PixelRenderer::drawPixelText(x + (btnW[i] - tw) / 2,
                                      y + (btnH - (int)(8 * fs)) / 2,
@@ -466,7 +467,7 @@ bool MenuScene::onButton(const ButtonEvent& ev) {
         if (ev.btn == 0) {
             // A：确认
             if (mode == Mode::FOOD) {
-                // 食物子菜单：A 将当前高亮项设为全局食物（左侧菱形标记跟随），Back 返回主菜单
+                // 食物子菜单：A 将当前高亮项设为全局食物（左侧菱形标记跟随），Back 返回箱子
                 if (selected < FOOD_ITEM_COUNT - 1) {
                     Bug& bug = GameEngine::ins().getBug();
                     if (bug.getFoodCount((FoodType)selected) > 0) {
@@ -475,7 +476,7 @@ bool MenuScene::onButton(const ButtonEvent& ev) {
                         Serial.printf("[Menu] Global food set to: %s\n", FoodTypeInfo::name((FoodType)selected));
                     }
                 } else {
-                    enterMode(Mode::MAIN);
+                    enterMode(Mode::BOX);
                 }
             } else {
                 executeSelection();
@@ -492,7 +493,7 @@ void MenuScene::executeSelection() {
     if (mode == Mode::FOOD) {
         // 食物子菜单的放置/返回已在 onButton 中直接处理
         if (selected == FOOD_BACK) {
-            enterMode(Mode::MAIN);
+            enterMode(Mode::BOX);
         }
         return;
     }
@@ -938,10 +939,10 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
 
     if (mode == Mode::EXPLORE) {
         switch (index) {
-            case LOCATION_PARK: return "Park";
-            case LOCATION_BACK_HILL: return "Back Hill";
-            case LOCATION_RIVERSIDE: return "Riverside";
-            case LOCATION_OLD_WOODS: return "Old Woods";
+            case LOCATION_PARK: return UiStrings::LOCATION_PARK;
+            case LOCATION_BACK_HILL: return UiStrings::LOCATION_BACK_HILL;
+            case LOCATION_RIVERSIDE: return UiStrings::LOCATION_RIVERSIDE;
+            case LOCATION_OLD_WOODS: return UiStrings::LOCATION_OLD_WOODS;
             case LOCATION_CUP: return UiStrings::MENU_FIGHT_CUP;
             case LOCATION_BACK:
             default: return UiStrings::BACK;
@@ -950,8 +951,8 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
 
     if (mode == Mode::DEBUG) {
         switch (index) {
-            case DEBUG_BEETLE: return "Beetle";
-            case DEBUG_ATTR: return "Attributes";
+            case DEBUG_BEETLE: return UiStrings::MENU_DEBUG_BEETLE;
+            case DEBUG_ATTR: return UiStrings::MENU_DEBUG_ATTR;
             case DEBUG_NPC: return UiStrings::MENU_DEBUG_NPC;
             case DEBUG_BACK:
             default: return UiStrings::BACK;
@@ -961,10 +962,12 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
     if (mode == Mode::DEBUG_STATE) {
         switch (index) {
             case DEBUG_STATE_STAGE:
-                snprintf(buf, bufSize, "Stage:%s", stageName((Stage)debugStageIndex));
+                snprintf(buf, bufSize, UiStrings::MENU_DEBUG_STATE_STAGE_FMT,
+                         stageName((Stage)debugStageIndex));
                 return buf;
             case DEBUG_STATE_TEMPER:
-                snprintf(buf, bufSize, "Temper:%s", temperamentName((Temperament)debugTemperIndex));
+                snprintf(buf, bufSize, UiStrings::MENU_DEBUG_STATE_TEMPER_FMT,
+                         temperamentName((Temperament)debugTemperIndex));
                 return buf;
             case DEBUG_STATE_BACK:
             default:
@@ -975,7 +978,7 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
     if (mode == Mode::DEBUG_ATTR) {
         if (index >= DEBUG_ATTR_SIZ && index <= DEBUG_ATTR_SPI) {
             const Bug& bug = GameEngine::ins().getBug();
-            snprintf(buf, bufSize, "%s:%.0f/%u", attrName((uint8_t)index),
+            snprintf(buf, bufSize, UiStrings::MENU_DEBUG_ATTR_FMT, attrName((uint8_t)index),
                      bug.debugGetAttr((uint8_t)index),
                      bug.debugGetAttrCap((uint8_t)index));
             return buf;
@@ -1050,7 +1053,8 @@ const char* MenuScene::cupClosedMessage() {
         uint32_t days = (uint32_t)((remaining + GameEngine::GAME_DAY_MS - 1) /
                                    GameEngine::GAME_DAY_MS);
         snprintf(cupClosedToast, sizeof(cupClosedToast),
-                 "Next cup\n%u day%s later", days, days == 1 ? "" : "s");
+                 UiStrings::CUP_NEXT_DAY_FMT, days,
+                 days == 1 ? "" : UiStrings::PLURAL_S);
         return cupClosedToast;
     }
 
@@ -1058,22 +1062,23 @@ const char* MenuScene::cupClosedMessage() {
     uint32_t hours = (uint32_t)((remaining + HOUR_MS - 1) / HOUR_MS);
     if (hours > 0) {
         snprintf(cupClosedToast, sizeof(cupClosedToast),
-                 "Next cup\n%u hour%s later", hours, hours == 1 ? "" : "s");
+                 UiStrings::CUP_NEXT_HOUR_FMT, hours,
+                 hours == 1 ? "" : UiStrings::PLURAL_S);
         return cupClosedToast;
     }
 
-    snprintf(cupClosedToast, sizeof(cupClosedToast), "Next cup\nsoon");
+    snprintf(cupClosedToast, sizeof(cupClosedToast), "%s", UiStrings::CUP_NEXT_SOON);
     return cupClosedToast;
 }
 
 const char* MenuScene::stageName(Stage stage) const {
     switch (stage) {
-        case Stage::EGG: return "Egg";
-        case Stage::LARVA: return "Larva";
-        case Stage::PUPA: return "Pupa";
-        case Stage::JUVENILE: return "Juvenile";
-        case Stage::ADULT: return "Adult";
-        default: return "?";
+        case Stage::EGG: return UiStrings::STAGE_EGG;
+        case Stage::LARVA: return UiStrings::STAGE_LARVA;
+        case Stage::PUPA: return UiStrings::STAGE_PUPA;
+        case Stage::JUVENILE: return UiStrings::STAGE_JUVENILE;
+        case Stage::ADULT: return UiStrings::STAGE_ADULT;
+        default: return UiStrings::UNKNOWN_SHORT;
     }
 }
 
@@ -1085,18 +1090,18 @@ const char* MenuScene::temperamentName(Temperament temperament) const {
         case Temperament::BRUTE: return UiStrings::TEMP_BRUTE;
         case Temperament::BALANCED: return UiStrings::TEMP_BALANCED;
         case Temperament::SPIRIT: return UiStrings::TEMP_SPIRIT;
-        default: return "?";
+        default: return UiStrings::UNKNOWN_SHORT;
     }
 }
 
 const char* MenuScene::attrName(uint8_t index) const {
     switch (index) {
-        case 0: return "SIZ";
-        case 1: return "STR";
-        case 2: return "END";
-        case 3: return "SPD";
-        case 4: return "SPI";
-        default: return "?";
+        case 0: return UiStrings::ATTR_SIZ;
+        case 1: return UiStrings::ATTR_STR;
+        case 2: return UiStrings::ATTR_END;
+        case 3: return UiStrings::ATTR_SPD;
+        case 4: return UiStrings::ATTR_SPI;
+        default: return UiStrings::UNKNOWN_SHORT;
     }
 }
 
@@ -1138,7 +1143,7 @@ bool MenuScene::handleAttrEditButton(const ButtonEvent& ev) {
             GameEngine::ins().getBug().debugSetAttr(attrEditIndex, attrEditValue);
             GameEngine::ins().forceSave();
             attrEditActive = false;
-            showToast("Saved");
+            showToast(UiStrings::SAVED);
             Serial.printf("[Menu] Debug attr %s set to %.0f\n", attrName(attrEditIndex), attrEditValue);
         }
         return true;
@@ -1182,7 +1187,7 @@ void MenuScene::drawToast() {
             int len = min((int)(p - lineStart), (int)sizeof(buf) - 1);
             memcpy(buf, lineStart, len);
             buf[len] = '\0';
-            canvas.setTextSize(fs);
+            PixelRenderer::applyTextStyle(fs);
             int w = canvas.textWidth(buf);
             if (w > maxLineW) maxLineW = w;
             if (*p == '\0') break;
@@ -1211,7 +1216,7 @@ void MenuScene::drawToast() {
             int len = min((int)(p - lineStart), (int)sizeof(buf) - 1);
             memcpy(buf, lineStart, len);
             buf[len] = '\0';
-            canvas.setTextSize(fs);
+            PixelRenderer::applyTextStyle(fs);
             int w = canvas.textWidth(buf);
             int x = boxX + (boxW - w) / 2;
             PixelRenderer::drawPixelText(x, y, buf, PixelRenderer::WHITE, fs);
@@ -1244,7 +1249,7 @@ void MenuScene::drawSleepConfirm() {
             int len = min((int)(p - lineStart), (int)sizeof(buf) - 1);
             memcpy(buf, lineStart, len);
             buf[len] = '\0';
-            canvas.setTextSize(fs);
+            PixelRenderer::applyTextStyle(fs);
             int w = canvas.textWidth(buf);
             if (w > maxLineW) maxLineW = w;
             if (*p == '\0') break;
@@ -1273,7 +1278,7 @@ void MenuScene::drawSleepConfirm() {
             int len = min((int)(p - lineStart), (int)sizeof(buf) - 1);
             memcpy(buf, lineStart, len);
             buf[len] = '\0';
-            canvas.setTextSize(fs);
+            PixelRenderer::applyTextStyle(fs);
             int w = canvas.textWidth(buf);
             int x = boxX + (boxW - w) / 2;
             PixelRenderer::drawPixelText(x, y, buf, PixelRenderer::WHITE, fs);
@@ -1285,7 +1290,7 @@ void MenuScene::drawSleepConfirm() {
     }
 
     // 导航提示
-    canvas.setTextSize(fs);
+    PixelRenderer::applyTextStyle(fs);
     int navW = canvas.textWidth(UiStrings::SLEEP_NAV);
     PixelRenderer::drawPixelText(boxX + (boxW - navW) / 2,
                                  y + (int)(2 * fs),
@@ -1319,13 +1324,79 @@ void MenuScene::drawSleepTransition() {
 
     float fs = PixelRenderer::getContentFontScale();
     if (fs < 1.6f) fs = 1.6f;
-    const char* text = "zzz";
+    const char* text = UiStrings::SLEEP_ZZZ;
     LGFX_Sprite& canvas = Hal::ins().canvas();
-    canvas.setTextSize(fs);
+    PixelRenderer::applyTextStyle(fs);
     int w = canvas.textWidth(text);
     int x = (Hal::DISPLAY_W - w) / 2;
     int y = (Hal::DISPLAY_H - (int)(12 * fs)) / 2;
     PixelRenderer::drawPixelText(x, y, text, PixelRenderer::WHITE, fs);
+}
+
+int MenuScene::descriptionLineStep(float fs) const {
+    return (fs < 1.65f) ? 16 : 22;
+}
+
+void MenuScene::updateDescriptionScroll(int scrollKey, int maxScroll) {
+    if (scrollKey != descScrollKey) {
+        descScrollKey = scrollKey;
+        descScroll = 0.0f;
+        descScrollLastMs = Hal::ins().millis();
+    }
+
+    if (maxScroll <= 0) {
+        descScroll = 0.0f;
+        descScrollLastMs = Hal::ins().millis();
+        return;
+    }
+
+    uint32_t now = Hal::ins().millis();
+    uint32_t dt = now - descScrollLastMs;
+    if (dt > 120) dt = 120;
+    descScrollLastMs = now;
+
+    float ax, ay, az;
+    Hal::ins().getAccel(ax, ay, az);
+    float mag = Hal::ins().getAccelMagnitude();
+    if (fabsf(ay) > 1.5f || mag > 2.0f) return;
+
+    static constexpr float TILT_DEADZONE_G = 0.22f;
+    if (fabsf(ax) <= TILT_DEADZONE_G) return;
+
+    float strength = (fabsf(ax) - TILT_DEADZONE_G) / 0.55f;
+    if (strength > 1.0f) strength = 1.0f;
+
+    float dir = (ax < 0.0f) ? 1.0f : -1.0f;
+    descScroll += dir * strength * 58.0f * ((float)dt / 1000.0f);
+    if (descScroll < 0.0f) descScroll = 0.0f;
+    if (descScroll > (float)maxScroll) descScroll = (float)maxScroll;
+}
+
+void MenuScene::drawScrollableDescription(const char* const* lines, int lineCount,
+                                          int x, int y, int w, uint16_t color,
+                                          float fs, int scrollKey) {
+    if (lineCount <= 0 || w <= 0) return;
+
+    LGFX_Sprite& canvas = Hal::ins().canvas();
+    PixelRenderer::applyTextStyle(fs);
+
+    int maxLineW = 0;
+    for (int i = 0; i < lineCount; ++i) {
+        int lineW = canvas.textWidth(lines[i]);
+        if (lineW > maxLineW) maxLineW = lineW;
+    }
+
+    int maxScroll = maxLineW > w ? maxLineW - w + 4 : 0;
+    updateDescriptionScroll(scrollKey, maxScroll);
+
+    int lineStep = descriptionLineStep(fs);
+    int h = lineCount * lineStep;
+    canvas.setClipRect(x, y - 1, w, h + 2);
+    for (int i = 0; i < lineCount; ++i) {
+        PixelRenderer::drawPixelText(x - (int)descScroll, y + i * lineStep,
+                                     lines[i], color, fs);
+    }
+    canvas.clearClipRect();
 }
 
 void MenuScene::drawFoodLayout() {
@@ -1421,9 +1492,9 @@ void MenuScene::drawFoodLayout() {
         const char* name = FoodTypeInfo::name(ft);
         uint8_t count = bug.getFoodCount(ft);
         char storageBuf[16];
-        snprintf(storageBuf, sizeof(storageBuf), "x %d", count);
+        snprintf(storageBuf, sizeof(storageBuf), UiStrings::COUNT_X_FMT, count);
 
-        canvas.setTextSize(fs);
+        PixelRenderer::applyTextStyle(fs);
         int nameW = canvas.textWidth(name);
         int storageW = canvas.textWidth(storageBuf);
         int textW = (nameW > storageW) ? nameW : storageW;
@@ -1433,7 +1504,7 @@ void MenuScene::drawFoodLayout() {
         int iconY = 18;
         int textX = iconX + iconW + 5;
         int nameY = iconY + 2;
-        int storageY = nameY + (int)(12 * fs);
+        int storageY = nameY + (int)(12 * fs) - 2;
 
         PixelRenderer::drawRgb565RleScaled(iconX, iconY,
                                            FoodAssets::FRAME_W,
@@ -1449,16 +1520,17 @@ void MenuScene::drawFoodLayout() {
         // 描述：放在容器下方，严格限制在右侧面板内
         int descX = RIGHT_X + 2;
         int descY = iconY + iconH + 12;
-        PixelRenderer::drawPixelText(descX, descY,
-                                     FoodTypeInfo::descLine1(ft),
-                                     PixelRenderer::CREAM, fs);
-        descY += (int)(12 * fs);
-        PixelRenderer::drawPixelText(descX, descY,
-                                     FoodTypeInfo::descLine2(ft),
-                                     PixelRenderer::CREAM, fs);
+        int descW = Hal::DISPLAY_W - descX - 2;
+        const char* descLines[3] = {
+            FoodTypeInfo::descLine1(ft),
+            FoodTypeInfo::descLine2(ft),
+            FoodTypeInfo::descLine3(ft),
+        };
+        drawScrollableDescription(descLines, 3, descX, descY, descW,
+                                  PixelRenderer::CREAM, fs, 0x100 + idx);
     } else if (selected == FOOD_ITEM_COUNT - 1) {
         // Back 选中时的右侧提示
-        PixelRenderer::drawPixelText(RIGHT_X + 20, 80, "back to menu",
+        PixelRenderer::drawPixelText(RIGHT_X + 20, 80, UiStrings::BACK_TO_BOX,
                                      PixelRenderer::GRAY, fs);
     }
 }
@@ -1544,9 +1616,10 @@ void MenuScene::drawBowlLayout() {
 
         const char* name = BowlAssets::NAME[idx];
         char storageBuf[16];
-        snprintf(storageBuf, sizeof(storageBuf), "%s", unlocked ? "Ready" : "Locked");
+        snprintf(storageBuf, sizeof(storageBuf), "%s",
+                 unlocked ? UiStrings::READY : UiStrings::LOCKED);
 
-        canvas.setTextSize(fs);
+        PixelRenderer::applyTextStyle(fs);
         int nameW = canvas.textWidth(name);
         int storageW = canvas.textWidth(storageBuf);
         int textW = (nameW > storageW) ? nameW : storageW;
@@ -1572,19 +1645,16 @@ void MenuScene::drawBowlLayout() {
         // 描述：三行，底部留出第三行空间
         int descX = RIGHT_X + 2;
         int descY = iconY + iconH + 12;
-        PixelRenderer::drawPixelText(descX, descY,
-                                     BowlAssets::DESC_LINE1[idx],
-                                     PixelRenderer::CREAM, fs);
-        descY += (int)(12 * fs);
-        PixelRenderer::drawPixelText(descX, descY,
-                                     BowlAssets::DESC_LINE2[idx],
-                                     PixelRenderer::CREAM, fs);
-        descY += (int)(12 * fs);
-        PixelRenderer::drawPixelText(descX, descY,
-                                     BowlAssets::DESC_LINE3[idx],
-                                     PixelRenderer::CREAM, fs);
+        int descW = Hal::DISPLAY_W - descX - 2;
+        const char* descLines[3] = {
+            BowlAssets::DESC_LINE1[idx],
+            BowlAssets::DESC_LINE2[idx],
+            BowlAssets::DESC_LINE3[idx],
+        };
+        drawScrollableDescription(descLines, 3, descX, descY, descW,
+                                  PixelRenderer::CREAM, fs, 0x200 + idx);
     } else if (selected == BOWL_ITEM_COUNT - 1) {
-        PixelRenderer::drawPixelText(RIGHT_X + 20, 62, "back to box",
+        PixelRenderer::drawPixelText(RIGHT_X + 20, 62, UiStrings::BACK_TO_BOX,
                                      PixelRenderer::GRAY, fs);
     }
 }
@@ -1661,7 +1731,7 @@ void MenuScene::drawWoodLayout() {
         if (selected == WOOD_NONE) {
             // 空选项：右侧显示简短说明
             PixelRenderer::drawPixelText(RIGHT_X + 10, 40,
-                                         "No wood placed.",
+                                         UiStrings::WOOD_NONE_PLACED,
                                          PixelRenderer::GRAY, fs);
             return;
         }
@@ -1678,9 +1748,10 @@ void MenuScene::drawWoodLayout() {
 
         const char* name = WoodAssets::NAME[idx];
         char storageBuf[16];
-        snprintf(storageBuf, sizeof(storageBuf), "%s", bug.isWoodUnlocked((uint8_t)idx) ? "Unlocked" : "Locked");
+        snprintf(storageBuf, sizeof(storageBuf), "%s",
+                 bug.isWoodUnlocked((uint8_t)idx) ? UiStrings::UNLOCKED : UiStrings::LOCKED);
 
-        canvas.setTextSize(fs);
+        PixelRenderer::applyTextStyle(fs);
         int nameW = canvas.textWidth(name);
         int storageW = canvas.textWidth(storageBuf);
         int textW = (nameW > storageW) ? nameW : storageW;
@@ -1713,19 +1784,16 @@ void MenuScene::drawWoodLayout() {
         int descX = RIGHT_X + 2;
         int descY = iconY + iconH + 12;
         uint16_t descColor = unlocked ? PixelRenderer::CREAM : PixelRenderer::GRAY;
-        PixelRenderer::drawPixelText(descX, descY,
-                                     WoodAssets::DESC_LINE1[idx],
-                                     descColor, fs);
-        descY += (int)(12 * fs);
-        PixelRenderer::drawPixelText(descX, descY,
-                                     WoodAssets::DESC_LINE2[idx],
-                                     descColor, fs);
-        descY += (int)(12 * fs);
-        PixelRenderer::drawPixelText(descX, descY,
-                                     WoodAssets::DESC_LINE3[idx],
-                                     descColor, fs);
+        int descW = Hal::DISPLAY_W - descX - 2;
+        const char* descLines[3] = {
+            WoodAssets::DESC_LINE1[idx],
+            WoodAssets::DESC_LINE2[idx],
+            WoodAssets::DESC_LINE3[idx],
+        };
+        drawScrollableDescription(descLines, 3, descX, descY, descW,
+                                  descColor, fs, 0x300 + idx);
     } else {
-        PixelRenderer::drawPixelText(RIGHT_X + 20, 62, "back to box",
+        PixelRenderer::drawPixelText(RIGHT_X + 20, 62, UiStrings::BACK_TO_BOX,
                                      PixelRenderer::GRAY, fs);
     }
 }

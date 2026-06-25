@@ -13,13 +13,13 @@ static constexpr const char* NAME[SPRITE_COUNT] = {
     "Low", "Block", "Root"
 };
 static constexpr const char* DESC_LINE1[SPRITE_COUNT] = {
-    "Shallow and easy,", "Raised edges,", "Carved like bark,"
+    "Low rim.", "Raised rim.", "Root shape."
 };
 static constexpr const char* DESC_LINE2[SPRITE_COUNT] = {
-    "basic tray", "keeps food in,", "it blends well"
+    "Easy reach", "Holds food", "Fits nature"
 };
 static constexpr const char* DESC_LINE3[SPRITE_COUNT] = {
-    "for daily feed.", "no spills.", "with nature."
+    "daily tray.", "with less spill.", "in the tank."
 };
 
 struct RleFrame {

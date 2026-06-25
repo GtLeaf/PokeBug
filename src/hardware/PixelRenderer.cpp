@@ -9,7 +9,7 @@ float PixelRenderer::contentFontScale = 1.0f;
 void PixelRenderer::bind(LGFX_Sprite* c) {
     canvas = c;
     if (canvas) {
-        canvas->setFont(&fonts::Font0);
+        applyTextStyle(contentFontScale);
     }
 }
 
@@ -19,6 +19,18 @@ void PixelRenderer::setContentFontScale(float scale) {
 
 float PixelRenderer::getContentFontScale() {
     return contentFontScale;
+}
+
+void PixelRenderer::applyTextStyle(float scale) {
+    if (!canvas) return;
+
+    float actualScale = scale <= 0.0f ? contentFontScale : scale;
+    if (actualScale < 1.65f) {
+        canvas->setFont(&fonts::DejaVu12);
+    } else {
+        canvas->setFont(&fonts::DejaVu18);
+    }
+    canvas->setTextSize(1);
 }
 
 void PixelRenderer::drawSprite(int x, int y,
@@ -49,16 +61,8 @@ void PixelRenderer::drawPixelText(int x, int y, const char* text,
                                    uint16_t color, float scale) {
     if (!canvas) return;
 
-    float actualScale;
-    if (scale <= 0) {
-        actualScale = contentFontScale;
-    } else if (scale == 1) {
-        actualScale = 1.0f;
-    } else {
-        actualScale = (float)scale;
-    }
+    applyTextStyle(scale);
     canvas->setTextColor(color);
-    canvas->setTextSize(actualScale);
     canvas->setTextWrap(false);
     canvas->setCursor(x, y);
     canvas->print(text);

@@ -64,6 +64,7 @@ namespace ItemCatalog {
 
 static constexpr ItemId FOOD_BASE = 0x0100;
 static constexpr ItemId WOOD_BASE = 0x0200;
+static constexpr const char* UNKNOWN_NAME = "Unknown";
 
 inline ItemId food(FoodType type) {
     return FOOD_BASE + (uint8_t)type;
@@ -91,7 +92,7 @@ inline const char* name(ItemId id) {
     switch (kind(id)) {
         case ItemKind::FOOD: return FoodTypeInfo::name((FoodType)index(id));
         case ItemKind::WOOD: return WoodTypeInfo::name((WoodType)index(id));
-        default: return "Unknown";
+        default: return UNKNOWN_NAME;
     }
 }
 

@@ -359,7 +359,7 @@ void ExploreScene::applyEventReward(bool flee) {
                             break;
                         case 4:
                             addSap(2);
-                            addStat(0.0f, 0.0f, 0.1f, 0.0f, 0.0f, "END +0.1");
+                            addStat(0.0f, 0.0f, 0.1f, 0.0f, 0.0f, UiStrings::EXPLORE_END_PLUS_0_1);
                             snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_LIZARD);
                             break;
                         case 5:
@@ -386,7 +386,7 @@ void ExploreScene::applyEventReward(bool flee) {
                             break;
                         case 3:
                             addSap(3);
-                            addStat(0.0f, 0.0f, 0.2f, 0.0f, 0.0f, "END +0.2");
+                            addStat(0.0f, 0.0f, 0.2f, 0.0f, 0.0f, UiStrings::EXPLORE_END_PLUS_0_2);
                             snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_FAIRY_RING);
                             break;
                         case 4:
@@ -406,7 +406,7 @@ void ExploreScene::applyEventReward(bool flee) {
                     switch (rareSubType) {
                         case 0:
                             addSap(4);
-                            addStat(0.0f, 0.0f, 0.3f, 0.0f, 0.0f, "END +0.3");
+                            addStat(0.0f, 0.0f, 0.3f, 0.0f, 0.0f, UiStrings::EXPLORE_END_PLUS_0_3);
                             snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_ANCIENT_RESIN);
                             break;
                         case 1:
@@ -423,7 +423,7 @@ void ExploreScene::applyEventReward(bool flee) {
                             break;
                         case 4:
                             addSap(2);
-                            addStat(0.0f, 0.2f, 0.0f, 0.0f, 0.0f, "STR +0.2");
+                            addStat(0.0f, 0.2f, 0.0f, 0.0f, 0.0f, UiStrings::EXPLORE_STR_PLUS_0_2);
                             snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_HEART_OF_ROT);
                             break;
                         case 5:
@@ -466,7 +466,7 @@ void ExploreScene::enterFinalSummary(const char* line1, const char* line2) {
     if (line2) {
         snprintf(resultLine2, sizeof(resultLine2), "%s", line2);
     } else {
-        snprintf(resultLine2, sizeof(resultLine2), "Sap +%d", totalSapGain);
+        snprintf(resultLine2, sizeof(resultLine2), UiStrings::EXPLORE_SAP_PLUS, totalSapGain);
     }
     state = State::FINAL_SUMMARY;
     saveSession();
@@ -515,7 +515,7 @@ void ExploreScene::applyNpcBattleResult(const NpcBattleResult& res) {
             if (sapLoss > have) sapLoss = have;
             if (sapLoss > 0) {
                 bug.removeFood(FoodType::DROP, sapLoss);
-                snprintf(lossBuf, sizeof(lossBuf), "-%d 树汁", sapLoss);
+                snprintf(lossBuf, sizeof(lossBuf), UiStrings::EXPLORE_LOSS_SAP_FMT, sapLoss);
             }
         }
         snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_DEFEATED);
@@ -639,7 +639,7 @@ void ExploreScene::drawExploring(int shakeX, bool showProgressText) {
     LGFX_Sprite& canvas = Hal::ins().canvas();
     float fs = PixelRenderer::getContentFontScale();
     const char* text = UiStrings::EXPLORE_IN_PROGRESS;
-    canvas.setTextSize(fs);
+    PixelRenderer::applyTextStyle(fs);
     int tw = canvas.textWidth(text);
     int th = (int)(8 * fs);
     int padX = 8;
@@ -661,7 +661,7 @@ void ExploreScene::drawPopup() {
     canvas.drawRect(20, 30, Hal::DISPLAY_W - 40, Hal::DISPLAY_H - 60, PixelRenderer::WHITE);
 
     int cx = Hal::DISPLAY_W / 2;
-    canvas.setTextSize(fs);
+    PixelRenderer::applyTextStyle(fs);
     char roundBuf[20];
     if (state == State::FINAL_SUMMARY) {
         snprintf(roundBuf, sizeof(roundBuf), "%s", GameEngine::ins().getTimeOfDayShortName());
@@ -677,7 +677,8 @@ void ExploreScene::drawPopup() {
         tw = canvas.textWidth(resultLine2);
         PixelRenderer::drawPixelText(cx - tw / 2, 50 + (int)(10 * fs), resultLine2, PixelRenderer::CYAN, fs);
     }
-    const char* nav = (state == State::FINAL_SUMMARY) ? "A:Return" : UiStrings::EXPLORE_NEXT_RETURN;
+    const char* nav = (state == State::FINAL_SUMMARY) ? UiStrings::EXPLORE_RETURN
+                                                      : UiStrings::EXPLORE_NEXT_RETURN;
     tw = canvas.textWidth(nav);
     PixelRenderer::drawPixelText(cx - tw / 2, Hal::DISPLAY_H - 44, nav, PixelRenderer::GRAY, fs);
 }
@@ -690,9 +691,10 @@ void ExploreScene::drawNpcPrompt() {
     canvas.drawRect(16, 24, Hal::DISPLAY_W - 32, Hal::DISPLAY_H - 48, PixelRenderer::WHITE);
 
     int cx = Hal::DISPLAY_W / 2;
-    canvas.setTextSize(fs);
+    PixelRenderer::applyTextStyle(fs);
     char buf[48];
-    snprintf(buf, sizeof(buf), "[%s]%s", NpcData::tierName(npc.tier), npcName);
+    snprintf(buf, sizeof(buf), UiStrings::EXPLORE_NPC_TITLE_FMT,
+             NpcData::tierName(npc.tier), npcName);
     int tw = canvas.textWidth(buf);
     PixelRenderer::drawPixelText(cx - tw / 2, 36, buf, PixelRenderer::YELLOW, fs);
     snprintf(buf, sizeof(buf), UiStrings::EXPLORE_BEETLE_LABEL, npcBugName);

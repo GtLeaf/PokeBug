@@ -16,12 +16,13 @@ public:
                            int scale = 1);
 
     // ========== UI 绘制 ==========
-    // 使用 M5GFX 内置字体的文本
-    // scale <= 0: 使用全局 contentFontScale（默认 1.0x）
-    // scale == 1: 精确 1.0x
-    // 其他：按传入浮点值
+    // 使用 M5GFX 内置真实字号字体的文本。
+    // scale <= 0: 使用全局 contentFontScale。
+    // 其他：按传入档位选择对应字号。
     static void drawPixelText(int x, int y, const char* text,
                               uint16_t color, float scale = 0);
+
+    static void applyTextStyle(float scale = 0);
 
     // 全局内容字体缩放
     static void setContentFontScale(float scale);

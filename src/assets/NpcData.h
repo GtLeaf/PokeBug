@@ -18,6 +18,12 @@ enum class Tier : uint8_t {
 };
 
 static constexpr uint8_t ENTRY_COUNT = 12;
+
+static constexpr const char* TIER_ROOKIE_NAME  = "Rookie";
+static constexpr const char* TIER_NORMAL_NAME  = "Normal";
+static constexpr const char* TIER_VETERAN_NAME = "Veteran";
+static constexpr const char* TIER_LEGEND_NAME  = "Legend";
+static constexpr const char* TIER_UNKNOWN_NAME = "?";
 static constexpr uint8_t COUNT = ENTRY_COUNT;  // 兼容旧代码中的 NpcData::COUNT
 
 struct NpcEntry {
@@ -134,11 +140,11 @@ static constexpr uint8_t CUP_TIER_WEIGHTS[4]      = { 10, 30, 40, 20 };
 
 inline const char* tierName(Tier t) {
     switch (t) {
-        case Tier::ROOKIE:  return "Rookie";
-        case Tier::NORMAL:  return "Normal";
-        case Tier::VETERAN: return "Veteran";
-        case Tier::LEGEND:  return "Legend";
-        default: return "?";
+        case Tier::ROOKIE:  return TIER_ROOKIE_NAME;
+        case Tier::NORMAL:  return TIER_NORMAL_NAME;
+        case Tier::VETERAN: return TIER_VETERAN_NAME;
+        case Tier::LEGEND:  return TIER_LEGEND_NAME;
+        default: return TIER_UNKNOWN_NAME;
     }
 }
 

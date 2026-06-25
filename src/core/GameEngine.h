@@ -102,7 +102,11 @@ public:
 
     // 全局字体缩放
     float getFontScale() const { return fontScale; }
-    void setFontScale(float s) { fontScale = s; PixelRenderer::setContentFontScale(s); }
+    void setFontScale(float s) {
+        s = (s < 1.65f) ? 1.5f : 1.75f;
+        fontScale = s;
+        PixelRenderer::setContentFontScale(s);
+    }
 
     // Idle 触发时间（档位 0-4，默认 0=30s）
     uint8_t getIdleTimeoutIndex() const { return idleTimeoutIndex; }

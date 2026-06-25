@@ -13,13 +13,13 @@ static constexpr const char* NAME[SPRITE_COUNT] = {
     "Twig", "Stack", "Mossy", "Pale", "Hollow"
 };
 static constexpr const char* DESC_LINE1[SPRITE_COUNT] = {
-    "Twisted fibers,", "Layered and solid,", "Damp and calming,", "Light and porous,", "Hollow wood,"
+    "Rough fibers.", "Solid layers.", "Cool moss.", "Dry wood.", "Deep hollow."
 };
 static constexpr const char* DESC_LINE2[SPRITE_COUNT] = {
-    "sharpen its", "encourages", "soothes the", "keeps it", "builds tough"
+    "Help claws", "Support body", "Calms mind", "Keeps legs", "Hardens shell"
 };
 static constexpr const char* DESC_LINE3[SPRITE_COUNT] = {
-    "grip.", "steady bulk.", "mind.", "swift.", "resilience."
+    "grip hard.", "and bulk.", "and spirit.", "quick.", "Deep endurance."
 };
 
 struct RleFrame {

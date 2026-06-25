@@ -39,6 +39,9 @@ private:
     float foodScroll = 0.0f;    // 食物列表滚动偏移
     float woodScroll = 0.0f;    // 腐木列表滚动偏移
     float bowlScroll = 0.0f;    // 食物盘列表滚动偏移
+    float descScroll = 0.0f;    // 右侧描述横向滚动偏移
+    uint32_t descScrollLastMs = 0;
+    int descScrollKey = -1;
     uint64_t foodConfirmTime = 0; // A 键确认反馈结束时间（ms）
     const char* toastMsg = nullptr;
     char toastText[64] = {0};
@@ -79,6 +82,11 @@ private:
     void drawFoodLayout();
     void drawWoodLayout();
     void drawBowlLayout();
+    void drawScrollableDescription(const char* const* lines, int lineCount,
+                                   int x, int y, int w, uint16_t color, float fs,
+                                   int scrollKey);
+    int descriptionLineStep(float fs) const;
+    void updateDescriptionScroll(int scrollKey, int maxScroll);
     void drawAttrEditDialog();
     void executeSelection();
     void enterMode(Mode nextMode);

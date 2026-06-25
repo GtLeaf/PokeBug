@@ -1,4 +1,5 @@
 #include "BugMind.h"
+#include "../core/UiStrings.h"
 
 BugMind::BugMind() {}
 
@@ -106,56 +107,56 @@ void BugMind::computeMood(uint8_t hunger, uint8_t mot, bool isNight) {
 const char* BugMind::innerVoice() const {
     switch (mood_) {
         case Mood::HUNGRY:
-            if (topDesire_ == Desire::EAT) return "肚子咕咕叫...去找点吃的";
-            return "好饿...有什么能吃的吗";
+            if (topDesire_ == Desire::EAT) return UiStrings::MIND_HUNGRY_EAT;
+            return UiStrings::MIND_HUNGRY_IDLE;
         case Mood::SLEEPY:
-            if (topDesire_ == Desire::REST) return "眼皮好重...该趴会儿了";
-            return "困...但还是想再走走";
+            if (topDesire_ == Desire::REST) return UiStrings::MIND_SLEEPY_REST;
+            return UiStrings::MIND_SLEEPY_IDLE;
         case Mood::ALERT:
-            if (topDesire_ == Desire::HIDE) return "刚才那是什么！？小心为上";
-            return "保持警觉...别放松";
+            if (topDesire_ == Desire::HIDE) return UiStrings::MIND_ALERT_HIDE;
+            return UiStrings::MIND_ALERT_IDLE;
         case Mood::ANGRY:
-            return "哼！别碰我！";
+            return UiStrings::MIND_ANGRY;
         case Mood::BORED:
-            if (topDesire_ == Desire::WANDER) return "到处走走吧，这里太无聊了";
-            return "...发呆也挺好的";
+            if (topDesire_ == Desire::WANDER) return UiStrings::MIND_BORED_WANDER;
+            return UiStrings::MIND_BORED_IDLE;
         case Mood::CURIOUS:
-            if (topDesire_ == Desire::WANDER) return "那边好像有什么？去看看";
-            return "嗯？有点意思";
+            if (topDesire_ == Desire::WANDER) return UiStrings::MIND_CURIOUS_WANDER;
+            return UiStrings::MIND_CURIOUS_IDLE;
         case Mood::EXCITED:
-            if (topDesire_ == Desire::WANDER) return "精力满满！出发！";
-            return "今天状态真不错";
+            if (topDesire_ == Desire::WANDER) return UiStrings::MIND_EXCITED_WANDER;
+            return UiStrings::MIND_EXCITED_IDLE;
         case Mood::CALM:
         default:
-            if (topDesire_ == Desire::STARE) return "...";
-            if (topDesire_ == Desire::EAT) return "该补充点能量了";
-            if (topDesire_ == Desire::REST) return "休息一下吧";
-            return "这里很安静";
+            if (topDesire_ == Desire::STARE) return UiStrings::MIND_CALM_STARE;
+            if (topDesire_ == Desire::EAT) return UiStrings::MIND_CALM_EAT;
+            if (topDesire_ == Desire::REST) return UiStrings::MIND_CALM_REST;
+            return UiStrings::MIND_CALM_IDLE;
     }
 }
 
 const char* BugMind::moodName() const {
     switch (mood_) {
-        case Mood::CALM:     return "CALM";
-        case Mood::HUNGRY:   return "HUNGRY";
-        case Mood::SLEEPY:   return "SLEEPY";
-        case Mood::ALERT:    return "ALERT";
-        case Mood::BORED:    return "BORED";
-        case Mood::CURIOUS:  return "CURIOUS";
-        case Mood::ANGRY:    return "ANGRY";
-        case Mood::EXCITED:  return "EXCITED";
-        default:             return "?";
+        case Mood::CALM:     return UiStrings::MOOD_CALM;
+        case Mood::HUNGRY:   return UiStrings::MOOD_HUNGRY;
+        case Mood::SLEEPY:   return UiStrings::MOOD_SLEEPY;
+        case Mood::ALERT:    return UiStrings::MOOD_ALERT;
+        case Mood::BORED:    return UiStrings::MOOD_BORED;
+        case Mood::CURIOUS:  return UiStrings::MOOD_CURIOUS;
+        case Mood::ANGRY:    return UiStrings::MOOD_ANGRY;
+        case Mood::EXCITED:  return UiStrings::MOOD_EXCITED;
+        default:             return UiStrings::UNKNOWN_SHORT;
     }
 }
 
 const char* BugMind::desireName() const {
     switch (topDesire_) {
-        case Desire::EAT:    return "EAT";
-        case Desire::REST:   return "REST";
-        case Desire::WANDER: return "WANDER";
-        case Desire::STARE:  return "STARE";
-        case Desire::HIDE:   return "HIDE";
-        default:             return "?";
+        case Desire::EAT:    return UiStrings::DESIRE_EAT;
+        case Desire::REST:   return UiStrings::DESIRE_REST;
+        case Desire::WANDER: return UiStrings::DESIRE_WANDER;
+        case Desire::STARE:  return UiStrings::DESIRE_STARE;
+        case Desire::HIDE:   return UiStrings::DESIRE_HIDE;
+        default:             return UiStrings::UNKNOWN_SHORT;
     }
 }
 

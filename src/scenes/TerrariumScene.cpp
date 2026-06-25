@@ -1209,7 +1209,7 @@ void TerrariumScene::drawStatusBar() {
     // ---- 极简 HUD：时间浮在右上角，状态压缩在下方 ----
     char clockBuf[8];
     GameEngine::ins().getExploreClockText(clockBuf, sizeof(clockBuf));
-    canvas.setTextSize(fs);
+    PixelRenderer::applyTextStyle(fs);
     int timeW = canvas.textWidth(clockBuf);
     int timeX = Hal::DISPLAY_W - timeW - 4;
     int timeY = HUD_Y;

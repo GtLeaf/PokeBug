@@ -431,7 +431,7 @@ void LobbyScene::drawHostWaiting() {
     uint32_t elapsed = Hal::ins().millis() - stateStartMs;
     int dots = (elapsed / 500) % 4;
     const char* waitText = isGiftPurpose() ? UiStrings::GIFT_WAITING : UiStrings::LOBBY_WAITING;
-    snprintf(buf, sizeof(buf), "%s%.*s", waitText, dots, "...");
+    snprintf(buf, sizeof(buf), "%s%.*s", waitText, dots, UiStrings::ELLIPSIS);
     PixelRenderer::drawPixelText(75, 100, buf, PixelRenderer::WHITE, 1);
 }
 
@@ -442,7 +442,7 @@ void LobbyScene::drawSearchScanning() {
     uint32_t elapsed = Hal::ins().millis() - stateStartMs;
     int dots = (elapsed / 500) % 4;
     char buf[12];
-    snprintf(buf, sizeof(buf), "%.*s", dots, "...");
+    snprintf(buf, sizeof(buf), "%.*s", dots, UiStrings::ELLIPSIS);
     PixelRenderer::drawPixelText(110, 80, buf, PixelRenderer::WHITE, 1);
 }
 
@@ -472,7 +472,7 @@ void LobbyScene::drawJoining() {
     uint32_t elapsed = Hal::ins().millis() - stateStartMs;
     int dots = (elapsed / 500) % 4;
     char buf[12];
-    snprintf(buf, sizeof(buf), "%.*s", dots, "...");
+    snprintf(buf, sizeof(buf), "%.*s", dots, UiStrings::ELLIPSIS);
     PixelRenderer::drawPixelText(110, 80, buf, PixelRenderer::WHITE, 1);
 }
 
@@ -482,7 +482,7 @@ void LobbyScene::drawGiftWaiting() {
     uint32_t elapsed = Hal::ins().millis() - stateStartMs;
     int dots = (elapsed / 500) % 4;
     char buf[12];
-    snprintf(buf, sizeof(buf), "%.*s", dots, "...");
+    snprintf(buf, sizeof(buf), "%.*s", dots, UiStrings::ELLIPSIS);
     PixelRenderer::drawPixelText(110, 80, buf, PixelRenderer::WHITE, 1);
 }
 
@@ -492,7 +492,7 @@ void LobbyScene::drawGiftSending() {
     uint32_t elapsed = Hal::ins().millis() - stateStartMs;
     int dots = (elapsed / 500) % 4;
     char buf[12];
-    snprintf(buf, sizeof(buf), "%.*s", dots, "...");
+    snprintf(buf, sizeof(buf), "%.*s", dots, UiStrings::ELLIPSIS);
     PixelRenderer::drawPixelText(110, 80, buf, PixelRenderer::WHITE, 1);
 }
 

@@ -967,7 +967,7 @@ void BattleScene::drawConnecting() {
     uint32_t elapsed = Hal::ins().millis() - stateStartMs;
     int dots = (elapsed / 500) % 4;
     char buf[8];
-    snprintf(buf, sizeof(buf), "%.*s", dots, "...");
+    snprintf(buf, sizeof(buf), "%.*s", dots, UiStrings::ELLIPSIS);
     PixelRenderer::drawPixelText(100, 80, buf, PixelRenderer::WHITE, 1);
 }
 
@@ -1040,7 +1040,8 @@ float BattleScene::tempoProgress(bool forMe) const {
 }
 
 void BattleScene::drawTempoBar() {
-    PixelRenderer::drawPixelText(TEMPO_LABEL_X, TEMPO_BAR_Y - 3, "TEMPO", PixelRenderer::GRAY, 1);
+    PixelRenderer::drawPixelText(TEMPO_LABEL_X, TEMPO_BAR_Y - 3,
+                                 UiStrings::BATTLE_TEMPO, PixelRenderer::GRAY, 1);
     PixelRenderer::fillRect(TEMPO_BAR_X, TEMPO_BAR_Y, TEMPO_BAR_W, TEMPO_BAR_H,
                             PixelRenderer::rgb565(30, 30, 36));
     PixelRenderer::fillRect(TEMPO_BAR_X, TEMPO_BAR_Y + 2, TEMPO_BAR_W, 1,
@@ -1136,15 +1137,15 @@ void BattleScene::drawBattleField() {
     if (now < rhythmFeedbackUntilMs && rhythmFeedback != RhythmFeedback::NONE) {
         switch (rhythmFeedback) {
             case RhythmFeedback::PERFECT:
-                msg = "MOT++";
+                msg = UiStrings::BATTLE_FEEDBACK_MOT_PLUS_PLUS;
                 msgColor = PixelRenderer::MAGENTA;
                 break;
             case RhythmFeedback::GREAT:
-                msg = "MOT+";
+                msg = UiStrings::BATTLE_FEEDBACK_MOT_PLUS;
                 msgColor = PixelRenderer::CYAN;
                 break;
             case RhythmFeedback::MISS:
-                msg = "MISS!";
+                msg = UiStrings::BATTLE_FEEDBACK_MISS;
                 msgColor = PixelRenderer::GRAY;
                 break;
             case RhythmFeedback::NONE:
@@ -1153,21 +1154,26 @@ void BattleScene::drawBattleField() {
         }
     } else {
         switch (state) {
-            case State::SYNCING: msg = "SYNC"; break;
-            case State::GAUGE_FILLING: msg = isRhythmWindowActive() ? "TIMING!" : "CHARGE"; break;
+            case State::SYNCING: msg = UiStrings::BATTLE_STATE_SYNC; break;
+            case State::GAUGE_FILLING:
+                msg = isRhythmWindowActive() ? UiStrings::BATTLE_STATE_TIMING
+                                             : UiStrings::BATTLE_STATE_CHARGE;
+                break;
             case State::ATTACK_ONE:
             case State::ATTACK_TWO:
-                msg = isCurrentAttackByMe() ? "ATTACK!" : "FOE ATK";
+                msg = isCurrentAttackByMe() ? UiStrings::BATTLE_STATE_ATTACK
+                                            : UiStrings::BATTLE_STATE_FOE_ATTACK;
                 msgX = isCurrentAttackByMe() ? 34 : 154;
                 msgY = 24;
                 break;
             case State::ROUND_END:
-                msg = myAttackDodged ? "MISS!" :
-                      (enemyAttackDodged ? "DODGE!" :
-                       (myCrit ? "CRIT!" : (enemyCrit ? "OUCH!" : "")));
+                msg = myAttackDodged ? UiStrings::BATTLE_FEEDBACK_MISS :
+                      (enemyAttackDodged ? UiStrings::BATTLE_STATE_DODGE :
+                       (myCrit ? UiStrings::BATTLE_STATE_CRIT :
+                        (enemyCrit ? UiStrings::BATTLE_STATE_OUCH : "")));
                 break;
             case State::TIMEOUT:
-                msg = "TIME OUT";
+                msg = UiStrings::BATTLE_STATE_TIME_OUT;
                 msgColor = PixelRenderer::RED;
                 msgScale = 2;
                 msgBold = true;
@@ -1196,13 +1202,13 @@ void BattleScene::drawResult() {
     const char* resultText;
     uint16_t color;
     if (noOpponent) {
-        resultText = "NO FOE";
+        resultText = UiStrings::BATTLE_RESULT_NO_FOE;
         color = PixelRenderer::YELLOW;
     } else if (localWin) {
-        resultText = "WIN!";
+        resultText = UiStrings::BATTLE_RESULT_WIN;
         color = PixelRenderer::GREEN;
     } else {
-        resultText = "LOSE";
+        resultText = UiStrings::BATTLE_RESULT_LOSE;
         color = PixelRenderer::RED;
     }
     PixelRenderer::drawPixelText(noOpponent ? 70 : 90, 45, resultText, color, 3);

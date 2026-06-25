@@ -225,7 +225,7 @@ void CupScene::drawNotify() {
     LGFX_Sprite& canvas = Hal::ins().canvas();
     float fs = PixelRenderer::getContentFontScale();
     int cx = Hal::DISPLAY_W / 2;
-    canvas.setTextSize(fs);
+    PixelRenderer::applyTextStyle(fs);
 
     char buf[32];
     snprintf(buf, sizeof(buf), UiStrings::CUP_SEASON_TITLE, GameEngine::ins().getCupSeason());
@@ -244,7 +244,7 @@ void CupScene::drawBracket() {
     LGFX_Sprite& canvas = Hal::ins().canvas();
     float fs = PixelRenderer::getContentFontScale();
     int cx = Hal::DISPLAY_W / 2;
-    canvas.setTextSize(fs);
+    PixelRenderer::applyTextStyle(fs);
 
     const char* title = UiStrings::CUP_BRACKET;
     int tw = canvas.textWidth(title);
@@ -271,7 +271,7 @@ void CupScene::drawRoundIntro() {
     LGFX_Sprite& canvas = Hal::ins().canvas();
     float fs = PixelRenderer::getContentFontScale();
     int cx = Hal::DISPLAY_W / 2;
-    canvas.setTextSize(fs);
+    PixelRenderer::applyTextStyle(fs);
 
     const char* roundName[3] = {UiStrings::CUP_ROUND_QUARTER,
                                 UiStrings::CUP_ROUND_SEMI,
@@ -298,7 +298,7 @@ void CupScene::drawResult() {
     LGFX_Sprite& canvas = Hal::ins().canvas();
     float fs = PixelRenderer::getContentFontScale();
     int cx = Hal::DISPLAY_W / 2;
-    canvas.setTextSize(fs);
+    PixelRenderer::applyTextStyle(fs);
 
     const char* rt = rankText(sFinalRank);
     char buf[32];

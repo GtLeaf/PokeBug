@@ -6,7 +6,13 @@
 #include <cstdio>
 #include <cmath>
 
-const char* InfoScene::STAGE_NAMES[5] = { "Egg", "Larva", "Pupa", "Juvenile", "Adult" };
+const char* InfoScene::STAGE_NAMES[5] = {
+    UiStrings::STAGE_EGG,
+    UiStrings::STAGE_LARVA,
+    UiStrings::STAGE_PUPA,
+    UiStrings::STAGE_JUVENILE,
+    UiStrings::STAGE_ADULT
+};
 
 namespace {
 
@@ -56,7 +62,7 @@ void InfoScene::render() {
         UiStrings::RECORD_TITLE,
     };
     PixelRenderer::drawPixelText(4, 4, titles[page], PixelRenderer::CYAN, fs);
-    canvas.setTextSize(fs);
+    PixelRenderer::applyTextStyle(fs);
     const char* nav = UiStrings::INFO_NAV;
     int titleW = canvas.textWidth(titles[page]);
     int navW = canvas.textWidth(nav);
@@ -109,13 +115,13 @@ void InfoScene::renderStatus() {
     PixelRenderer::drawPixelText(marginX, y, buf, PixelRenderer::WHITE, fs);
     y += rowStep;
 
-    snprintf(buf, sizeof(buf), "Stage: %s", STAGE_NAMES[(int)bug.getStage()]);
+    snprintf(buf, sizeof(buf), UiStrings::INFO_STAGE_FMT, STAGE_NAMES[(int)bug.getStage()]);
     PixelRenderer::drawPixelText(marginX, y, buf, PixelRenderer::WHITE, fs);
     y += rowStep;
 
     snprintf(buf, sizeof(buf), "%s: ", UiStrings::TYPE);
     PixelRenderer::drawPixelText(marginX, y, buf, PixelRenderer::WHITE, fs);
-    canvas.setTextSize(fs);
+    PixelRenderer::applyTextStyle(fs);
     int typeLabelW = canvas.textWidth(buf);
     PixelRenderer::drawPixelText(marginX + typeLabelW, y, bug.getTemperamentName(),
                                  temperamentColor(bug.getTemperament()), fs);
@@ -150,14 +156,14 @@ void InfoScene::renderAttributes() {
 
     struct Attr { const char* name; float val; uint8_t cap; };
     Attr attrs[5] = {
-        {"SIZ", bug.getSiz(), bug.getSizCap()},
-        {"STR", bug.getStr(), bug.getStrCap()},
-        {"END", bug.getEnd(), bug.getEndCap()},
-        {"SPD", bug.getSpd(), bug.getSpdCap()},
-        {"SPI", bug.getSpi(), bug.getSpiCap()},
+        {UiStrings::ATTR_SIZ, bug.getSiz(), bug.getSizCap()},
+        {UiStrings::ATTR_STR, bug.getStr(), bug.getStrCap()},
+        {UiStrings::ATTR_END, bug.getEnd(), bug.getEndCap()},
+        {UiStrings::ATTR_SPD, bug.getSpd(), bug.getSpdCap()},
+        {UiStrings::ATTR_SPI, bug.getSpi(), bug.getSpiCap()},
     };
 
-    canvas.setTextSize(fs);
+    PixelRenderer::applyTextStyle(fs);
     int valueRight = Hal::DISPLAY_W - (int)(20 * fs);
     int valueColW = canvas.textWidth("99");
     int barX = marginX + (int)(32 * fs);

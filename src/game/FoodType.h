@@ -56,22 +56,30 @@ static constexpr const char* NAME[(uint8_t)FoodType::COUNT] = {
     "Drop", "Cube", "Slice", "Citrus", "Jelly", "Berry"
 };
 
-// 食物简短描述（两行），暗示属性倾向但不直接展示增益
+// 食物简短描述（三行），暗示属性倾向但不直接展示增益
 static constexpr const char* DESC_LINE1[(uint8_t)FoodType::COUNT] = {
-    "Soft, moist,",      // Drop -> 暗示体型成长
-    "Crunchy,",          // Cube -> 暗示力量
-    "Light,",            // Slice -> 暗示速度
-    "Zesty,",            // Citrus -> 暗示精神
-    "Sticky,",           // Jelly -> 暗示爆发力量
-    "Balanced,"          // Berry -> 暗示耐力/均衡
+    "Moist food.",       // Drop -> 暗示体型成长
+    "Hard bites.",       // Cube -> 暗示力量
+    "Light meal.",       // Slice -> 暗示速度
+    "Bright scent.",     // Citrus -> 暗示精神
+    "Rich sugar.",       // Jelly -> 暗示爆发力量
+    "Balanced bite."     // Berry -> 暗示耐力/均衡
 };
 static constexpr const char* DESC_LINE2[(uint8_t)FoodType::COUNT] = {
-    "eases growth.",
-    "trains jaws.",
-    "keeps nimble.",
-    "clears mind.",
-    "power boost.",
-    "tough shell."
+    "Helps body",
+    "Trains jaws",
+    "Keeps legs",
+    "Clears mind",
+    "Quick burst fuel,",
+    "Supports shell"
+};
+static constexpr const char* DESC_LINE3[(uint8_t)FoodType::COUNT] = {
+    "grow steady.",
+    "and strength.",
+    "quick.",
+    "and spirit.",
+    "less filling.",
+    "and stamina."
 };
 
 // 成虫期 MOT 恢复量
@@ -115,6 +123,10 @@ inline const char* descLine1(FoodType t) {
 
 inline const char* descLine2(FoodType t) {
     return DESC_LINE2[(uint8_t)t];
+}
+
+inline const char* descLine3(FoodType t) {
+    return DESC_LINE3[(uint8_t)t];
 }
 
 inline uint8_t level(FoodType t) {
