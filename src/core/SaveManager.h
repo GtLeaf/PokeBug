@@ -22,10 +22,12 @@ public:
     // 保存/加载全局设置
     bool saveSettings(float fontScale, uint8_t brightness, float gameSpeed,
                       uint8_t idleTimeout, uint8_t mainSceneBg,
-                      uint8_t woodStyle, uint8_t bowlStyle, uint8_t foodStyle);
+                      uint8_t woodStyle, uint8_t bowlStyle, uint8_t foodStyle,
+                      uint8_t toyStyle);
     bool loadSettings(float& fontScale, uint8_t& brightness, float& gameSpeed,
                       uint8_t& idleTimeout, uint8_t& mainSceneBg,
-                      uint8_t& woodStyle, uint8_t& bowlStyle, uint8_t& foodStyle);
+                      uint8_t& woodStyle, uint8_t& bowlStyle, uint8_t& foodStyle,
+                      uint8_t& toyStyle);
 
     // 全局杯赛数据（跨虫持久）
     bool saveCupGlobal(uint16_t season, uint32_t lastCupGameTime, uint8_t state);
@@ -55,6 +57,7 @@ private:
     static constexpr const char* KEY_WOOD  = "woodstyle";
     static constexpr const char* KEY_BOWL  = "bowlstyle";
     static constexpr const char* KEY_FOOD  = "foodstyle";
+    static constexpr const char* KEY_TOY   = "toystyle";
     static constexpr const char* KEY_VER   = "savever";
     static constexpr const char* KEY_CUP_SEASON = "cup_season";
     static constexpr const char* KEY_CUP_TIME   = "last_cup_time";

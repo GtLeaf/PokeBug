@@ -61,8 +61,10 @@ void GameEngine::begin() {
     uint8_t loadedWood = 0;
     uint8_t loadedBowl = 0;
     uint8_t loadedFood = 0;
+    uint8_t loadedToy = TOY_NONE;
     if (SaveManager::ins().loadSettings(loadedFont, loadedBri, loadedSpeed, loadedIdle,
-                                        loadedBg, loadedWood, loadedBowl, loadedFood)) {
+                                        loadedBg, loadedWood, loadedBowl, loadedFood,
+                                        loadedToy)) {
         setFontScale(loadedFont);
         brightness = loadedBri;
         gameSpeed = loadedSpeed;
@@ -71,12 +73,13 @@ void GameEngine::begin() {
         setWoodStyle(loadedWood);
         setBowlStyle(loadedBowl);
         setFoodStyle(loadedFood);
+        setToyStyle(loadedToy);
         bug.setFoodTray(bowlStyle == 0xFF ? 0 : bowlStyle + 1, (FoodType)foodStyle);
         bug.setWood(woodStyle);
         Hal::ins().setBrightness(brightness);
-        Serial.printf("[Engine] Settings loaded: font=%.2f bri=%d speed=%.1f idle=%d bg=%d wood=%d bowl=%d food=%d\n",
+        Serial.printf("[Engine] Settings loaded: font=%.2f bri=%d speed=%.1f idle=%d bg=%d wood=%d bowl=%d food=%d toy=%d\n",
                       fontScale, brightness, gameSpeed, idleTimeoutIndex,
-                      mainSceneBg, woodStyle, bowlStyle, foodStyle);
+                      mainSceneBg, woodStyle, bowlStyle, foodStyle, toyStyle);
     } else {
         PixelRenderer::setContentFontScale(fontScale);
     }
@@ -230,7 +233,7 @@ void GameEngine::run() {
         forceSave();
         SaveManager::ins().saveSettings(PixelRenderer::getContentFontScale(), brightness,
                                         gameSpeed, idleTimeoutIndex, mainSceneBg,
-                                        woodStyle, bowlStyle, foodStyle);
+                                        woodStyle, bowlStyle, foodStyle, toyStyle);
         SaveManager::ins().saveCupGlobal(cupSeason, lastCupGameTime, (uint8_t)cupCycleState);
         Serial.println("[Engine] Enter deep sleep");
         Hal::ins().setBrightness(0);
@@ -530,6 +533,20 @@ void GameEngine::cycleFoodStyle() {
 
 const char* GameEngine::getFoodStyleName() const {
     return FoodTypeInfo::name((FoodType)foodStyle);
+}
+
+void GameEngine::setToyStyle(uint8_t id) {
+    if (id >= TOY_COUNT) id = TOY_NONE;
+    toyStyle = id;
+}
+
+const char* GameEngine::getToyStyleName() const {
+    switch (toyStyle) {
+        case TOY_BALL: return UiStrings::TOY_BALL;
+        case TOY_NONE:
+        default:
+            return UiStrings::TOY_NONE;
+    }
 }
 
 void GameEngine::setExploreLocation(uint8_t id) {

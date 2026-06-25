@@ -143,6 +143,15 @@ public:
     void cycleFoodStyle();
     const char* getFoodStyleName() const;
 
+    enum ToyStyle : uint8_t {
+        TOY_NONE = 0,
+        TOY_BALL = 1,
+        TOY_COUNT = 2,
+    };
+    uint8_t getToyStyle() const { return toyStyle; }
+    void setToyStyle(uint8_t id);
+    const char* getToyStyleName() const;
+
     enum ExploreLocation : uint8_t {
         EXPLORE_PARK = 0,
         EXPLORE_BACK_HILL = 1,
@@ -264,6 +273,7 @@ private:
     uint8_t woodStyle = 0;
     uint8_t bowlStyle = 0;
     uint8_t foodStyle = 0;
+    uint8_t toyStyle = TOY_NONE;
     uint8_t exploreLocation = EXPLORE_PARK;
     uint8_t timeOfDay = TIME_MORNING;
     uint8_t exploreCountToday = 0;

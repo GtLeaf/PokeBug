@@ -295,7 +295,8 @@ bool SaveManager::hasSave() const {
 
 bool SaveManager::saveSettings(float fontScale, uint8_t brightness, float gameSpeed,
                                uint8_t idleTimeout, uint8_t mainSceneBg,
-                               uint8_t woodStyle, uint8_t bowlStyle, uint8_t foodStyle) {
+                               uint8_t woodStyle, uint8_t bowlStyle, uint8_t foodStyle,
+                               uint8_t toyStyle) {
     if (isSaving) {
         Serial.println("[Save] Skip concurrent settings save");
         return false;
@@ -315,18 +316,20 @@ bool SaveManager::saveSettings(float fontScale, uint8_t brightness, float gameSp
     prefs.putUChar(KEY_WOOD, woodStyle);
     prefs.putUChar(KEY_BOWL, bowlStyle);
     prefs.putUChar(KEY_FOOD, foodStyle);
+    prefs.putUChar(KEY_TOY, toyStyle);
     prefs.end();
 
     isSaving = false;
-    Serial.printf("[Save] Settings saved: font=%.2f bri=%d speed=%.1f idle=%d bg=%d wood=%d bowl=%d food=%d\n",
+    Serial.printf("[Save] Settings saved: font=%.2f bri=%d speed=%.1f idle=%d bg=%d wood=%d bowl=%d food=%d toy=%d\n",
                   fontScale, brightness, gameSpeed, idleTimeout,
-                  mainSceneBg, woodStyle, bowlStyle, foodStyle);
+                  mainSceneBg, woodStyle, bowlStyle, foodStyle, toyStyle);
     return true;
 }
 
 bool SaveManager::loadSettings(float& fontScale, uint8_t& brightness, float& gameSpeed,
                                uint8_t& idleTimeout, uint8_t& mainSceneBg,
-                               uint8_t& woodStyle, uint8_t& bowlStyle, uint8_t& foodStyle) {
+                               uint8_t& woodStyle, uint8_t& bowlStyle, uint8_t& foodStyle,
+                               uint8_t& toyStyle) {
     Preferences prefs;
     if (!prefs.begin(NAMESPACE, true)) return false;
 
@@ -361,6 +364,10 @@ bool SaveManager::loadSettings(float& fontScale, uint8_t& brightness, float& gam
     }
     if (prefs.isKey(KEY_FOOD)) {
         foodStyle = prefs.getUChar(KEY_FOOD, 0);
+        ok = true;
+    }
+    if (prefs.isKey(KEY_TOY)) {
+        toyStyle = prefs.getUChar(KEY_TOY, 0);
         ok = true;
     }
     prefs.end();

@@ -27,8 +27,10 @@ void setup() {
         uint8_t woodStyle = 0;
         uint8_t bowlStyle = 0;
         uint8_t foodStyle = 0;
+        uint8_t toyStyle = GameEngine::TOY_NONE;
         SaveManager::ins().loadSettings(fontScale, brightness, gameSpeed, idleTimeout,
-                                        mainSceneBg, woodStyle, bowlStyle, foodStyle);
+                                        mainSceneBg, woodStyle, bowlStyle, foodStyle,
+                                        toyStyle);
 
         // 推进虚拟时间 10 分钟并更新。设备深睡时，甲虫也按睡眠状态结算。
         uint64_t gameNow = bug.getLastUpdateTime() + (uint64_t)(600000 * gameSpeed);
@@ -59,7 +61,8 @@ void setup() {
         SaveManager::ins().save(bug);
         SaveManager::ins().saveExploreGlobal(exploreDay, exploreTod, exploreCount);
         SaveManager::ins().saveSettings(fontScale, brightness, gameSpeed, idleTimeout,
-                                        mainSceneBg, woodStyle, bowlStyle, foodStyle);
+                                        mainSceneBg, woodStyle, bowlStyle, foodStyle,
+                                        toyStyle);
         Serial.println("[Boot] Bug updated, re-entering deep sleep");
 
         esp_sleep_enable_timer_wakeup(600 * 1000000ULL);

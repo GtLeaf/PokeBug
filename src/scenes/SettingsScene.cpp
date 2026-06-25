@@ -26,6 +26,7 @@ bool SettingsScene::onButton(const ButtonEvent& ev) {
             GameEngine::ins().setWoodStyle(0);
             GameEngine::ins().setBowlStyle(0);
             GameEngine::ins().setFoodStyle(0);
+            GameEngine::ins().setToyStyle(GameEngine::TOY_NONE);
             GameEngine::ins().setFontScale(1.5f);
             Hal::ins().setBrightness(128);
             confirmReset = false;
@@ -228,6 +229,7 @@ void SettingsScene::saveSettingsNow() {
         GameEngine::ins().getMainSceneBg(),
         GameEngine::ins().getWoodStyle(),
         GameEngine::ins().getBowlStyle(),
-        GameEngine::ins().getFoodStyle()
+        GameEngine::ins().getFoodStyle(),
+        GameEngine::ins().getToyStyle()
     );
 }

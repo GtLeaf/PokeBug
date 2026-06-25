@@ -91,6 +91,7 @@ void TerrariumScene::onEnter() {
     animFrame = 0;
     resetPressStart = 0;
     resetting = false;
+    resetToy();
 
     Bug& bug = GameEngine::ins().getBug();
     Stage stage = bug.getStage();
@@ -196,9 +197,382 @@ void TerrariumScene::resetLocalViewState() {
     restResumeAllowedMs = 0;
     foodRefillGraceUntilMs = 0;
     alertUntilMs = 0;
+    resetToy();
     mind.resetActivityTimer(Hal::ins().millis());
     stateTimer = 0;
     setIdleDuration();
+}
+
+void TerrariumScene::resetToy() {
+    const ToySpec& spec = currentToySpec();
+    toyType = ToyType::SOCCER;
+    toyVisible = isToyEnabled();
+    toyThrowing = false;
+    toyThrowStartMs = 0;
+    toyX = 172.0f;
+    toyY = (float)(TOY_TANK_BOTTOM - spec.radius);
+    toyVx = 0.0f;
+    toyVy = 0.0f;
+    toySpin = 0.0f;
+    toyAngle = 0.0f;
+    toyLastUpdateMs = Hal::ins().millis();
+    toyLastHitMs = 0;
+    toyAttackStartMs = 0;
+    toyCharging = false;
+    toyChargeStartMs = 0;
+    toyChargeDurationMs = 0;
+    toyChargeDir = 1;
+    toyNoCatchUntilMs = 0;
+}
+
+bool TerrariumScene::isToyEnabled() const {
+    return GameEngine::ins().getToyStyle() == GameEngine::TOY_BALL;
+}
+
+const TerrariumScene::ToySpec& TerrariumScene::currentToySpec() const {
+    static const ToySpec SOCCER {
+        ToyType::SOCCER,
+        6,       // radius
+        1.0f,    // mass
+        520.0f,  // gravity
+        0.76f,   // wallBounce
+        0.50f,   // floorBounce
+        0.992f,  // airDrag
+        0.90f,   // rollFriction
+        330.0f,  // baseImpulse
+        190.0f,  // liftImpulse
+    };
+
+    switch (toyType) {
+        case ToyType::SOCCER:
+        default:
+            return SOCCER;
+    }
+}
+
+uint8_t TerrariumScene::toyInterestPercent(Temperament temperament) const {
+    switch (temperament) {
+        case Temperament::BRUTE:     return 90;
+        case Temperament::SWIFT:     return 68;
+        case Temperament::GIANT:     return 56;
+        case Temperament::RESILIENT: return 45;
+        case Temperament::BALANCED:  return 62;
+        case Temperament::SPIRIT:    return 36;
+    }
+    return 50;
+}
+
+uint32_t TerrariumScene::toyChargeDurationFor(Temperament temperament) const {
+    switch (temperament) {
+        case Temperament::BRUTE:     return 420;
+        case Temperament::SWIFT:     return 500;
+        case Temperament::GIANT:     return 620;
+        case Temperament::RESILIENT: return 700;
+        case Temperament::BALANCED:  return 560;
+        case Temperament::SPIRIT:    return 760;
+    }
+    return 600;
+}
+
+float TerrariumScene::toyStrengthPower(const Bug& bug) const {
+    float cap = (float)bug.getStrCap();
+    float ratio = cap <= 1.0f ? 0.0f : (bug.getStr() - 1.0f) / (cap - 1.0f);
+    if (ratio < 0.0f) ratio = 0.0f;
+    if (ratio > 1.0f) ratio = 1.0f;
+
+    float power = 0.55f + ratio * 0.75f;
+    if (bug.getTemperament() == Temperament::BRUTE) power += 0.12f;
+    if (bug.getTemperament() == Temperament::SPIRIT) power -= 0.08f;
+    if (power < 0.42f) power = 0.42f;
+    if (power > 1.35f) power = 1.35f;
+    return power;
+}
+
+void TerrariumScene::startToyCharge(uint32_t nowMs, int pushDir) {
+    Bug& bug = GameEngine::ins().getBug();
+    if (pushDir == 0) pushDir = faceRight ? 1 : -1;
+    if (random(100) >= toyInterestPercent(bug.getTemperament())) {
+        deflectToyFromBeetle(pushDir);
+        toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_REBOUND_MS;
+        return;
+    }
+
+    const ToySpec& spec = currentToySpec();
+    faceRight = pushDir > 0;
+    toyCharging = true;
+    toyChargeStartMs = nowMs;
+    toyChargeDurationMs = toyChargeDurationFor(bug.getTemperament());
+    toyChargeDir = pushDir;
+    toyVx = 0.0f;
+    toyVy = 0.0f;
+    toySpin = 0.0f;
+    toyX = bugX + pushDir * (34.0f * bug.getAdultScale() + spec.radius - 1.0f);
+    toyY = (float)(TOY_TANK_BOTTOM - spec.radius);
+    if (toyX < TOY_TANK_LEFT + spec.radius) toyX = TOY_TANK_LEFT + spec.radius;
+    if (toyX > TOY_TANK_RIGHT - spec.radius) toyX = TOY_TANK_RIGHT - spec.radius;
+
+    adultState = AdultState::IDLE;
+    stateTimer = 0;
+    stateDuration = (toyChargeDurationMs / 50) + 8;
+    walkTargetIsRest = false;
+}
+
+void TerrariumScene::triggerToyHit(uint32_t nowMs, int pushDir, float chargeRatio) {
+    Bug& bug = GameEngine::ins().getBug();
+    const ToySpec& spec = currentToySpec();
+    if (pushDir == 0) pushDir = faceRight ? 1 : -1;
+    if (chargeRatio < 0.0f) chargeRatio = 0.0f;
+    if (chargeRatio > 1.0f) chargeRatio = 1.0f;
+
+    float power = toyStrengthPower(bug);
+    float chargeBonus = 0.72f + chargeRatio * 0.70f;
+    float massScale = spec.mass <= 0.1f ? 1.0f : (1.0f / spec.mass);
+    faceRight = pushDir > 0;
+    toyVx = pushDir * spec.baseImpulse * power * chargeBonus * massScale;
+    toyVy = -spec.liftImpulse * (0.72f + power * 0.35f) * chargeBonus * massScale;
+    toySpin = pushDir * (7.0f + 10.0f * power + 4.0f * chargeRatio);
+    toyLastHitMs = nowMs;
+    toyAttackStartMs = nowMs;
+    toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_HIT_MS;
+    toyCharging = false;
+    toyChargeStartMs = 0;
+}
+
+void TerrariumScene::updateToyPhysics(uint32_t nowMs) {
+    if (!isToyEnabled()) {
+        toyVisible = false;
+        toyThrowing = false;
+        toyCharging = false;
+        return;
+    }
+
+    if (toyThrowing) {
+        if (nowMs - toyThrowStartMs >= TOY_THROW_MS) {
+            finishToyThrow(nowMs);
+        }
+        toyLastUpdateMs = nowMs;
+        return;
+    }
+
+    if (!toyVisible) return;
+
+    const ToySpec& spec = currentToySpec();
+
+    if (toyCharging) {
+        Bug& bug = GameEngine::ins().getBug();
+        toyChargeDir = toyChargeDir >= 0 ? 1 : -1;
+        faceRight = toyChargeDir > 0;
+        toyX = bugX + toyChargeDir * (34.0f * bug.getAdultScale() + spec.radius - 1.0f);
+        toyY = (float)(TOY_TANK_BOTTOM - spec.radius);
+        if (toyX < TOY_TANK_LEFT + spec.radius) toyX = TOY_TANK_LEFT + spec.radius;
+        if (toyX > TOY_TANK_RIGHT - spec.radius) toyX = TOY_TANK_RIGHT - spec.radius;
+        uint32_t elapsed = nowMs - toyChargeStartMs;
+        if (elapsed >= toyChargeDurationMs) {
+            triggerToyHit(nowMs, toyChargeDir, 1.0f);
+        }
+        toyLastUpdateMs = nowMs;
+        return;
+    }
+
+    uint32_t elapsedMs = toyLastUpdateMs == 0 ? 33 : nowMs - toyLastUpdateMs;
+    toyLastUpdateMs = nowMs;
+    if (elapsedMs > 80) elapsedMs = 80;
+    float dt = elapsedMs / 1000.0f;
+
+    float ax = 0.0f;
+    float ay = 0.0f;
+    float az = 0.0f;
+    Hal::ins().getAccel(ax, ay, az);
+    if (fabsf(ax) > 0.08f) {
+        toyVx += -ax * TOY_TILT_ACCEL * dt;
+    }
+
+    toyVy += spec.gravity * dt;
+    toyX += toyVx * dt;
+    toyY += toyVy * dt;
+    toyAngle += toySpin * dt;
+    toyVx *= spec.airDrag;
+
+    float left = (float)(TOY_TANK_LEFT + spec.radius);
+    float right = (float)(TOY_TANK_RIGHT - spec.radius);
+    float top = (float)(TOY_TANK_TOP + spec.radius);
+    float bottom = (float)(TOY_TANK_BOTTOM - spec.radius);
+
+    if (toyX < left) {
+        toyX = left;
+        toyVx = fabsf(toyVx) * spec.wallBounce;
+        toySpin = fabsf(toySpin);
+        toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_REBOUND_MS;
+    } else if (toyX > right) {
+        toyX = right;
+        toyVx = -fabsf(toyVx) * spec.wallBounce;
+        toySpin = -fabsf(toySpin);
+        toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_REBOUND_MS;
+    }
+    if (toyY < top) {
+        toyY = top;
+        toyVy = fabsf(toyVy) * spec.wallBounce;
+        toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_REBOUND_MS;
+    } else if (toyY > bottom) {
+        toyY = bottom;
+        if (fabsf(toyVy) < 48.0f) {
+            toyVy = 0.0f;
+        } else {
+            toyVy = -fabsf(toyVy) * spec.floorBounce;
+            toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_REBOUND_MS;
+        }
+        toyVx *= spec.rollFriction;
+        toySpin *= spec.rollFriction;
+        if (fabsf(toyVx) < 3.0f) toyVx = 0.0f;
+        if (fabsf(toySpin) < 0.4f) toySpin = 0.0f;
+    }
+
+    Bug& bug = GameEngine::ins().getBug();
+    if (adultState == AdultState::REST || adultState == AdultState::EAT) return;
+
+    float adultScale = bug.getAdultScale();
+    float beetleHalfW = 34.0f * adultScale;
+    float beetleTop = GROUND_Y - 30.0f * adultScale;
+    float beetleBottom = GROUND_Y - 2.0f;
+    float beetleLeft = bugX - beetleHalfW;
+    float beetleRight = bugX + beetleHalfW;
+
+    float closestX = toyX;
+    if (closestX < beetleLeft) closestX = beetleLeft;
+    if (closestX > beetleRight) closestX = beetleRight;
+    float closestY = toyY;
+    if (closestY < beetleTop) closestY = beetleTop;
+    if (closestY > beetleBottom) closestY = beetleBottom;
+
+    float dx = toyX - closestX;
+    float dy = toyY - closestY;
+    if (dx * dx + dy * dy <= (float)(spec.radius * spec.radius)) {
+        int pushDir = toyX >= bugX ? 1 : -1;
+        toyX = pushDir > 0 ? beetleRight + spec.radius + 1.0f
+                           : beetleLeft - spec.radius - 1.0f;
+        if (toyX < left) toyX = left;
+        if (toyX > right) toyX = right;
+        float speed = sqrtf(toyVx * toyVx + toyVy * toyVy);
+        bool toyMovingIntoBeetle = (pushDir > 0 && toyVx < -20.0f) ||
+                                   (pushDir < 0 && toyVx > 20.0f);
+        bool canReact = nowMs >= toyNoCatchUntilMs &&
+                        nowMs - toyLastHitMs >= TOY_HIT_COOLDOWN_MS &&
+                        speed <= TOY_CATCH_MAX_SPEED &&
+                        !toyMovingIntoBeetle;
+        if (canReact) {
+            startToyCharge(nowMs, pushDir);
+        } else {
+            deflectToyFromBeetle(pushDir);
+        }
+    }
+}
+
+void TerrariumScene::deflectToyFromBeetle(int pushDir) {
+    if (pushDir == 0) pushDir = toyX >= bugX ? 1 : -1;
+    toyVx = fabsf(toyVx) * (float)pushDir * 0.45f;
+    if (fabsf(toyVx) < 24.0f) toyVx = 24.0f * (float)pushDir;
+    if (toyVy > 0.0f) toyVy *= 0.55f;
+    toySpin *= -0.4f;
+}
+
+void TerrariumScene::startToyThrow(uint32_t nowMs) {
+    if (!isToyEnabled()) return;
+    const ToySpec& spec = currentToySpec();
+    toyVisible = false;
+    toyCharging = false;
+    toyThrowing = true;
+    toyThrowStartMs = nowMs;
+    toyThrowFromX = 120 + random(-42, 43);
+    toyThrowFromY = Hal::DISPLAY_H + 18;
+    toyThrowTargetX = bugX + random(-24, 25);
+    toyThrowTargetY = GROUND_Y - (int)(42.0f * GameEngine::ins().getBug().getAdultScale()) +
+                      random(-7, 8);
+    if (toyThrowTargetY < TOY_TANK_TOP + spec.radius) toyThrowTargetY = TOY_TANK_TOP + spec.radius;
+    if (toyThrowTargetY > TOY_TANK_BOTTOM - spec.radius) toyThrowTargetY = TOY_TANK_BOTTOM - spec.radius;
+    toyThrowArcH = random(48, 83);
+    toyThrowCurveX = random(-28, 29);
+    toyX = (float)toyThrowTargetX;
+    toyY = (float)(TOY_TANK_BOTTOM - spec.radius);
+    toyVx = 0.0f;
+    toyVy = 0.0f;
+    toySpin = 0.0f;
+    toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_HIT_MS;
+}
+
+void TerrariumScene::finishToyThrow(uint32_t nowMs) {
+    const ToySpec& spec = currentToySpec();
+    toyThrowing = false;
+    toyVisible = true;
+    toyX = (float)toyThrowTargetX;
+    toyY = (float)toyThrowTargetY;
+    if (toyY < TOY_TANK_TOP + spec.radius) toyY = TOY_TANK_TOP + spec.radius;
+    if (toyY > TOY_TANK_BOTTOM - spec.radius) toyY = TOY_TANK_BOTTOM - spec.radius;
+
+    int pushDir = toyX >= bugX ? 1 : -1;
+    toyVx = (float)(pushDir * random(160, 251));
+    toyVy = -(float)random(110, 181);
+    toySpin = (float)(pushDir * random(8, 15));
+    toyLastHitMs = nowMs;
+    toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_HIT_MS;
+    toyLastUpdateMs = nowMs;
+
+    pokeReactionStartMs = nowMs;
+    pokeReactionWasPoked = true;
+    pokeThreatenEndMs = nowMs + POKE_REACTION_MS;
+    alertUntilMs = nowMs + random(ALERT_MIN_MS, ALERT_MAX_MS + 1);
+    adultState = AdultState::IDLE;
+    stateTimer = 0;
+    setIdleDuration();
+}
+
+void TerrariumScene::drawToyBall(int centerX, int centerY, int radius, uint8_t phase) {
+    if (radius < 3) radius = 3;
+    int x = centerX - radius;
+    int y = centerY - radius;
+    LGFX_Sprite& canvas = Hal::ins().canvas();
+    PixelRenderer::fillRect(x, y, radius * 2, radius * 2, PixelRenderer::WHITE);
+    canvas.drawRect(x, y, radius * 2, radius * 2, PixelRenderer::BLACK);
+
+    int patch = radius / 2;
+    if (patch < 2) patch = 2;
+    int small = radius / 3;
+    if (small < 1) small = 1;
+    PixelRenderer::fillRect(centerX - patch / 2, centerY - patch / 2,
+                            patch, patch, PixelRenderer::BLACK);
+    if (phase == 0 || phase == 2) {
+        PixelRenderer::fillRect(x + 1, y + 1, small, small, PixelRenderer::BLACK);
+        PixelRenderer::fillRect(centerX + radius - small - 1, centerY + radius - small - 1,
+                                small, small, PixelRenderer::BLACK);
+    } else {
+        PixelRenderer::fillRect(centerX + radius - small - 1, y + 1,
+                                small, small, PixelRenderer::BLACK);
+        PixelRenderer::fillRect(x + 1, centerY + radius - small - 1,
+                                small, small, PixelRenderer::BLACK);
+    }
+}
+
+void TerrariumScene::drawToyThrow() {
+    if (!toyThrowing) return;
+    uint32_t elapsed = Hal::ins().millis() - toyThrowStartMs;
+    if (elapsed > TOY_THROW_MS) elapsed = TOY_THROW_MS;
+    float t = (float)elapsed / (float)TOY_THROW_MS;
+    float depthEase = 1.0f - (1.0f - t) * (1.0f - t);
+    float arc = 4.0f * t * (1.0f - t);
+    int x = (int)(toyThrowFromX + (toyThrowTargetX - toyThrowFromX) * t +
+                  toyThrowCurveX * arc);
+    int y = (int)(toyThrowFromY + (toyThrowTargetY - toyThrowFromY) * t -
+                  toyThrowArcH * arc);
+    int radius = (int)(18.0f + (float)(currentToySpec().radius - 18) * depthEase);
+    uint8_t phase = (uint8_t)((elapsed / 80) & 0x03);
+    drawToyBall(x, y, radius, phase);
+}
+
+void TerrariumScene::drawToy() {
+    if (!isToyEnabled() || !toyVisible) return;
+    const ToySpec& spec = currentToySpec();
+    int radius = spec.radius;
+    uint8_t phase = (uint8_t)((int)(toyAngle * 2.0f) & 0x03);
+    drawToyBall((int)roundf(toyX), (int)roundf(toyY), radius, phase);
 }
 
 void TerrariumScene::enterLarvaState(LarvaState nextState, uint32_t nowMs) {
@@ -324,6 +698,10 @@ SceneID TerrariumScene::update() {
         faceRight = true;
     }
 
+    if (isMobileBeetleStage(bug.getStage()) && !bug.isDead()) {
+        updateToyPhysics(Hal::ins().millis());
+    }
+
     return nextScene;
 }
 
@@ -333,7 +711,11 @@ void TerrariumScene::render() {
     drawBackground();
     drawFoodTray();
     drawWood();
+    if (isMobileBeetleStage(bug.getStage()) && !bug.isDead()) {
+        drawToy();
+    }
     drawBug();
+    drawToyThrow();
     drawPokeAction();
     drawStatusBar();
 
@@ -364,6 +746,12 @@ bool TerrariumScene::onButton(const ButtonEvent& ev) {
     }
     if (ev.btn == 1 && ev.action == BtnAction::PRESSED) {
         uint64_t gameNow = GameEngine::ins().getGameNow();
+        if (isMobileBeetleStage(bug.getStage()) &&
+            GameEngine::ins().getToyStyle() == GameEngine::TOY_BALL) {
+            startToyThrow(Hal::ins().millis());
+            Serial.println("[Terrarium] Threw toy ball");
+            return true;
+        }
         if (bug.getStage() == Stage::EGG) {
             // 卵期短按 B：戳蛋
             bug.onEggPoke(gameNow);
@@ -638,6 +1026,25 @@ void TerrariumScene::drawAdult(int x, int y, uint8_t palette) {
             frameIndex = reverseStep >= frameCount ? 0 : (frameCount - 1 - reverseStep);
         }
         flipSprite = !faceRight;
+    } else if (toyCharging && isMobileBeetleStage(bug.getStage())) {
+        frames = HerculesAdultSprites::ATTACK_DOWN_FRAMES;
+        data = HerculesAdultSprites::ATTACK_DOWN_RLE;
+        frameCount = HerculesAdultSprites::ATTACK_DOWN_FRAME_COUNT;
+        uint32_t elapsed = Hal::ins().millis() - toyChargeStartMs;
+        uint32_t duration = toyChargeDurationMs == 0 ? 1 : toyChargeDurationMs;
+        frameIndex = (elapsed * frameCount) / duration;
+        if (frameIndex >= frameCount) frameIndex = frameCount - 1;
+        flipSprite = !faceRight;
+    } else if (toyAttackStartMs != 0 &&
+               Hal::ins().millis() - toyAttackStartMs < TOY_ATTACK_UP_MS &&
+               isMobileBeetleStage(bug.getStage())) {
+        uint32_t elapsed = Hal::ins().millis() - toyAttackStartMs;
+        frames = HerculesAdultSprites::ATTACK_UP_FRAMES;
+        data = HerculesAdultSprites::ATTACK_UP_RLE;
+        frameCount = HerculesAdultSprites::ATTACK_UP_FRAME_COUNT;
+        frameIndex = (elapsed * frameCount) / TOY_ATTACK_UP_MS;
+        if (frameIndex >= frameCount) frameIndex = frameCount - 1;
+        flipSprite = !faceRight;
     } else if (adultState == AdultState::REST) {
         // 夜间休息：先播放一次入睡 getDown，之后只循环 breath。
         uint32_t getDownFrames = HerculesAdultSprites::SLEEP_GETDOWN_FRAME_COUNT *
@@ -805,6 +1212,7 @@ void TerrariumScene::updateAdultMovement() {
     Bug& bug = GameEngine::ins().getBug();
 
     stateTimer++;
+    if (toyCharging) return;
 
     // threaten（威吓）期间不主动移动，但允许因大角度倾斜而滑落。
     if (pokeThreatenEndMs != 0 && Hal::ins().millis() < pokeThreatenEndMs) {
@@ -1066,6 +1474,7 @@ void TerrariumScene::updateAdultMovement() {
 
 void TerrariumScene::updateJuvenileMovement() {
     stateTimer++;
+    if (toyCharging) return;
 
     switch (adultState) {
         case AdultState::IDLE:

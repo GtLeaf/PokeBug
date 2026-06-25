@@ -24,6 +24,7 @@ private:
         WOOD,
         BOWL,
         FOOD,
+        TOY,
         SOCIAL,
         GIFT,
         FIGHT,
@@ -52,6 +53,7 @@ private:
     static int lastWoodSelected;
     static int lastBowlSelected;
     static int lastFoodSelected;
+    static int lastToySelected;
     static int lastSocialSelected;
     static int lastGiftSelected;
     static int lastFightSelected;
@@ -60,10 +62,11 @@ private:
     static int lastDebugStateSelected;
     static int lastDebugAttrSelected;
     static constexpr int MAIN_ITEM_COUNT = 7;
-    static constexpr int BOX_ITEM_COUNT = 6;
+    static constexpr int BOX_ITEM_COUNT = 7;
     static constexpr int WOOD_ITEM_COUNT = 7; // None + 5 种风格 + Back
     static constexpr int BOWL_ITEM_COUNT = 4; // 3 种风格 + Back
     static constexpr int FOOD_ITEM_COUNT = 7;
+    static constexpr int TOY_ITEM_COUNT = 3; // None + Ball + Back
     static constexpr int SOCIAL_ITEM_COUNT = 3; // Gift + Fight + Back
     static constexpr int GIFT_ITEM_COUNT = 3;   // Send Food + Receive Food + Back
     static constexpr int FIGHT_ITEM_COUNT = 3;  // Create + Search + Back
@@ -133,6 +136,7 @@ private:
         BOX_WOOD,
         BOX_BOWL,
         BOX_BG,
+        BOX_TOY,
         BOX_SLEEP,
         BOX_BACK,
     };
@@ -162,6 +166,12 @@ private:
         FOOD_JELLY,
         FOOD_BERRY,
         FOOD_BACK,
+    };
+
+    enum ToyItem {
+        TOY_NONE = 0,
+        TOY_BALL,
+        TOY_BACK,
     };
 
     enum SocialItem {

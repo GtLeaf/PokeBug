@@ -14,6 +14,7 @@ static constexpr const char* BACK_TO_BOX = "back to box"; // 返回箱子
 static constexpr const char* PLACE      = "Place";     // 放置
 static constexpr const char* TYPE       = "Type";      // 类型
 static constexpr const char* BG         = "BG";        // 背景
+static constexpr const char* TOY        = "Toy";       // 玩具
 static constexpr const char* UNKNOWN    = "Unknown";
 static constexpr const char* UNKNOWN_SHORT = "?";
 static constexpr const char* ELLIPSIS   = "...";
@@ -93,6 +94,7 @@ static constexpr const char* MENU_CUP         = "Cup";         // 甲虫杯
 static constexpr const char* MENU_WOOD        = "Wood";        // 腐木
 static constexpr const char* MENU_BOWL        = "Bowl";        // 食物盘
 static constexpr const char* MENU_SLEEP       = "Sleep";       // 睡觉
+static constexpr const char* MENU_TOY         = "Toy";         // 玩具
 static constexpr const char* CARE_ITEM_NOT_NEEDED = "Not needed yet."; // 暂不需要这个
 static constexpr const char* MENU_DEBUG_BEETLE = "Beetle";
 static constexpr const char* MENU_DEBUG_ATTR   = "Attributes";
@@ -254,6 +256,8 @@ static constexpr const char* EXPLORE_NPC_TITLE_FMT    = "[%s]%s";
 
 // 腐木（Wood）
 static constexpr const char* WOOD_NONE          = "None";
+static constexpr const char* TOY_NONE           = "None";
+static constexpr const char* TOY_BALL           = "Ball";
 static constexpr const char* WOOD_PLACED        = "Wood placed!";
 static constexpr const char* WOOD_NEED_ROTTEN   = "Wood locked.";
 static constexpr const char* WOOD_NONE_PLACED   = "No wood placed.";

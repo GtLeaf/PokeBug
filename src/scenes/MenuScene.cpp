@@ -18,6 +18,7 @@ int MenuScene::lastBoxSelected = 0;
 int MenuScene::lastWoodSelected = 0;
 int MenuScene::lastBowlSelected = 0;
 int MenuScene::lastFoodSelected = 0;
+int MenuScene::lastToySelected = 0;
 int MenuScene::lastSocialSelected = 0;
 int MenuScene::lastGiftSelected = 0;
 int MenuScene::lastFightSelected = 0;
@@ -74,6 +75,8 @@ void MenuScene::onExit() {
 
     if (mode == Mode::FOOD) {
         lastFoodSelected = selected;
+    } else if (mode == Mode::TOY) {
+        lastToySelected = selected;
     } else if (mode == Mode::BOWL) {
         lastBowlSelected = selected;
     } else if (mode == Mode::WOOD) {
@@ -136,7 +139,7 @@ void MenuScene::render() {
         drawWoodLayout();
     } else if (mode == Mode::BOWL) {
         drawBowlLayout();
-    } else if (mode == Mode::SOCIAL || mode == Mode::GIFT || mode == Mode::FIGHT ||
+    } else if (mode == Mode::TOY || mode == Mode::SOCIAL || mode == Mode::GIFT || mode == Mode::FIGHT ||
                mode == Mode::DEBUG_STATE || mode == Mode::DEBUG_ATTR) {
         drawSimpleList();
     } else if (mode == Mode::EXPLORE) {
@@ -263,6 +266,7 @@ void MenuScene::drawSimpleList() {
     int startY = 8;
     int sepGap = (int)(4 * fs);
     int count = itemCount();
+    LGFX_Sprite& canvas = Hal::ins().canvas();
 
     for (int i = 0; i < count; i++) {
         int y = startY + i * rowStep;
@@ -274,7 +278,17 @@ void MenuScene::drawSimpleList() {
         }
 
         char label[24];
-        PixelRenderer::drawPixelText(14, y, itemLabel(i, label, sizeof(label)), color, fs);
+        int textX = 14;
+        if (mode == Mode::TOY) {
+            textX = 22;
+            if (i < TOY_ITEM_COUNT - 1 && i == GameEngine::ins().getToyStyle()) {
+                int cx = 14;
+                int cy = y + (int)(4 * fs);
+                canvas.fillTriangle(cx, cy - 3, cx + 3, cy, cx, cy + 3, PixelRenderer::CYAN);
+                canvas.fillTriangle(cx, cy - 3, cx, cy + 3, cx - 3, cy, PixelRenderer::CYAN);
+            }
+        }
+        PixelRenderer::drawPixelText(textX, y, itemLabel(i, label, sizeof(label)), color, fs);
 
         if (i < count - 1) {
             PixelRenderer::fillRect(4, y + rowStep - sepGap, Hal::DISPLAY_W - 8, 1, PixelRenderer::GRAY);
@@ -429,6 +443,8 @@ bool MenuScene::onButton(const ButtonEvent& ev) {
             // 长按 B：返回上一级
             if (mode == Mode::FOOD) {
                 enterMode(Mode::MAIN);
+            } else if (mode == Mode::TOY) {
+                enterMode(Mode::BOX);
             } else if (mode == Mode::BOWL) {
                 enterMode(Mode::BOX);
             } else if (mode == Mode::WOOD) {
@@ -490,6 +506,19 @@ bool MenuScene::onButton(const ButtonEvent& ev) {
 
 void MenuScene::executeSelection() {
     Bug& bug = GameEngine::ins().getBug();
+    if (mode == Mode::TOY) {
+        if (selected == TOY_BACK) {
+            enterMode(Mode::BOX);
+            return;
+        }
+        if (selected == TOY_NONE || selected == TOY_BALL) {
+            GameEngine::ins().setToyStyle((uint8_t)selected);
+            saveSettingsNow();
+            Serial.printf("[Menu] Toy style: %s\n", GameEngine::ins().getToyStyleName());
+        }
+        return;
+    }
+
     if (mode == Mode::FOOD) {
         // 食物子菜单的放置/返回已在 onButton 中直接处理
         if (selected == FOOD_BACK) {
@@ -582,6 +611,9 @@ void MenuScene::executeSelection() {
                 GameEngine::ins().cycleMainSceneBg();
                 saveSettingsNow();
                 Serial.printf("[Menu] Main scene bg: %s\n", GameEngine::ins().getMainSceneBgName());
+                break;
+            case BOX_TOY:
+                enterMode(Mode::TOY);
                 break;
             case BOX_SLEEP:
                 if (bug.isDead()) {
@@ -792,6 +824,7 @@ void MenuScene::executeSelection() {
 
 void MenuScene::enterMode(Mode nextMode) {
     if (mode == Mode::FOOD) lastFoodSelected = selected;
+    else if (mode == Mode::TOY) lastToySelected = selected;
     else if (mode == Mode::BOWL) lastBowlSelected = selected;
     else if (mode == Mode::WOOD) lastWoodSelected = selected;
     else if (mode == Mode::BOX) lastBoxSelected = selected;
@@ -811,6 +844,10 @@ void MenuScene::enterMode(Mode nextMode) {
         if (selected >= FOOD_ITEM_COUNT - 1) selected = 0;
         foodScroll = 0.0f;       // 让列表在首帧自然滚动到选中项
         foodConfirmTime = 0;     // 清除上一次确认反馈
+    }
+    else if (mode == Mode::TOY) {
+        selected = GameEngine::ins().getToyStyle();
+        if (selected >= TOY_ITEM_COUNT - 1) selected = TOY_NONE;
     }
     else if (mode == Mode::BOWL) {
         selected = GameEngine::ins().getBowlStyle();
@@ -852,6 +889,7 @@ void MenuScene::enterMode(Mode nextMode) {
 
 int MenuScene::itemCount() const {
     if (mode == Mode::FOOD) return FOOD_ITEM_COUNT;
+    if (mode == Mode::TOY) return TOY_ITEM_COUNT;
     if (mode == Mode::BOWL) return BOWL_ITEM_COUNT;
     if (mode == Mode::WOOD) return WOOD_ITEM_COUNT;
     if (mode == Mode::BOX) return BOX_ITEM_COUNT;
@@ -880,6 +918,15 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
         return UiStrings::BACK;
     }
 
+    if (mode == Mode::TOY) {
+        switch (index) {
+            case TOY_NONE: return UiStrings::TOY_NONE;
+            case TOY_BALL: return UiStrings::TOY_BALL;
+            case TOY_BACK:
+            default: return UiStrings::BACK;
+        }
+    }
+
     if (mode == Mode::WOOD) {
         if (index == WOOD_NONE) {
             return UiStrings::WOOD_NONE;
@@ -902,6 +949,8 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
                 snprintf(buf, bufSize, "%s:%s", UiStrings::BG,
                          GameEngine::ins().getMainSceneBgName());
                 return buf;
+            case BOX_TOY:
+                return UiStrings::MENU_TOY;
             case BOX_SLEEP:
                 return UiStrings::MENU_SLEEP;
             case BOX_BACK:
@@ -1008,7 +1057,8 @@ void MenuScene::saveSettingsNow() {
         GameEngine::ins().getMainSceneBg(),
         GameEngine::ins().getWoodStyle(),
         GameEngine::ins().getBowlStyle(),
-        GameEngine::ins().getFoodStyle()
+        GameEngine::ins().getFoodStyle(),
+        GameEngine::ins().getToyStyle()
     );
 }
 

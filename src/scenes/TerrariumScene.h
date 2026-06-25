@@ -77,6 +77,49 @@ private:
     uint32_t lastShakeNotifyMs = 0;   // 上次 shake 通知心智的时间
     BugMind mind;
 
+    enum class ToyType : uint8_t {
+        SOCCER = 0,
+    };
+
+    struct ToySpec {
+        ToyType type;
+        uint8_t radius;
+        float mass;
+        float gravity;
+        float wallBounce;
+        float floorBounce;
+        float airDrag;
+        float rollFriction;
+        float baseImpulse;
+        float liftImpulse;
+    };
+
+    // 玩具最小原型：默认足球色块，只和缸壁/甲虫发生伪物理碰撞
+    ToyType toyType = ToyType::SOCCER;
+    float toyX = 172.0f;
+    float toyY = 116.0f;
+    float toyVx = 0.0f;
+    float toyVy = 0.0f;
+    float toySpin = 0.0f;
+    float toyAngle = 0.0f;
+    uint32_t toyLastUpdateMs = 0;
+    uint32_t toyLastHitMs = 0;
+    uint32_t toyAttackStartMs = 0;
+    bool toyCharging = false;
+    uint32_t toyChargeStartMs = 0;
+    uint32_t toyChargeDurationMs = 0;
+    int toyChargeDir = 1;
+    uint32_t toyNoCatchUntilMs = 0;
+    bool toyVisible = false;
+    bool toyThrowing = false;
+    uint32_t toyThrowStartMs = 0;
+    int toyThrowFromX = 120;
+    int toyThrowFromY = 142;
+    int toyThrowTargetX = 120;
+    int toyThrowTargetY = 100;
+    int toyThrowArcH = 28;
+    int toyThrowCurveX = 0;
+
     static constexpr int GROUND_Y = 125;   // 甲虫贴地时脚所在的 Y 坐标
     static constexpr int FOOD_X = 55;      // 食物盘旁站立位置（中心点）
     static constexpr int WOOD_REST_X = 154; // 腐木上的休息位置（腐木中心）
@@ -106,6 +149,18 @@ private:
     static constexpr uint32_t ALERT_MIN_MS = 8000;
     static constexpr uint32_t ALERT_MAX_MS = 16000;
 
+    static constexpr int TOY_TANK_LEFT = 5;
+    static constexpr int TOY_TANK_RIGHT = 235;
+    static constexpr int TOY_TANK_TOP = 10;
+    static constexpr int TOY_TANK_BOTTOM = GROUND_Y - 1;
+    static constexpr uint32_t TOY_ATTACK_UP_MS = 260;
+    static constexpr uint32_t TOY_HIT_COOLDOWN_MS = 360;
+    static constexpr uint32_t TOY_NO_CATCH_AFTER_HIT_MS = 1200;
+    static constexpr uint32_t TOY_NO_CATCH_AFTER_REBOUND_MS = 650;
+    static constexpr uint32_t TOY_THROW_MS = 520;
+    static constexpr float TOY_CATCH_MAX_SPEED = 70.0f;
+    static constexpr float TOY_TILT_ACCEL = 190.0f;
+
     // 倾斜交互参数
     static constexpr float TILT_SLIDE_THRESHOLD_G = 1.0f;  // 超过此角度先向低处滑落
     static constexpr int TILT_SLIDE_DISTANCE = 30;         // 滑落距离（像素），更明显
@@ -117,9 +172,24 @@ private:
     void drawBug();
     void drawFoodTray();
     void drawWood();
+    void drawToy();
     void drawStatusBar();
     void drawDeathScreen();
     void resetLocalViewState();
+    void resetToy();
+    void updateToyPhysics(uint32_t nowMs);
+    void startToyCharge(uint32_t nowMs, int pushDir);
+    void triggerToyHit(uint32_t nowMs, int pushDir, float chargeRatio);
+    void deflectToyFromBeetle(int pushDir);
+    void startToyThrow(uint32_t nowMs);
+    void finishToyThrow(uint32_t nowMs);
+    void drawToyBall(int centerX, int centerY, int radius, uint8_t phase);
+    void drawToyThrow();
+    bool isToyEnabled() const;
+    const ToySpec& currentToySpec() const;
+    uint8_t toyInterestPercent(Temperament temperament) const;
+    uint32_t toyChargeDurationFor(Temperament temperament) const;
+    float toyStrengthPower(const Bug& bug) const;
 
     void drawEgg(int x, int y, uint8_t palette);
     void drawLarva(int x, int y, uint8_t palette);
