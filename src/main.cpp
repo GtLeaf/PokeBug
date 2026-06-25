@@ -2,6 +2,7 @@
 #include "esp_sleep.h"
 #include "core/GameEngine.h"
 #include "core/SaveManager.h"
+#include "hardware/Hal.h"
 #include "hardware/PixelRenderer.h"
 #include "game/Bug.h"
 
@@ -75,6 +76,10 @@ void setup() {
     randomSeed(esp_random());
 
     GameEngine::ins().begin();
+    Serial.printf("[Boot] PSRAM found=%d size=%u free=%u\n",
+                  psramFound() ? 1 : 0,
+                  ESP.getPsramSize(),
+                  ESP.getFreePsram());
     PixelRenderer::bind(&Hal::ins().canvas());
 
     Serial.println("[Boot] Init done");

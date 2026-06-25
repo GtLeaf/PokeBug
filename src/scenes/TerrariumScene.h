@@ -77,6 +77,64 @@ public:
     void persistViewState();
 
 private:
+    static constexpr uint16_t CACHE_TRANSPARENT = 0xF81F;
+    static constexpr int HUD_CACHE_H = 48;
+    static constexpr uint8_t FRAME_CACHE_SLOTS = 28;
+
+    struct StaticLayerCache {
+        LGFX_Sprite sprite;
+        bool valid = false;
+        uint8_t bg = 0xFF;
+        bool night = false;
+        Stage stage = Stage::EGG;
+        uint8_t bowlStyle = 0xFF;
+        uint8_t woodStyle = 0xFF;
+        uint8_t foodStyle = 0xFF;
+        bool woodPlaced = false;
+        bool foodInTray = false;
+        uint8_t foodAmount = 0;
+    };
+
+    struct HudCache {
+        LGFX_Sprite sprite;
+        bool valid = false;
+        bool visitHost = false;
+        uint8_t fontBucket = 0;
+        uint8_t weatherDayMod = 0;
+        uint8_t hostHunger = 0;
+        uint8_t hostMot = 0;
+        uint8_t guestHunger = 0;
+        uint8_t guestMot = 0;
+        uint16_t remainingSec = 0;
+        uint16_t durationSec = 0;
+        char clock[8] = {0};
+    };
+
+    struct BeetleFrameCache {
+        LGFX_Sprite sprite;
+        bool valid = false;
+        uint32_t lastUsed = 0;
+        uintptr_t dataId = 0;
+        uint16_t offset = 0;
+        uint16_t length = 0;
+        uint8_t frameW = 0;
+        uint8_t frameH = 0;
+        uint16_t scaleQ = 0;
+        bool mapped = false;
+        uint16_t keyMain = 0;
+        uint16_t targetMain = 0;
+        uint16_t keyShadow = 0;
+        uint16_t targetShadow = 0;
+        uint16_t keyMarking = 0;
+        uint16_t targetMarking = 0;
+        bool flip = false;
+    };
+
+    StaticLayerCache staticLayerCache;
+    HudCache hudCache;
+    BeetleFrameCache frameCache[FRAME_CACHE_SLOTS];
+    uint32_t frameCacheClock = 0;
+
     AdultBeetleActor localActor;
     int& bugX = localActor.x;
     int& bugY = localActor.y;
@@ -199,6 +257,7 @@ private:
     uint8_t visitPingFailures = 0;
     uint32_t lastVisitPingMs = 0;
     uint32_t lastVisitStatusMs = 0;
+    uint32_t lastVisitStatusRxMs = 0;
     uint32_t visitorIntentUntilMs = 0;
     bool visitorEatRequested = false;
     uint32_t lastVisitEatIntentMs = 0;
@@ -238,7 +297,10 @@ private:
     static constexpr uint32_t FOOD_REFILL_GRACE_MS = 3000;
     static constexpr uint8_t REST_GETDOWN_FRAME_INTERVAL = 8; // 入睡动作每帧约 0.4 秒
     static constexpr uint8_t REST_BREATH_FRAME_INTERVAL = 18; // 睡眠呼吸慢循环
-    static constexpr uint16_t IDLE_LOOK_AROUND_CHANCE_PER_1000 = 3;
+    static constexpr uint8_t AI_DECISION_INTERVAL_FRAMES = 10;
+    static constexpr uint16_t IDLE_LOOK_AROUND_CHANCE_PER_DECISION_1000 = 30;
+    static constexpr uint16_t REST_WAKE_CHANCE_PER_DECISION_1000 = 40;
+    static constexpr uint16_t JUVENILE_LOOK_AROUND_CHANCE_PER_DECISION_1000 = 120;
     static constexpr uint32_t ALERT_MIN_MS = 8000;
     static constexpr uint32_t ALERT_MAX_MS = 16000;
 
@@ -257,19 +319,22 @@ private:
     static constexpr uint32_t VISITOR_DROP_MS = 720;
     static constexpr uint32_t VISITOR_STEP_MS = 140;
     static constexpr uint32_t VISITOR_INTENT_STEP_MS = 70;
+    static constexpr uint32_t VISITOR_HOST_STEP_MS = 200;
+    static constexpr uint32_t VISITOR_HOST_INTENT_STEP_MS = 120;
     static constexpr uint32_t VISITOR_INTENT_MS = 1200;
     static constexpr uint32_t VISITOR_IDLE_MIN_MS = 1200;
     static constexpr uint32_t VISITOR_IDLE_MAX_MS = 3600;
     static constexpr uint32_t VISITOR_TURN_MS = 520;
     static constexpr uint32_t VISIT_PING_INTERVAL_MS = 5000;
     static constexpr uint32_t VISIT_STATUS_INTERVAL_MS = 3000;
+    static constexpr uint32_t VISIT_STATUS_TIMEOUT_MS = 12000;
     static constexpr uint32_t VISIT_EAT_INTENT_INTERVAL_MS = 8000;
     static constexpr uint32_t VISIT_EAT_FAIL_RETRY_MS = 12000;
     static constexpr uint32_t VISIT_PLAY_INTENT_MIN_MS = 18000;
     static constexpr uint32_t VISIT_PLAY_INTENT_MAX_MS = 45000;
     static constexpr uint8_t VISIT_EAT_HUNGER_THRESHOLD = 80;
     static constexpr int VISITOR_EAT_DISTANCE_PX = 10;
-    static constexpr uint8_t VISIT_PING_MAX_FAILURES = 2;
+    static constexpr uint8_t VISIT_PING_MAX_FAILURES = 3;
 
     // 倾斜交互参数
     static constexpr float TILT_SLIDE_THRESHOLD_G = 1.0f;  // 超过此角度先向低处滑落
@@ -396,4 +461,44 @@ private:
     int getPokeTargetY() const;
 
     static const uint16_t PALETTE[4][2];
+
+    bool ensureCacheSprite(LGFX_Sprite& sprite, int w, int h);
+    void invalidateRenderCaches();
+    void drawStaticLayer();
+    bool staticLayerMatches() const;
+    void rebuildStaticLayer();
+    void drawCachedStatusBar();
+    bool hudCacheMatches(const char* clockBuf) const;
+    void rebuildHudCache(const char* clockBuf);
+    bool drawCachedRleFrame(int drawX, int drawY,
+                            uint8_t frameW, uint8_t frameH,
+                            const uint16_t* data, uint16_t offset, uint16_t length,
+                            float scale, bool flipSprite);
+    bool drawCachedMappedRleFrame(int drawX, int drawY,
+                                  uint8_t frameW, uint8_t frameH,
+                                  const uint16_t* data, uint16_t offset, uint16_t length,
+                                  float scale,
+                                  uint16_t keyMain, uint16_t targetMain,
+                                  uint16_t keyShadow, uint16_t targetShadow,
+                                  uint16_t keyMarking, uint16_t targetMarking,
+                                  bool flipSprite);
+    bool drawCachedFrame(int drawX, int drawY,
+                         uint8_t frameW, uint8_t frameH,
+                         const uint16_t* data, uint16_t offset, uint16_t length,
+                         float scale,
+                         bool mapped,
+                         uint16_t keyMain, uint16_t targetMain,
+                         uint16_t keyShadow, uint16_t targetShadow,
+                         uint16_t keyMarking, uint16_t targetMarking,
+                         bool flipSprite);
+    bool frameCacheMatches(const BeetleFrameCache& cache,
+                           int cacheW, int cacheH,
+                           uintptr_t dataId, uint16_t offset, uint16_t length,
+                           uint8_t frameW, uint8_t frameH, uint16_t scaleQ,
+                           bool mapped,
+                           uint16_t keyMain, uint16_t targetMain,
+                           uint16_t keyShadow, uint16_t targetShadow,
+                           uint16_t keyMarking, uint16_t targetMarking,
+                           bool flipSprite) const;
+    BeetleFrameCache* selectFrameCacheSlot();
 };

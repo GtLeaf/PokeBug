@@ -11,6 +11,7 @@
 #include "../scenes/CupScene.h"
 #include "../game/ItemCatalog.h"
 #include "../assets/BowlAssets.h"
+#include "../hardware/BattleLink.h"
 
 GameEngine& GameEngine::ins() {
     static GameEngine instance;
@@ -198,6 +199,8 @@ void GameEngine::run() {
         checkCupCycle();
     }
 
+    BattleLink::ins().setVisitPowerSave(hasActiveVisitSession());
+
     // 自动保存
     if (realNow - lastSaveTime > AUTO_SAVE_MS) {
         forceSave();
@@ -219,12 +222,19 @@ void GameEngine::run() {
     // 渲染
     if (curScene) {
         if (systemState == SystemState::ACTIVE) {
-            curScene->render();
-            Hal::ins().flush();
+            uint32_t renderInterval = (curSceneID == SCENE_TERRARIUM && isVisitHost())
+                                      ? VISIT_HOST_RENDER_MS
+                                      : target;
+            if (lastRenderTime == 0 || realNow - lastRenderTime >= renderInterval) {
+                curScene->render();
+                Hal::ins().flush();
+                lastRenderTime = realNow;
+            }
         } else if (!idleRendered) {
             curScene->render();
             Hal::ins().flush();
             idleRendered = true;
+            lastRenderTime = realNow;
         }
     }
 
@@ -254,6 +264,7 @@ void GameEngine::switchScene(SceneID id) {
     }
 
     resetIdleTimer();
+    lastRenderTime = 0;
     curSceneID = id;
 
     switch (id) {

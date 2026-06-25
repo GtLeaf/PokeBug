@@ -10,6 +10,14 @@ namespace {
 constexpr bool BATTLE_LINK_PACKET_LOGS = false;
 constexpr uint32_t BATTLE_LINK_WARN_LOG_INTERVAL_MS = 10000;
 
+bool isVisitTrackedMessage(uint8_t type) {
+    return type == MSG_VISIT_RECALL ||
+           type == MSG_VISIT_PING ||
+           type == MSG_VISIT_STATUS ||
+           type == MSG_VISIT_INTENT ||
+           type == MSG_VISIT_EAT_RESULT;
+}
+
 }
 
 #define BATTLE_LINK_LOG_EVERY_MS(intervalMs, statement) do { \
@@ -40,6 +48,7 @@ bool BattleLink::begin() {
     if (err != ESP_OK) {
         Serial.printf("[BattleLink] esp_wifi_set_ps failed, err=%d\n", err);
     }
+    visitPowerSaveActive = false;
 
     err = esp_now_init();
     if (err != ESP_OK) {
@@ -81,11 +90,29 @@ void BattleLink::end() {
     initialized = false;
     sendBusy = false;
     currentSendTracked = false;
+    visitPowerSaveActive = false;
     sendState = SendState::IDLE;
     battlePeerSet = false;
     pendingGift = false;
     lastGiftSeen = false;
     pendingVisitVitals = false;
+}
+
+void BattleLink::setVisitPowerSave(bool enabled) {
+    if (!initialized) {
+        visitPowerSaveActive = false;
+        return;
+    }
+    if (enabled == visitPowerSaveActive) return;
+
+    esp_err_t err = esp_wifi_set_ps(enabled ? WIFI_PS_MIN_MODEM : WIFI_PS_NONE);
+    if (err != ESP_OK) {
+        Serial.printf("[BattleLink] visit WiFi PS set failed enabled=%u err=%d\n",
+                      enabled ? 1 : 0, err);
+        return;
+    }
+    visitPowerSaveActive = enabled;
+    Serial.printf("[BattleLink] visit WiFi PS %s\n", enabled ? "MIN_MODEM" : "NONE");
 }
 
 bool BattleLink::ensureBroadcastPeer() {
@@ -124,6 +151,7 @@ bool BattleLink::ensureUnicastPeer(const uint8_t mac[6]) {
 // ============================================================
 void BattleLink::startRoomHost(uint8_t roomId, uint8_t purpose) {
     if (!initialized) begin();
+    setVisitPowerSave(false);
     roomState = RoomState::HOSTING;
     hostedRoomId = roomId;
     roomPurpose = purpose;
@@ -140,6 +168,7 @@ void BattleLink::startRoomHost(uint8_t roomId, uint8_t purpose) {
 
 void BattleLink::startRoomSearch(uint8_t purpose) {
     if (!initialized) begin();
+    setVisitPowerSave(false);
     roomState = RoomState::SEARCHING;
     roomPurpose = purpose;
     memset(roomList, 0, sizeof(roomList));
@@ -1090,17 +1119,22 @@ void BattleLink::update() {
     if (sendState == SendState::SENDING) {
         if (sendCtx.ackReceived) {
             sendState = SendState::SUCCESS;
-        } else if (now - sendCtx.startMs > ACK_TIMEOUT_MS) {
-            sendCtx.retryCount++;
-            if (sendCtx.retryCount > MAX_RETRIES) {
-                sendState = SendState::FAIL;
-                BATTLE_LINK_LOG_EVERY_MS(BATTLE_LINK_WARN_LOG_INTERVAL_MS,
-                                         Serial.println("[BattleLink] send retries exhausted"));
-            } else {
-                sendCtx.startMs = now;
-                sendInternal(sendCtx.targetMac, sendCtx.buf, sendCtx.len);
-                if (BATTLE_LINK_PACKET_LOGS) {
-                    Serial.printf("[BattleLink] retry %d/%d\n", sendCtx.retryCount, MAX_RETRIES);
+        } else {
+            uint32_t ackTimeoutMs = isVisitTrackedMessage(sendCtx.buf[0])
+                                    ? VISIT_ACK_TIMEOUT_MS
+                                    : ACK_TIMEOUT_MS;
+            if (now - sendCtx.startMs > ackTimeoutMs) {
+                sendCtx.retryCount++;
+                if (sendCtx.retryCount > MAX_RETRIES) {
+                    sendState = SendState::FAIL;
+                    BATTLE_LINK_LOG_EVERY_MS(BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+                                             Serial.println("[BattleLink] send retries exhausted"));
+                } else {
+                    sendCtx.startMs = now;
+                    sendInternal(sendCtx.targetMac, sendCtx.buf, sendCtx.len);
+                    if (BATTLE_LINK_PACKET_LOGS) {
+                        Serial.printf("[BattleLink] retry %d/%d\n", sendCtx.retryCount, MAX_RETRIES);
+                    }
                 }
             }
         }

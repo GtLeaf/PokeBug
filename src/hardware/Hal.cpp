@@ -91,7 +91,40 @@ void Hal::lightSleep(uint32_t seconds) {
 }
 
 int Hal::batteryLevel() {
-    return M5.Power.getBatteryLevel();
+    uint32_t now = millis();
+    if (batteryFilterReady && now - lastBatterySampleMs < BATTERY_SAMPLE_MS) {
+        return displayedBatteryLevel;
+    }
+
+    int raw = M5.Power.getBatteryLevel();
+    lastBatterySampleMs = now;
+    if (raw < 0) {
+        return batteryFilterReady ? displayedBatteryLevel : raw;
+    }
+    if (raw > 100) raw = 100;
+
+    auto charging = M5.Power.isCharging();
+    bool isCharging = charging == m5::Power_Class::is_charging;
+    if (!batteryFilterReady) {
+        filteredBatteryLevel = (float)raw;
+        displayedBatteryLevel = raw;
+        batteryFilterReady = true;
+        return displayedBatteryLevel;
+    }
+
+    float next = filteredBatteryLevel * (1.0f - BATTERY_EMA_ALPHA) +
+                 (float)raw * BATTERY_EMA_ALPHA;
+    int rounded = (int)(next + 0.5f);
+    if (!isCharging && rounded > displayedBatteryLevel + BATTERY_MAX_RISE_PER_SAMPLE) {
+        rounded = displayedBatteryLevel + BATTERY_MAX_RISE_PER_SAMPLE;
+        next = (float)rounded;
+    }
+    if (rounded < 0) rounded = 0;
+    if (rounded > 100) rounded = 100;
+
+    filteredBatteryLevel = next;
+    displayedBatteryLevel = rounded;
+    return displayedBatteryLevel;
 }
 
 uint32_t Hal::millis() const {

@@ -47,6 +47,13 @@ private:
     uint8_t brightness = 128;
 
     uint32_t lastShakeTime = 0;
+    bool batteryFilterReady = false;
+    float filteredBatteryLevel = 0.0f;
+    int displayedBatteryLevel = -1;
+    uint32_t lastBatterySampleMs = 0;
     static constexpr float SHAKE_THRESHOLD_G = 2.0f;
     static constexpr uint32_t SHAKE_COOLDOWN_MS = 500;
+    static constexpr uint32_t BATTERY_SAMPLE_MS = 15000;
+    static constexpr float BATTERY_EMA_ALPHA = 0.20f;
+    static constexpr int BATTERY_MAX_RISE_PER_SAMPLE = 1;
 };

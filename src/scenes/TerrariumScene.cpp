@@ -13,6 +13,7 @@
 #include "../assets/FoodAssets.h"
 #include "../assets/ActionAssets.h"
 #include <cmath>
+#include <cstring>
 
 const uint16_t TerrariumScene::PALETTE[4][2] = {
     { PixelRenderer::BROWN, PixelRenderer::DARK_BROWN },
@@ -122,8 +123,324 @@ uint16_t adultDepthColor(Temperament temperament, float ratio) {
 
 }
 
+bool TerrariumScene::ensureCacheSprite(LGFX_Sprite& sprite, int w, int h) {
+    if (w <= 0 || h <= 0) return false;
+    if (sprite.getBuffer() && sprite.width() == w && sprite.height() == h) {
+        return true;
+    }
+
+    sprite.deleteSprite();
+    sprite.setPsram(psramFound());
+    sprite.setColorDepth(16);
+    sprite.setSwapBytes(true);
+    if (!sprite.createSprite(w, h)) {
+        return false;
+    }
+    return true;
+}
+
+void TerrariumScene::invalidateRenderCaches() {
+    staticLayerCache.valid = false;
+    hudCache.valid = false;
+}
+
+bool TerrariumScene::staticLayerMatches() const {
+    if (!staticLayerCache.valid || !staticLayerCache.sprite.getBuffer()) return false;
+
+    const Bug& bug = GameEngine::ins().getBug();
+    return staticLayerCache.bg == GameEngine::ins().getMainSceneBg() &&
+           staticLayerCache.night == GameEngine::ins().isNight() &&
+           staticLayerCache.stage == bug.getStage() &&
+           staticLayerCache.bowlStyle == GameEngine::ins().getBowlStyle() &&
+           staticLayerCache.woodStyle == GameEngine::ins().getWoodStyle() &&
+           staticLayerCache.foodStyle == GameEngine::ins().getFoodStyle() &&
+           staticLayerCache.woodPlaced == bug.isWoodPlaced() &&
+           staticLayerCache.foodInTray == bug.hasFoodInTray() &&
+           staticLayerCache.foodAmount == bug.getFoodAmount();
+}
+
+void TerrariumScene::rebuildStaticLayer() {
+    if (!ensureCacheSprite(staticLayerCache.sprite, Hal::DISPLAY_W, Hal::DISPLAY_H)) {
+        staticLayerCache.valid = false;
+        return;
+    }
+
+    PixelRenderer::bind(&staticLayerCache.sprite);
+    drawBackground();
+    drawFoodTray();
+    drawWood();
+    PixelRenderer::bind(&Hal::ins().canvas());
+
+    const Bug& bug = GameEngine::ins().getBug();
+    staticLayerCache.valid = true;
+    staticLayerCache.bg = GameEngine::ins().getMainSceneBg();
+    staticLayerCache.night = GameEngine::ins().isNight();
+    staticLayerCache.stage = bug.getStage();
+    staticLayerCache.bowlStyle = GameEngine::ins().getBowlStyle();
+    staticLayerCache.woodStyle = GameEngine::ins().getWoodStyle();
+    staticLayerCache.foodStyle = GameEngine::ins().getFoodStyle();
+    staticLayerCache.woodPlaced = bug.isWoodPlaced();
+    staticLayerCache.foodInTray = bug.hasFoodInTray();
+    staticLayerCache.foodAmount = bug.getFoodAmount();
+}
+
+void TerrariumScene::drawStaticLayer() {
+    if (!staticLayerMatches()) {
+        rebuildStaticLayer();
+    }
+
+    if (staticLayerCache.valid && staticLayerCache.sprite.getBuffer()) {
+        staticLayerCache.sprite.pushSprite(&Hal::ins().canvas(), 0, 0);
+        return;
+    }
+
+    drawBackground();
+    drawFoodTray();
+    drawWood();
+}
+
+bool TerrariumScene::hudCacheMatches(const char* clockBuf) const {
+    if (!hudCache.valid || !hudCache.sprite.getBuffer()) return false;
+    const Bug& bug = GameEngine::ins().getBug();
+    bool visitHost = GameEngine::ins().isVisitHost();
+    uint8_t fontBucket = PixelRenderer::getContentFontScale() < 1.65f ? 0 : 1;
+    uint16_t remainingSec = 0;
+    uint16_t durationSec = 0;
+    uint8_t guestHunger = 0;
+    uint8_t guestMot = 0;
+    if (visitHost) {
+        remainingSec = (uint16_t)((GameEngine::ins().getVisitRemainingMs() + 999UL) / 1000UL);
+        durationSec = (uint16_t)((GameEngine::ins().getVisitDurationMs() + 999UL) / 1000UL);
+        const VisitBugSnapshot& guest = GameEngine::ins().getVisitRemoteBug();
+        guestHunger = guest.hunger;
+        guestMot = guest.motivation;
+    }
+
+    return hudCache.visitHost == visitHost &&
+           hudCache.fontBucket == fontBucket &&
+           hudCache.weatherDayMod == (GameEngine::ins().getCurrentGameDay() % 3) &&
+           hudCache.hostHunger == bug.getHunger() &&
+           hudCache.hostMot == bug.getMot() &&
+           hudCache.guestHunger == guestHunger &&
+           hudCache.guestMot == guestMot &&
+           hudCache.remainingSec == remainingSec &&
+           hudCache.durationSec == durationSec &&
+           strcmp(hudCache.clock, clockBuf) == 0;
+}
+
+void TerrariumScene::rebuildHudCache(const char* clockBuf) {
+    if (!ensureCacheSprite(hudCache.sprite, Hal::DISPLAY_W, HUD_CACHE_H)) {
+        hudCache.valid = false;
+        return;
+    }
+
+    hudCache.sprite.fillSprite(CACHE_TRANSPARENT);
+    PixelRenderer::bind(&hudCache.sprite);
+    drawStatusBar();
+    PixelRenderer::bind(&Hal::ins().canvas());
+
+    const Bug& bug = GameEngine::ins().getBug();
+    bool visitHost = GameEngine::ins().isVisitHost();
+    hudCache.valid = true;
+    hudCache.visitHost = visitHost;
+    hudCache.fontBucket = PixelRenderer::getContentFontScale() < 1.65f ? 0 : 1;
+    hudCache.weatherDayMod = GameEngine::ins().getCurrentGameDay() % 3;
+    hudCache.hostHunger = bug.getHunger();
+    hudCache.hostMot = bug.getMot();
+    hudCache.remainingSec = 0;
+    hudCache.durationSec = 0;
+    hudCache.guestHunger = 0;
+    hudCache.guestMot = 0;
+    if (visitHost) {
+        hudCache.remainingSec = (uint16_t)((GameEngine::ins().getVisitRemainingMs() + 999UL) / 1000UL);
+        hudCache.durationSec = (uint16_t)((GameEngine::ins().getVisitDurationMs() + 999UL) / 1000UL);
+        const VisitBugSnapshot& guest = GameEngine::ins().getVisitRemoteBug();
+        hudCache.guestHunger = guest.hunger;
+        hudCache.guestMot = guest.motivation;
+    }
+    strncpy(hudCache.clock, clockBuf, sizeof(hudCache.clock) - 1);
+    hudCache.clock[sizeof(hudCache.clock) - 1] = '\0';
+}
+
+void TerrariumScene::drawCachedStatusBar() {
+    if (GameEngine::ins().isVisitGuest()) return;
+
+    char clockBuf[8];
+    GameEngine::ins().getExploreClockText(clockBuf, sizeof(clockBuf));
+    if (!hudCacheMatches(clockBuf)) {
+        rebuildHudCache(clockBuf);
+    }
+
+    if (hudCache.valid && hudCache.sprite.getBuffer()) {
+        hudCache.sprite.pushSprite(&Hal::ins().canvas(), 0, 0, CACHE_TRANSPARENT);
+        return;
+    }
+    drawStatusBar();
+}
+
+bool TerrariumScene::frameCacheMatches(const BeetleFrameCache& cache,
+                                       int cacheW, int cacheH,
+                                       uintptr_t dataId, uint16_t offset, uint16_t length,
+                                       uint8_t frameW, uint8_t frameH, uint16_t scaleQ,
+                                       bool mapped,
+                                       uint16_t keyMain, uint16_t targetMain,
+                                       uint16_t keyShadow, uint16_t targetShadow,
+                                       uint16_t keyMarking, uint16_t targetMarking,
+                                       bool flipSprite) const {
+    return cache.valid && cache.sprite.getBuffer() &&
+           cache.sprite.width() == cacheW &&
+           cache.sprite.height() == cacheH &&
+           cache.dataId == dataId &&
+           cache.offset == offset &&
+           cache.length == length &&
+           cache.frameW == frameW &&
+           cache.frameH == frameH &&
+           cache.scaleQ == scaleQ &&
+           cache.mapped == mapped &&
+           cache.keyMain == keyMain &&
+           cache.targetMain == targetMain &&
+           cache.keyShadow == keyShadow &&
+           cache.targetShadow == targetShadow &&
+           cache.keyMarking == keyMarking &&
+           cache.targetMarking == targetMarking &&
+           cache.flip == flipSprite;
+}
+
+TerrariumScene::BeetleFrameCache* TerrariumScene::selectFrameCacheSlot() {
+    BeetleFrameCache* oldest = &frameCache[0];
+    for (uint8_t i = 0; i < FRAME_CACHE_SLOTS; ++i) {
+        if (!frameCache[i].valid || !frameCache[i].sprite.getBuffer()) {
+            return &frameCache[i];
+        }
+        if (frameCache[i].lastUsed < oldest->lastUsed) {
+            oldest = &frameCache[i];
+        }
+    }
+    oldest->valid = false;
+    return oldest;
+}
+
+bool TerrariumScene::drawCachedRleFrame(int drawX, int drawY,
+                                        uint8_t frameW, uint8_t frameH,
+                                        const uint16_t* data, uint16_t offset,
+                                        uint16_t length, float scale,
+                                        bool flipSprite) {
+    return drawCachedFrame(drawX, drawY,
+                           frameW, frameH,
+                           data, offset, length,
+                           scale,
+                           false,
+                           0, 0,
+                           0, 0,
+                           0, 0,
+                           flipSprite);
+}
+
+bool TerrariumScene::drawCachedMappedRleFrame(int drawX, int drawY,
+                                              uint8_t frameW, uint8_t frameH,
+                                              const uint16_t* data, uint16_t offset,
+                                              uint16_t length, float scale,
+                                              uint16_t keyMain, uint16_t targetMain,
+                                              uint16_t keyShadow, uint16_t targetShadow,
+                                              uint16_t keyMarking, uint16_t targetMarking,
+                                              bool flipSprite) {
+    return drawCachedFrame(drawX, drawY,
+                           frameW, frameH,
+                           data, offset, length,
+                           scale,
+                           true,
+                           keyMain, targetMain,
+                           keyShadow, targetShadow,
+                           keyMarking, targetMarking,
+                           flipSprite);
+}
+
+bool TerrariumScene::drawCachedFrame(int drawX, int drawY,
+                                     uint8_t frameW, uint8_t frameH,
+                                     const uint16_t* data, uint16_t offset,
+                                     uint16_t length, float scale,
+                                     bool mapped,
+                                     uint16_t keyMain, uint16_t targetMain,
+                                     uint16_t keyShadow, uint16_t targetShadow,
+                                     uint16_t keyMarking, uint16_t targetMarking,
+                                     bool flipSprite) {
+    if (!data || frameW == 0 || frameH == 0 || scale <= 0.0f) return false;
+
+    int cacheW = (int)ceilf(frameW * scale) + 2;
+    int cacheH = (int)ceilf(frameH * scale) + 2;
+    if (cacheW < 3) cacheW = 3;
+    if (cacheH < 3) cacheH = 3;
+    uint16_t scaleQ = (uint16_t)(scale * 1000.0f + 0.5f);
+    uintptr_t dataId = (uintptr_t)data;
+
+    for (uint8_t i = 0; i < FRAME_CACHE_SLOTS; ++i) {
+        if (frameCacheMatches(frameCache[i],
+                              cacheW, cacheH,
+                              dataId, offset, length,
+                              frameW, frameH, scaleQ,
+                              mapped,
+                              keyMain, targetMain,
+                              keyShadow, targetShadow,
+                              keyMarking, targetMarking,
+                              flipSprite)) {
+            frameCache[i].lastUsed = ++frameCacheClock;
+            frameCache[i].sprite.pushSprite(&Hal::ins().canvas(),
+                                            drawX - 1, drawY - 1,
+                                            CACHE_TRANSPARENT);
+            return true;
+        }
+    }
+
+    BeetleFrameCache* cache = selectFrameCacheSlot();
+    if (!ensureCacheSprite(cache->sprite, cacheW, cacheH)) {
+        cache->valid = false;
+        return false;
+    }
+    cache->sprite.fillSprite(CACHE_TRANSPARENT);
+    PixelRenderer::bind(&cache->sprite);
+    if (mapped) {
+        PixelRenderer::drawRgb565RleMappedScaled(1, 1,
+                                                 frameW,
+                                                 frameH,
+                                                 data, offset, length,
+                                                 scale,
+                                                 keyMain, targetMain,
+                                                 keyShadow, targetShadow,
+                                                 keyMarking, targetMarking,
+                                                 flipSprite);
+    } else {
+        PixelRenderer::drawRgb565RleScaled(1, 1,
+                                           frameW,
+                                           frameH,
+                                           data, offset, length,
+                                           scale,
+                                           flipSprite);
+    }
+    PixelRenderer::bind(&Hal::ins().canvas());
+
+    cache->valid = true;
+    cache->lastUsed = ++frameCacheClock;
+    cache->dataId = dataId;
+    cache->offset = offset;
+    cache->length = length;
+    cache->frameW = frameW;
+    cache->frameH = frameH;
+    cache->scaleQ = scaleQ;
+    cache->mapped = mapped;
+    cache->keyMain = keyMain;
+    cache->targetMain = targetMain;
+    cache->keyShadow = keyShadow;
+    cache->targetShadow = targetShadow;
+    cache->keyMarking = keyMarking;
+    cache->targetMarking = targetMarking;
+    cache->flip = flipSprite;
+    cache->sprite.pushSprite(&Hal::ins().canvas(), drawX - 1, drawY - 1, CACHE_TRANSPARENT);
+    return true;
+}
+
 void TerrariumScene::onEnter() {
     animFrame = 0;
+    invalidateRenderCaches();
     resetPressStart = 0;
     resetting = false;
     visitRecallConfirm = false;
@@ -131,6 +448,7 @@ void TerrariumScene::onEnter() {
     visitPingFailures = 0;
     lastVisitPingMs = Hal::ins().millis();
     lastVisitStatusMs = Hal::ins().millis();
+    lastVisitStatusRxMs = Hal::ins().millis();
     visitorIntentUntilMs = 0;
     visitorEatRequested = false;
     lastVisitEatIntentMs = 0;
@@ -422,6 +740,8 @@ void TerrariumScene::updateVisitor(uint32_t nowMs) {
             visitor.y = (int)(visitor.fromY + (visitor.targetY - visitor.fromY) * ease);
         }
     } else {
+        uint32_t stepMs = GameEngine::ins().isVisitHost() ? VISITOR_HOST_STEP_MS : VISITOR_STEP_MS;
+        uint32_t intentStepMs = GameEngine::ins().isVisitHost() ? VISITOR_HOST_INTENT_STEP_MS : VISITOR_INTENT_STEP_MS;
         visitor.y = visitor.targetY;
         if (visitor.actor.state != AdultState::TURN && visitor.turning) {
             logVisitorState("clear-stale-turning", nowMs);
@@ -484,7 +804,7 @@ void TerrariumScene::updateVisitor(uint32_t nowMs) {
                     }
                     logVisitorState("turn-done", nowMs);
                 } else {
-                    visitor.nextStepMs = nowMs + VISITOR_STEP_MS;
+                    visitor.nextStepMs = nowMs + stepMs;
                     return;
                 }
             }
@@ -508,7 +828,7 @@ void TerrariumScene::updateVisitor(uint32_t nowMs) {
                         logVisitorState("slide-to-climb", nowMs);
                     }
                 }
-                visitor.nextStepMs = nowMs + VISITOR_STEP_MS;
+                visitor.nextStepMs = nowMs + stepMs;
                 return;
             }
 
@@ -517,7 +837,7 @@ void TerrariumScene::updateVisitor(uint32_t nowMs) {
                     visitor.actor.state = AdultState::IDLE;
                     visitor.actor.stateTimer = 0;
                     scheduleVisitorWander(nowMs);
-                    visitor.nextStepMs = nowMs + VISITOR_STEP_MS;
+                    visitor.nextStepMs = nowMs + stepMs;
                     logVisitorState("climb-done", nowMs);
                     return;
                 }
@@ -534,7 +854,7 @@ void TerrariumScene::updateVisitor(uint32_t nowMs) {
                     scheduleVisitorWander(nowMs);
                     logVisitorState("climb-done", nowMs);
                 }
-                visitor.nextStepMs = nowMs + VISITOR_STEP_MS;
+                visitor.nextStepMs = nowMs + stepMs;
                 return;
             }
 
@@ -545,7 +865,7 @@ void TerrariumScene::updateVisitor(uint32_t nowMs) {
                     logVisitorState("arrived-idle", nowMs);
                 }
                 if (nowMs < visitor.nextWanderMs) {
-                    visitor.nextStepMs = nowMs + VISITOR_STEP_MS;
+                    visitor.nextStepMs = nowMs + stepMs;
                     return;
                 }
                 visitor.nextWanderMs = 0;
@@ -554,7 +874,7 @@ void TerrariumScene::updateVisitor(uint32_t nowMs) {
             if (visitor.x < visitor.targetX) {
                 if (!visitor.faceRight) {
                     beginActorTurn(visitor.actor, true, true, nowMs, VISITOR_TURN_MS);
-                    visitor.nextStepMs = nowMs + VISITOR_STEP_MS;
+                    visitor.nextStepMs = nowMs + stepMs;
                     return;
                 }
                 visitor.actor.state = AdultState::WALK;
@@ -562,13 +882,13 @@ void TerrariumScene::updateVisitor(uint32_t nowMs) {
             } else if (visitor.x > visitor.targetX) {
                 if (visitor.faceRight) {
                     beginActorTurn(visitor.actor, false, true, nowMs, VISITOR_TURN_MS);
-                    visitor.nextStepMs = nowMs + VISITOR_STEP_MS;
+                    visitor.nextStepMs = nowMs + stepMs;
                     return;
                 }
                 visitor.actor.state = AdultState::WALK;
                 visitor.x--;
             }
-            visitor.nextStepMs = nowMs + (nowMs < visitorIntentUntilMs ? VISITOR_INTENT_STEP_MS : VISITOR_STEP_MS);
+            visitor.nextStepMs = nowMs + (nowMs < visitorIntentUntilMs ? intentStepMs : stepMs);
         }
     }
 }
@@ -799,6 +1119,7 @@ void TerrariumScene::updateVisitGuestLink(uint32_t nowMs) {
         }
         visitPingFailures = 0;
         lastVisitPingMs = nowMs;
+        lastVisitStatusRxMs = nowMs;
     }
 
     visit_eat_result_t eatResult;
@@ -828,6 +1149,14 @@ void TerrariumScene::updateVisitGuestLink(uint32_t nowMs) {
             Serial.println("[Terrarium] Visit auto recalled: host unreachable");
             return;
         }
+    }
+
+    if (nowMs - lastVisitStatusRxMs >= VISIT_STATUS_TIMEOUT_MS) {
+        GameEngine::ins().clearVisitSession();
+        visitRecallConfirm = false;
+        visitPingInFlight = false;
+        Serial.println("[Terrarium] Visit auto recalled: host status timeout");
+        return;
     }
 
     if (!visitPingInFlight &&
@@ -1799,8 +2128,9 @@ SceneID TerrariumScene::update() {
         bug.setSleeping(false);
     }
 
-    // 更新甲虫心智（成虫期且存活）
-    if (bug.getStage() == Stage::ADULT && !bug.isDead()) {
+    // 更新甲虫心智（成虫期且存活）。心智决策降频到每 10 帧一次，移动/动画仍保持 20fps。
+    if (bug.getStage() == Stage::ADULT && !bug.isDead() &&
+        (animFrame % AI_DECISION_INTERVAL_FRAMES) == 0) {
         mind.update(bug.getHunger(), bug.getMot(),
                     GameEngine::ins().isNight(), bug.isWoodPlaced(),
                     bug.hasFoodInTray() && bug.getFoodAmount() > 0,
@@ -1871,9 +2201,7 @@ SceneID TerrariumScene::update() {
 void TerrariumScene::render() {
     Bug& bug = GameEngine::ins().getBug();
 
-    drawBackground();
-    drawFoodTray();
-    drawWood();
+    drawStaticLayer();
     if (GameEngine::ins().isVisitGuest()) {
         drawVisitAwayOverlay();
         if (visitRecallConfirm) {
@@ -1889,7 +2217,7 @@ void TerrariumScene::render() {
     }
     drawToyEntry();
     drawPokeAction();
-    drawStatusBar();
+    drawCachedStatusBar();
 
     if (bug.isDead()) {
         drawDeathScreen();
@@ -2263,10 +2591,18 @@ void TerrariumScene::drawVisitorAdult(int x, int y) {
         drawX -= 2;
     }
 
-    PixelRenderer::drawRgb565RleMappedScaled(drawX,
-                                             drawY,
-                                             frameW,
-                                             frameH,
+    if (drawCachedMappedRleFrame(drawX, drawY,
+                                 frameW, frameH,
+                                 data, offset, length,
+                                 scale,
+                                 HerculesAdultSprites::PALETTE_KEY, color,
+                                 HerculesAdultSprites::PALETTE_KEY, color,
+                                 HerculesAdultSprites::PALETTE_KEY, color,
+                                 flipSprite)) {
+        return;
+    }
+    PixelRenderer::drawRgb565RleMappedScaled(drawX, drawY,
+                                             frameW, frameH,
                                              data, offset, length,
                                              scale,
                                              HerculesAdultSprites::PALETTE_KEY, color,
@@ -2294,6 +2630,12 @@ void TerrariumScene::drawEgg(int x, int y, uint8_t palette) {
     uint16_t length = pgm_read_word(&HerculesEggSprites::FRAMES[frameIndex].length);
     uint8_t w = pgm_read_byte(&HerculesEggSprites::FRAMES[frameIndex].width);
     uint8_t h = pgm_read_byte(&HerculesEggSprites::FRAMES[frameIndex].height);
+    if (drawCachedRleFrame(x - w / 2, y + 9 - h,
+                           w, h,
+                           HerculesEggSprites::RLE, offset, length,
+                           1.0f, false)) {
+        return;
+    }
     PixelRenderer::drawRgb565Rle(x - w / 2, y + 9 - h, w, h,
                                  HerculesEggSprites::RLE, offset, length);
 }
@@ -2333,6 +2675,12 @@ void TerrariumScene::drawLarva(int x, int y, uint8_t palette) {
     uint16_t length = pgm_read_word(&frames[frameIndex].length);
     uint8_t w = pgm_read_byte(&frames[frameIndex].width);
     uint8_t h = pgm_read_byte(&frames[frameIndex].height);
+    if (drawCachedRleFrame(x - w / 2, y + 5 - h,
+                           w, h,
+                           rle, offset, length,
+                           1.0f, false)) {
+        return;
+    }
     PixelRenderer::drawRgb565Rle(x - w / 2, y + 5 - h, w, h, rle, offset, length);
 }
 
@@ -2349,6 +2697,12 @@ void TerrariumScene::drawPupa(int x, int y, uint8_t palette) {
     uint16_t length = pgm_read_word(&HerculesPupaSprites::FRAMES[frameIndex].length);
     uint8_t w = pgm_read_byte(&HerculesPupaSprites::FRAMES[frameIndex].width);
     uint8_t h = pgm_read_byte(&HerculesPupaSprites::FRAMES[frameIndex].height);
+    if (drawCachedRleFrame(x - w / 2, y - h / 2,
+                           w, h,
+                           HerculesPupaSprites::RLE, offset, length,
+                           1.0f, false)) {
+        return;
+    }
     PixelRenderer::drawRgb565Rle(x - w / 2, y - h / 2, w, h,
                                  HerculesPupaSprites::RLE, offset, length);
 }
@@ -2462,10 +2816,18 @@ void TerrariumScene::drawAdult(int x, int y, uint8_t palette) {
     int drawX = (int)(x - (frameW * adultScale) / 2.0f);
     int drawY = (int)(y - frameH * adultScale);
     // y 是脚/底部参考点，让精灵底部对齐 y
-    PixelRenderer::drawRgb565RleMappedScaled(drawX,
-                                             drawY,
-                                             frameW,
-                                             frameH,
+    if (drawCachedMappedRleFrame(drawX, drawY,
+                                 frameW, frameH,
+                                 data, offset, length,
+                                 adultScale,
+                                 HerculesAdultSprites::PALETTE_KEY, adultHue,
+                                 HerculesAdultSprites::PALETTE_KEY, adultHue,
+                                 HerculesAdultSprites::PALETTE_KEY, adultHue,
+                                 flipSprite)) {
+        return;
+    }
+    PixelRenderer::drawRgb565RleMappedScaled(drawX, drawY,
+                                             frameW, frameH,
                                              data, offset, length,
                                              adultScale,
                                              HerculesAdultSprites::PALETTE_KEY, adultHue,
@@ -2566,6 +2928,7 @@ void TerrariumScene::updateAdultMovement() {
 
     stateTimer++;
     if (toyCharging) return;
+    bool aiDecisionFrame = (stateTimer % AI_DECISION_INTERVAL_FRAMES) == 0;
 
     // threaten（威吓）期间不主动移动，但允许因大角度倾斜而滑落。
     if (pokeThreatenEndMs != 0 && Hal::ins().millis() < pokeThreatenEndMs) {
@@ -2590,14 +2953,15 @@ void TerrariumScene::updateAdultMovement() {
                 }
                 foodRefillGraceUntilMs = 0;
             }
-            // 静止后段偶尔张望。这里是每帧概率，20fps 下不能设得太高。
-            if (stateTimer > (stateDuration * 2) / 3 &&
-                random(1000) < IDLE_LOOK_AROUND_CHANCE_PER_1000) {
+            // 静止后段偶尔张望。AI 决策每 10 帧评估一次，概率按等效频率换算。
+            if (aiDecisionFrame &&
+                stateTimer > (stateDuration * 2) / 3 &&
+                random(1000) < IDLE_LOOK_AROUND_CHANCE_PER_DECISION_1000) {
                 startTurn(!faceRight, false);
                 break;
             }
             // 静止结束后由 AI 心智决定下一步
-            if (stateTimer >= stateDuration) {
+            if (aiDecisionFrame && stateTimer >= stateDuration) {
                 Desire d = mind.topDesire();
                 static uint32_t lastVoiceLog = 0;
                 if (Hal::ins().millis() - lastVoiceLog > 5000) {
@@ -2816,7 +3180,10 @@ void TerrariumScene::updateAdultMovement() {
                 if (bug.isWoodPlaced() && abs(WOOD_REST_X - bugX) <= 2) {
                     bug.recordWoodRest(GameEngine::ins().getGameNow());
                 }
-                if (!GameEngine::ins().isNight() && stateTimer > 180 && random(1000) < 4) {
+                if (aiDecisionFrame &&
+                    !GameEngine::ins().isNight() &&
+                    stateTimer > 180 &&
+                    random(1000) < REST_WAKE_CHANCE_PER_DECISION_1000) {
                     adultState = AdultState::IDLE;
                     stateTimer = 0;
                     setIdleDuration();
@@ -2837,14 +3204,17 @@ void TerrariumScene::updateAdultMovement() {
 void TerrariumScene::updateJuvenileMovement() {
     stateTimer++;
     if (toyCharging) return;
+    bool aiDecisionFrame = (stateTimer % AI_DECISION_INTERVAL_FRAMES) == 0;
 
     switch (adultState) {
         case AdultState::IDLE:
-            if (stateTimer > (stateDuration / 2) && random(1000) < 12) {
+            if (aiDecisionFrame &&
+                stateTimer > (stateDuration / 2) &&
+                random(1000) < JUVENILE_LOOK_AROUND_CHANCE_PER_DECISION_1000) {
                 startTurn(!faceRight, false);
                 break;
             }
-            if (stateTimer >= stateDuration) {
+            if (aiDecisionFrame && stateTimer >= stateDuration) {
                 int newTarget = random(MIN_X, MAX_X + 1);
                 if (abs(newTarget - bugX) < 24) {
                     if (bugX < 120) {

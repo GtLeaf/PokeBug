@@ -207,6 +207,7 @@ public:
     void setBattlePeer(const uint8_t* mac, bool asHost);
     bool isBattlePeerSet() const { return battlePeerSet; }
     bool isHost() const { return battleAsHost; }
+    void setVisitPowerSave(bool enabled);
 
     // 发送对战数据
     bool sendSync(const battle_sync_t& sync);
@@ -251,11 +252,13 @@ private:
     static constexpr uint32_t ROOM_ADVERT_INTERVAL_MS = 500;
     static constexpr uint32_t ROOM_ENTRY_TIMEOUT_MS = 3000;
     static constexpr uint32_t ACK_TIMEOUT_MS = 300;   // 直连场景 ACK 通常很快，缩短超时以便快速重试
+    static constexpr uint32_t VISIT_ACK_TIMEOUT_MS = 700;
     static constexpr uint8_t  MAX_RETRIES = 5;
 
     bool initialized = false;
     bool sendBusy = false;
     bool currentSendTracked = false;
+    bool visitPowerSaveActive = false;
 
     // 房间阶段状态
     enum class RoomState { IDLE, HOSTING, SEARCHING };

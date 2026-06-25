@@ -437,12 +437,14 @@ private:
 
     static constexpr uint32_t ACTIVE_FRAME_MS  = 50;    // ~20fps
     static constexpr uint32_t IDLE_FRAME_MS    = 100;   // 10fps
+    static constexpr uint32_t VISIT_HOST_RENDER_MS = ACTIVE_FRAME_MS; // Visit 时保持 20fps
     static constexpr uint32_t INPUT_SAMPLE_MS  = 16;    // 输入采样 60Hz
     static constexpr uint32_t AUTO_SAVE_MS     = 60000; // 60s 自动保存
     static constexpr uint32_t LIGHT_SLEEP_MS   = 60000; // 1min 后进入 Deep Sleep
     static constexpr uint32_t IMU_SAMPLE_MS    = 50;    // IMU 采样 20Hz
 
     uint32_t lastImuTime = 0;
+    uint32_t lastRenderTime = 0;
 
     void processInput();
     bool routeButtonEvent(const ButtonEvent& ev);
