@@ -5,6 +5,24 @@
 
 const uint8_t BattleLink::BROADCAST_MAC[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
+namespace {
+
+constexpr bool BATTLE_LINK_PACKET_LOGS = false;
+constexpr uint32_t BATTLE_LINK_WARN_LOG_INTERVAL_MS = 10000;
+
+}
+
+#define BATTLE_LINK_LOG_EVERY_MS(intervalMs, statement) do { \
+    static uint32_t lastLogMs = 0; \
+    static bool logSeen = false; \
+    uint32_t nowLogMs = Hal::ins().millis(); \
+    if (!logSeen || nowLogMs - lastLogMs >= (intervalMs)) { \
+        logSeen = true; \
+        lastLogMs = nowLogMs; \
+        statement; \
+    } \
+} while (false)
+
 BattleLink& BattleLink::ins() {
     static BattleLink instance;
     return instance;
@@ -46,6 +64,7 @@ bool BattleLink::begin() {
     sendState = SendState::IDLE;
     pendingGift = false;
     lastGiftSeen = false;
+    pendingVisitVitals = false;
     Serial.println("[BattleLink] initialized");
     return true;
 }
@@ -66,6 +85,7 @@ void BattleLink::end() {
     battlePeerSet = false;
     pendingGift = false;
     lastGiftSeen = false;
+    pendingVisitVitals = false;
 }
 
 bool BattleLink::ensureBroadcastPeer() {
@@ -111,6 +131,7 @@ void BattleLink::startRoomHost(uint8_t roomId, uint8_t purpose) {
     pendingJoinReq = false;
     pendingGift = false;
     lastGiftSeen = false;
+    pendingVisitVitals = false;
     uint8_t mac[6];
     getMyMac(mac);
     Serial.printf("[BattleLink] start hosting room=%u purpose=%u my=%02X:%02X:%02X:%02X:%02X:%02X\n",
@@ -125,6 +146,7 @@ void BattleLink::startRoomSearch(uint8_t purpose) {
     pendingJoinAck = false;
     pendingGift = false;
     lastGiftSeen = false;
+    pendingVisitVitals = false;
     uint8_t mac[6];
     getMyMac(mac);
     Serial.printf("[BattleLink] start searching rooms purpose=%u my=%02X:%02X:%02X:%02X:%02X:%02X\n",
@@ -220,6 +242,7 @@ void BattleLink::setBattlePeer(const uint8_t* mac, bool asHost) {
     battlePeerSet = true;
     // 大厅阶段的 join req/ack 可能还在等 ACK，进入对战后不再需要，直接清空发送状态
     sendState = SendState::IDLE;
+    pendingVisitVitals = false;
     Serial.printf("[BattleLink] battle peer set host=%d mac=%02X:%02X\n",
                   asHost ? 1 : 0, mac[0], mac[5]);
 }
@@ -325,8 +348,16 @@ bool BattleLink::sendGiftItem(uint16_t itemId, uint8_t amount) {
 }
 
 bool BattleLink::sendVisitRecall() {
-    if (!battlePeerSet) { Serial.println("[BattleLink] sendVisitRecall: no peer"); return false; }
-    if (sendState == SendState::SENDING) { Serial.println("[BattleLink] sendVisitRecall: busy"); return false; }
+    if (!battlePeerSet) {
+        BATTLE_LINK_LOG_EVERY_MS(BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+                                 Serial.println("[BattleLink] visit recall: no peer"));
+        return false;
+    }
+    if (sendState == SendState::SENDING) {
+        BATTLE_LINK_LOG_EVERY_MS(BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+                                 Serial.println("[BattleLink] visit recall: busy"));
+        return false;
+    }
     visit_recall_t recall = { MSG_VISIT_RECALL, BATTLE_PROTOCOL_VERSION };
     memcpy(sendCtx.buf, &recall, sizeof(recall));
     sendCtx.len = sizeof(recall);
@@ -340,25 +371,43 @@ bool BattleLink::sendVisitRecall() {
     return true;
 }
 
-bool BattleLink::sendVisitPing() {
-    if (!battlePeerSet) { Serial.println("[BattleLink] sendVisitPing: no peer"); return false; }
-    if (sendState == SendState::SENDING) { Serial.println("[BattleLink] sendVisitPing: busy"); return false; }
-    visit_ping_t ping = { MSG_VISIT_PING, BATTLE_PROTOCOL_VERSION };
+bool BattleLink::sendVisitPing(uint8_t hunger, uint8_t motivation) {
+    if (!battlePeerSet) {
+        BATTLE_LINK_LOG_EVERY_MS(BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+                                 Serial.println("[BattleLink] visit ping: no peer"));
+        return false;
+    }
+    if (sendState == SendState::SENDING) {
+        BATTLE_LINK_LOG_EVERY_MS(BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+                                 Serial.println("[BattleLink] visit ping: busy"));
+        return false;
+    }
+    if (hunger > 100) hunger = 100;
+    if (motivation > 100) motivation = 100;
+    visit_ping_t ping = { MSG_VISIT_PING, BATTLE_PROTOCOL_VERSION, hunger, motivation };
     memcpy(sendCtx.buf, &ping, sizeof(ping));
     sendCtx.len = sizeof(ping);
     memcpy(sendCtx.targetMac, battlePeerMac, 6);
     sendCtx.retryCount = 0;
     sendCtx.ackReceived = false;
     sendCtx.startMs = Hal::ins().millis();
-    Serial.println("[BattleLink] sendVisitPing");
+    if (BATTLE_LINK_PACKET_LOGS) Serial.println("[BattleLink] sendVisitPing");
     if (!sendInternal(battlePeerMac, sendCtx.buf, sendCtx.len)) return false;
     sendState = SendState::SENDING;
     return true;
 }
 
 bool BattleLink::sendVisitStatus(uint32_t remainingMs, uint32_t durationMs, uint8_t speedX10, bool active) {
-    if (!battlePeerSet) { Serial.println("[BattleLink] sendVisitStatus: no peer"); return false; }
-    if (sendState == SendState::SENDING) { Serial.println("[BattleLink] sendVisitStatus: busy"); return false; }
+    if (!battlePeerSet) {
+        BATTLE_LINK_LOG_EVERY_MS(BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+                                 Serial.println("[BattleLink] visit status: no peer"));
+        return false;
+    }
+    if (sendState == SendState::SENDING) {
+        BATTLE_LINK_LOG_EVERY_MS(BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+                                 Serial.println("[BattleLink] visit status: busy"));
+        return false;
+    }
     if (remainingMs > 0xFFFFUL * 1000UL) remainingMs = 0xFFFFUL * 1000UL;
     if (durationMs > 0xFFFFUL * 1000UL) durationMs = 0xFFFFUL * 1000UL;
     if (speedX10 == 0) speedX10 = 10;
@@ -376,16 +425,26 @@ bool BattleLink::sendVisitStatus(uint32_t remainingMs, uint32_t durationMs, uint
     sendCtx.retryCount = 0;
     sendCtx.ackReceived = false;
     sendCtx.startMs = Hal::ins().millis();
-    Serial.printf("[BattleLink] sendVisitStatus active=%u remain=%u duration=%u speed=%u\n",
-                  status.flags & 1, status.remaining_s, status.duration_s, status.speed_x10);
+    if (BATTLE_LINK_PACKET_LOGS) {
+        Serial.printf("[BattleLink] sendVisitStatus active=%u remain=%u duration=%u speed=%u\n",
+                      status.flags & 1, status.remaining_s, status.duration_s, status.speed_x10);
+    }
     if (!sendInternal(battlePeerMac, sendCtx.buf, sendCtx.len)) return false;
     sendState = SendState::SENDING;
     return true;
 }
 
 bool BattleLink::sendVisitIntent(uint8_t intent) {
-    if (!battlePeerSet) { Serial.println("[BattleLink] sendVisitIntent: no peer"); return false; }
-    if (sendState == SendState::SENDING) { Serial.println("[BattleLink] sendVisitIntent: busy"); return false; }
+    if (!battlePeerSet) {
+        BATTLE_LINK_LOG_EVERY_MS(BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+                                 Serial.println("[BattleLink] visit intent: no peer"));
+        return false;
+    }
+    if (sendState == SendState::SENDING) {
+        BATTLE_LINK_LOG_EVERY_MS(BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+                                 Serial.println("[BattleLink] visit intent: busy"));
+        return false;
+    }
     visit_intent_t packet = { MSG_VISIT_INTENT, BATTLE_PROTOCOL_VERSION, intent };
     memcpy(sendCtx.buf, &packet, sizeof(packet));
     sendCtx.len = sizeof(packet);
@@ -393,7 +452,9 @@ bool BattleLink::sendVisitIntent(uint8_t intent) {
     sendCtx.retryCount = 0;
     sendCtx.ackReceived = false;
     sendCtx.startMs = Hal::ins().millis();
-    Serial.printf("[BattleLink] sendVisitIntent intent=%u\n", intent);
+    if (BATTLE_LINK_PACKET_LOGS) {
+        Serial.printf("[BattleLink] sendVisitIntent intent=%u\n", intent);
+    }
     if (!sendInternal(battlePeerMac, sendCtx.buf, sendCtx.len)) return false;
     sendState = SendState::SENDING;
     return true;
@@ -401,8 +462,16 @@ bool BattleLink::sendVisitIntent(uint8_t intent) {
 
 bool BattleLink::sendVisitEatResult(bool success, uint8_t hungerGain,
                                     uint8_t newGuestHunger, uint8_t foodType) {
-    if (!battlePeerSet) { Serial.println("[BattleLink] sendVisitEatResult: no peer"); return false; }
-    if (sendState == SendState::SENDING) { Serial.println("[BattleLink] sendVisitEatResult: busy"); return false; }
+    if (!battlePeerSet) {
+        BATTLE_LINK_LOG_EVERY_MS(BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+                                 Serial.println("[BattleLink] visit eat result: no peer"));
+        return false;
+    }
+    if (sendState == SendState::SENDING) {
+        BATTLE_LINK_LOG_EVERY_MS(BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+                                 Serial.println("[BattleLink] visit eat result: busy"));
+        return false;
+    }
     visit_eat_result_t result = {
         MSG_VISIT_EAT_RESULT,
         BATTLE_PROTOCOL_VERSION,
@@ -417,8 +486,10 @@ bool BattleLink::sendVisitEatResult(bool success, uint8_t hungerGain,
     sendCtx.retryCount = 0;
     sendCtx.ackReceived = false;
     sendCtx.startMs = Hal::ins().millis();
-    Serial.printf("[BattleLink] sendVisitEatResult success=%u gain=%u hun=%u food=%u\n",
-                  result.success, result.hunger_gain, result.new_guest_hunger, result.food_type);
+    if (BATTLE_LINK_PACKET_LOGS) {
+        Serial.printf("[BattleLink] sendVisitEatResult success=%u gain=%u hun=%u food=%u\n",
+                      result.success, result.hunger_gain, result.new_guest_hunger, result.food_type);
+    }
     if (!sendInternal(battlePeerMac, sendCtx.buf, sendCtx.len)) return false;
     sendState = SendState::SENDING;
     return true;
@@ -433,7 +504,8 @@ bool BattleLink::sendInternal(const uint8_t mac[6], const uint8_t* data, uint8_t
     if (err != ESP_OK) {
         sendBusy = false;
         currentSendTracked = false;
-        Serial.printf("[BattleLink] send failed, err=%d\n", err);
+        BATTLE_LINK_LOG_EVERY_MS(BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+                                 Serial.printf("[BattleLink] send failed, err=%d\n", err));
         return false;
     }
     return true;
@@ -448,7 +520,8 @@ bool BattleLink::sendAckPacket(const uint8_t mac[6], uint8_t ackedType) {
     esp_err_t err = esp_now_send(mac, (uint8_t*)&ack, sizeof(ack));
     if (err != ESP_OK) {
         sendBusy = false;
-        Serial.printf("[BattleLink] ack send failed, err=%d\n", err);
+        BATTLE_LINK_LOG_EVERY_MS(BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+                                 Serial.printf("[BattleLink] ack send failed, err=%d\n", err));
         return false;
     }
     return true;
@@ -459,16 +532,20 @@ bool BattleLink::sendLobbyPacket(const uint8_t mac[6], const uint8_t* data, uint
     ensureUnicastPeer(mac);
     esp_err_t err = esp_now_send(mac, data, len);
     if (err != ESP_OK) {
-        Serial.printf("[BattleLink] lobby send failed type=%u len=%u target=%02X:%02X:%02X:%02X:%02X:%02X err=%d sendBusy=%d\n",
-                      len > 0 ? data[0] : 0, len,
-                      mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
-                      err, sendBusy ? 1 : 0);
+        BATTLE_LINK_LOG_EVERY_MS(
+            BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+            Serial.printf("[BattleLink] lobby send failed type=%u len=%u target=%02X:%02X:%02X:%02X:%02X:%02X err=%d sendBusy=%d\n",
+                          len > 0 ? data[0] : 0, len,
+                          mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
+                          err, sendBusy ? 1 : 0));
         return false;
     }
-    Serial.printf("[BattleLink] lobby send queued type=%u len=%u target=%02X:%02X:%02X:%02X:%02X:%02X sendBusy=%d\n",
-                  len > 0 ? data[0] : 0, len,
-                  mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
-                  sendBusy ? 1 : 0);
+    if (BATTLE_LINK_PACKET_LOGS) {
+        Serial.printf("[BattleLink] lobby send queued type=%u len=%u target=%02X:%02X:%02X:%02X:%02X:%02X sendBusy=%d\n",
+                      len > 0 ? data[0] : 0, len,
+                      mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
+                      sendBusy ? 1 : 0);
+    }
     return true;
 }
 
@@ -523,6 +600,14 @@ bool BattleLink::takeReceivedVisitRecall() {
     return true;
 }
 
+bool BattleLink::takeReceivedVisitVitals(uint8_t& outHunger, uint8_t& outMotivation) {
+    if (!pendingVisitVitals) return false;
+    outHunger = pendingVisitHunger;
+    outMotivation = pendingVisitMotivation;
+    pendingVisitVitals = false;
+    return true;
+}
+
 bool BattleLink::takeReceivedVisitStatus(visit_status_t& out) {
     if (!pendingVisitStatus) return false;
     out = pendingVisitStatusData;
@@ -559,9 +644,11 @@ void BattleLink::onSent(const uint8_t* mac, esp_now_send_status_t status) {
     bool tracked = currentSendTracked;
     sendBusy = false;
     currentSendTracked = false;
-    Serial.printf("[BattleLink] sent to %02X:%02X:%02X:%02X:%02X:%02X status=%s\n",
-                  mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
-                  status == ESP_NOW_SEND_SUCCESS ? "OK" : "FAIL");
+    if (BATTLE_LINK_PACKET_LOGS) {
+        Serial.printf("[BattleLink] sent to %02X:%02X:%02X:%02X:%02X:%02X status=%s\n",
+                      mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
+                      status == ESP_NOW_SEND_SUCCESS ? "OK" : "FAIL");
+    }
 
     if (!tracked) return;
 
@@ -686,24 +773,32 @@ void BattleLink::handleRoomAdvert(const uint8_t* mac, const room_advert_t& adver
     uint8_t myMac[6];
     getMyMac(myMac);
     if (memcmp(advert.mac, myMac, 6) == 0) {
-        Serial.printf("[BattleLink] drop advert self room=%u purpose=%u\n",
-                      advert.room_id, advert.purpose);
+        if (BATTLE_LINK_PACKET_LOGS) {
+            Serial.printf("[BattleLink] drop advert self room=%u purpose=%u\n",
+                          advert.room_id, advert.purpose);
+        }
         return;
     }
     if (roomState != RoomState::SEARCHING) {
-        Serial.printf("[BattleLink] drop advert not searching state=%d room=%u purpose=%u expectedPurpose=%u from=%02X:%02X\n",
-                      (int)roomState, advert.room_id, advert.purpose, roomPurpose,
-                      mac[0], mac[5]);
+        if (BATTLE_LINK_PACKET_LOGS) {
+            Serial.printf("[BattleLink] drop advert not searching state=%d room=%u purpose=%u expectedPurpose=%u from=%02X:%02X\n",
+                          (int)roomState, advert.room_id, advert.purpose, roomPurpose,
+                          mac[0], mac[5]);
+        }
         return;
     }
     if (advert.purpose != roomPurpose) {
-        Serial.printf("[BattleLink] drop advert purpose mismatch got=%u expected=%u room=%u from=%02X:%02X\n",
-                      advert.purpose, roomPurpose, advert.room_id, mac[0], mac[5]);
+        BATTLE_LINK_LOG_EVERY_MS(
+            BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+            Serial.printf("[BattleLink] advert purpose mismatch got=%u expected=%u room=%u from=%02X:%02X\n",
+                          advert.purpose, roomPurpose, advert.room_id, mac[0], mac[5]));
         return;
     }
-    Serial.printf("[BattleLink] room advert from %02X:%02X:%02X:%02X:%02X:%02X room=%u purpose=%u\n",
-                  mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
-                  advert.room_id, advert.purpose);
+    if (BATTLE_LINK_PACKET_LOGS) {
+        Serial.printf("[BattleLink] room advert from %02X:%02X:%02X:%02X:%02X:%02X room=%u purpose=%u\n",
+                      mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
+                      advert.room_id, advert.purpose);
+    }
     addOrUpdateRoom(advert.mac, advert.room_id);
 }
 
@@ -711,29 +806,39 @@ void BattleLink::handleJoinReq(const uint8_t* mac, const join_req_t& req) {
     uint8_t myMac[6];
     getMyMac(myMac);
     if (memcmp(req.mac, myMac, 6) == 0) {
-        Serial.printf("[BattleLink] drop join req self room=%u purpose=%u\n",
-                      req.room_id, req.purpose);
+        if (BATTLE_LINK_PACKET_LOGS) {
+            Serial.printf("[BattleLink] drop join req self room=%u purpose=%u\n",
+                          req.room_id, req.purpose);
+        }
         return;
     }
     if (roomState != RoomState::HOSTING) {
-        Serial.printf("[BattleLink] drop join req not hosting state=%d reqRoom=%u hosted=%u reqPurpose=%u roomPurpose=%u from=%02X:%02X\n",
-                      (int)roomState, req.room_id, hostedRoomId,
-                      req.purpose, roomPurpose, mac[0], mac[5]);
+        BATTLE_LINK_LOG_EVERY_MS(
+            BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+            Serial.printf("[BattleLink] join req not hosting state=%d reqRoom=%u hosted=%u reqPurpose=%u roomPurpose=%u from=%02X:%02X\n",
+                          (int)roomState, req.room_id, hostedRoomId,
+                          req.purpose, roomPurpose, mac[0], mac[5]));
         return;
     }
     if (req.room_id != hostedRoomId) {
-        Serial.printf("[BattleLink] drop join req room mismatch req=%u hosted=%u purpose=%u from=%02X:%02X\n",
-                      req.room_id, hostedRoomId, req.purpose, mac[0], mac[5]);
+        BATTLE_LINK_LOG_EVERY_MS(
+            BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+            Serial.printf("[BattleLink] join req room mismatch req=%u hosted=%u purpose=%u from=%02X:%02X\n",
+                          req.room_id, hostedRoomId, req.purpose, mac[0], mac[5]));
         return;
     }
     if (req.purpose != roomPurpose) {
-        Serial.printf("[BattleLink] drop join req purpose mismatch req=%u hosted=%u room=%u from=%02X:%02X\n",
-                      req.purpose, roomPurpose, req.room_id, mac[0], mac[5]);
+        BATTLE_LINK_LOG_EVERY_MS(
+            BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+            Serial.printf("[BattleLink] join req purpose mismatch req=%u hosted=%u room=%u from=%02X:%02X\n",
+                          req.purpose, roomPurpose, req.room_id, mac[0], mac[5]));
         return;
     }
     if (pendingJoinReq) {
-        Serial.printf("[BattleLink] drop join req pending exists room=%u purpose=%u from=%02X:%02X\n",
-                      req.room_id, req.purpose, mac[0], mac[5]);
+        BATTLE_LINK_LOG_EVERY_MS(
+            BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+            Serial.printf("[BattleLink] join req pending exists room=%u purpose=%u from=%02X:%02X\n",
+                          req.room_id, req.purpose, mac[0], mac[5]));
         return;
     }
     pendingJoinReq = true;
@@ -857,8 +962,10 @@ void BattleLink::handleGiftItem(const uint8_t* mac, const gift_item_t& gift) {
 void BattleLink::handleVisitRecall(const uint8_t* mac, const visit_recall_t& recall) {
     if (!isBattlePeerMac(mac)) return;
     if (recall.version != BATTLE_PROTOCOL_VERSION) {
-        Serial.printf("[BattleLink] visit recall version mismatch got=%d expected=%d\n",
-                      recall.version, BATTLE_PROTOCOL_VERSION);
+        BATTLE_LINK_LOG_EVERY_MS(
+            BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+            Serial.printf("[BattleLink] visit recall version mismatch got=%d expected=%d\n",
+                          recall.version, BATTLE_PROTOCOL_VERSION));
         return;
     }
     pendingVisitRecall = true;
@@ -869,52 +976,69 @@ void BattleLink::handleVisitRecall(const uint8_t* mac, const visit_recall_t& rec
 void BattleLink::handleVisitPing(const uint8_t* mac, const visit_ping_t& ping) {
     if (!isBattlePeerMac(mac)) return;
     if (ping.version != BATTLE_PROTOCOL_VERSION) {
-        Serial.printf("[BattleLink] visit ping version mismatch got=%d expected=%d\n",
-                      ping.version, BATTLE_PROTOCOL_VERSION);
+        BATTLE_LINK_LOG_EVERY_MS(
+            BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+            Serial.printf("[BattleLink] visit ping version mismatch got=%d expected=%d\n",
+                          ping.version, BATTLE_PROTOCOL_VERSION));
         return;
     }
+    pendingVisitHunger = ping.hunger > 100 ? 100 : ping.hunger;
+    pendingVisitMotivation = ping.motivation > 100 ? 100 : ping.motivation;
+    pendingVisitVitals = true;
     queueAck(mac, MSG_VISIT_PING);
 }
 
 void BattleLink::handleVisitStatus(const uint8_t* mac, const visit_status_t& status) {
     if (!isBattlePeerMac(mac)) return;
     if (status.version != BATTLE_PROTOCOL_VERSION) {
-        Serial.printf("[BattleLink] visit status version mismatch got=%d expected=%d\n",
-                      status.version, BATTLE_PROTOCOL_VERSION);
+        BATTLE_LINK_LOG_EVERY_MS(
+            BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+            Serial.printf("[BattleLink] visit status version mismatch got=%d expected=%d\n",
+                          status.version, BATTLE_PROTOCOL_VERSION));
         return;
     }
     pendingVisitStatus = true;
     pendingVisitStatusData = status;
     queueAck(mac, MSG_VISIT_STATUS);
-    Serial.printf("[BattleLink] visit status received active=%u remain=%u duration=%u speed=%u\n",
-                  status.flags & 1, status.remaining_s, status.duration_s, status.speed_x10);
+    if (BATTLE_LINK_PACKET_LOGS) {
+        Serial.printf("[BattleLink] visit status received active=%u remain=%u duration=%u speed=%u\n",
+                      status.flags & 1, status.remaining_s, status.duration_s, status.speed_x10);
+    }
 }
 
 void BattleLink::handleVisitIntent(const uint8_t* mac, const visit_intent_t& intent) {
     if (!isBattlePeerMac(mac)) return;
     if (intent.version != BATTLE_PROTOCOL_VERSION) {
-        Serial.printf("[BattleLink] visit intent version mismatch got=%d expected=%d\n",
-                      intent.version, BATTLE_PROTOCOL_VERSION);
+        BATTLE_LINK_LOG_EVERY_MS(
+            BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+            Serial.printf("[BattleLink] visit intent version mismatch got=%d expected=%d\n",
+                          intent.version, BATTLE_PROTOCOL_VERSION));
         return;
     }
     pendingVisitIntent = true;
     pendingVisitIntentData = intent.intent;
     queueAck(mac, MSG_VISIT_INTENT);
-    Serial.printf("[BattleLink] visit intent received=%u\n", intent.intent);
+    if (BATTLE_LINK_PACKET_LOGS) {
+        Serial.printf("[BattleLink] visit intent received=%u\n", intent.intent);
+    }
 }
 
 void BattleLink::handleVisitEatResult(const uint8_t* mac, const visit_eat_result_t& result) {
     if (!isBattlePeerMac(mac)) return;
     if (result.version != BATTLE_PROTOCOL_VERSION) {
-        Serial.printf("[BattleLink] visit eat result version mismatch got=%d expected=%d\n",
-                      result.version, BATTLE_PROTOCOL_VERSION);
+        BATTLE_LINK_LOG_EVERY_MS(
+            BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+            Serial.printf("[BattleLink] visit eat result version mismatch got=%d expected=%d\n",
+                          result.version, BATTLE_PROTOCOL_VERSION));
         return;
     }
     pendingVisitEatResult = true;
     pendingVisitEatResultData = result;
     queueAck(mac, MSG_VISIT_EAT_RESULT);
-    Serial.printf("[BattleLink] visit eat result received success=%u gain=%u hun=%u food=%u\n",
-                  result.success, result.hunger_gain, result.new_guest_hunger, result.food_type);
+    if (BATTLE_LINK_PACKET_LOGS) {
+        Serial.printf("[BattleLink] visit eat result received success=%u gain=%u hun=%u food=%u\n",
+                      result.success, result.hunger_gain, result.new_guest_hunger, result.food_type);
+    }
 }
 
 void BattleLink::handleAck(const uint8_t* mac, const ack_msg_t& ack) {
@@ -923,7 +1047,7 @@ void BattleLink::handleAck(const uint8_t* mac, const ack_msg_t& ack) {
     if (ack.acked_type == sendCtx.buf[0]) {
         sendCtx.ackReceived = true;
         sendState = SendState::SUCCESS;
-        Serial.println("[BattleLink] ack received");
+        if (BATTLE_LINK_PACKET_LOGS) Serial.println("[BattleLink] ack received");
     }
 }
 
@@ -947,8 +1071,10 @@ void BattleLink::update() {
                 esp_err_t err = esp_now_send(BROADCAST_MAC, (uint8_t*)&advert, sizeof(advert));
                 if (err != ESP_OK) {
                     sendBusy = false;
-                    Serial.printf("[BattleLink] room advert send failed room=%u purpose=%u err=%d\n",
-                                  hostedRoomId, roomPurpose, err);
+                    BATTLE_LINK_LOG_EVERY_MS(
+                        BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+                        Serial.printf("[BattleLink] room advert failed room=%u purpose=%u err=%d\n",
+                                      hostedRoomId, roomPurpose, err));
                 }
                 lastRoomAdvertMs = now;
             }
@@ -968,11 +1094,14 @@ void BattleLink::update() {
             sendCtx.retryCount++;
             if (sendCtx.retryCount > MAX_RETRIES) {
                 sendState = SendState::FAIL;
-                Serial.println("[BattleLink] send retries exhausted");
+                BATTLE_LINK_LOG_EVERY_MS(BATTLE_LINK_WARN_LOG_INTERVAL_MS,
+                                         Serial.println("[BattleLink] send retries exhausted"));
             } else {
                 sendCtx.startMs = now;
                 sendInternal(sendCtx.targetMac, sendCtx.buf, sendCtx.len);
-                Serial.printf("[BattleLink] retry %d/%d\n", sendCtx.retryCount, MAX_RETRIES);
+                if (BATTLE_LINK_PACKET_LOGS) {
+                    Serial.printf("[BattleLink] retry %d/%d\n", sendCtx.retryCount, MAX_RETRIES);
+                }
             }
         }
     }
@@ -1033,7 +1162,9 @@ void BattleLink::queueAck(const uint8_t mac[6], uint8_t ackedType) {
     pendingAck = true;
     memcpy(pendingAckMac, mac, 6);
     pendingAckType = ackedType;
-    Serial.printf("[BattleLink] ack queued for type=%d\n", ackedType);
+    if (BATTLE_LINK_PACKET_LOGS) {
+        Serial.printf("[BattleLink] ack queued for type=%d\n", ackedType);
+    }
 }
 
 bool BattleLink::isBattlePeerMac(const uint8_t mac[6]) const {

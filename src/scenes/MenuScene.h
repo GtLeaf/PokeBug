@@ -100,6 +100,8 @@ private:
     void clampAttrEditValue();
     void showToast(const char* msg, uint32_t durationMs = 2000);
     void drawToast();
+    void serviceVisitLink(uint32_t nowMs);
+    uint32_t lastVisitStatusMs = 0;
 
     bool sleepConfirmActive = false;
     bool sleepTransitionActive = false;

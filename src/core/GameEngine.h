@@ -328,6 +328,12 @@ public:
         if (hunger > 100) hunger = 100;
         visitSession.remoteBug.hunger = hunger;
     }
+    void setVisitRemoteVitals(uint8_t hunger, uint8_t motivation) {
+        if (hunger > 100) hunger = 100;
+        if (motivation > 100) motivation = 100;
+        visitSession.remoteBug.hunger = hunger;
+        visitSession.remoteBug.motivation = motivation;
+    }
 
     uint8_t getGameSpeedX10() const {
         float speed = gameSpeed;

@@ -28,7 +28,7 @@ enum BattleMsgType : uint8_t {
     MSG_ACK           = 0x80,
 };
 
-static constexpr uint8_t BATTLE_PROTOCOL_VERSION = 4;
+static constexpr uint8_t BATTLE_PROTOCOL_VERSION = 5;
 
 enum RoomPurpose : uint8_t {
     ROOM_PURPOSE_BATTLE = 0,
@@ -125,6 +125,8 @@ struct __attribute__((packed)) visit_recall_t {
 struct __attribute__((packed)) visit_ping_t {
     uint8_t type;
     uint8_t version;        // BATTLE_PROTOCOL_VERSION
+    uint8_t hunger;         // 访客本机当前 HUN，用于房主 UI 同步
+    uint8_t motivation;     // 访客本机当前 MOT，用于房主 UI 同步
 };
 
 struct __attribute__((packed)) visit_status_t {
@@ -213,7 +215,7 @@ public:
     bool sendResult(bool win);
     bool sendGiftItem(uint16_t itemId, uint8_t amount);
     bool sendVisitRecall();
-    bool sendVisitPing();
+    bool sendVisitPing(uint8_t hunger, uint8_t motivation);
     bool sendVisitStatus(uint32_t remainingMs, uint32_t durationMs, uint8_t speedX10, bool active);
     bool sendVisitIntent(uint8_t intent);
     bool sendVisitEatResult(bool success, uint8_t hungerGain, uint8_t newGuestHunger, uint8_t foodType);
@@ -225,6 +227,7 @@ public:
     bool takeReceivedResult(bool& outWin);
     bool takeReceivedGift(gift_item_t& out);
     bool takeReceivedVisitRecall();
+    bool takeReceivedVisitVitals(uint8_t& outHunger, uint8_t& outMotivation);
     bool takeReceivedVisitStatus(visit_status_t& out);
     bool takeReceivedVisitIntent(uint8_t& outIntent);
     bool takeReceivedVisitEatResult(visit_eat_result_t& out);
@@ -297,6 +300,9 @@ private:
     bool pendingGift = false;
     gift_item_t pendingGiftData;
     bool pendingVisitRecall = false;
+    bool pendingVisitVitals = false;
+    uint8_t pendingVisitHunger = 100;
+    uint8_t pendingVisitMotivation = 50;
     bool pendingVisitStatus = false;
     visit_status_t pendingVisitStatusData;
     bool pendingVisitIntent = false;

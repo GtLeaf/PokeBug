@@ -2,6 +2,7 @@
 #include "../core/GameEngine.h"
 #include "../core/SaveManager.h"
 #include "../core/UiStrings.h"
+#include "../hardware/BattleLink.h"
 #include "../hardware/Hal.h"
 #include "../hardware/PixelRenderer.h"
 #include "../game/FoodType.h"
@@ -16,6 +17,8 @@
 int MenuScene::lastSelectedByMode[(int)MenuScene::Mode::COUNT] = {};
 
 namespace {
+
+constexpr uint32_t MENU_VISIT_STATUS_INTERVAL_MS = 3000;
 
 bool careItemsNotNeeded(Stage stage) {
     return stage == Stage::EGG || stage == Stage::LARVA || stage == Stage::PUPA;
@@ -53,6 +56,7 @@ void MenuScene::onEnter() {
     if (debugTemperIndex < 0) debugTemperIndex = 0;
     if (debugTemperIndex > 5) debugTemperIndex = 5;
     attrEditActive = false;
+    lastVisitStatusMs = 0;
 }
 
 void MenuScene::onExit() {
@@ -66,8 +70,11 @@ void MenuScene::onExit() {
 
 
 SceneID MenuScene::update() {
+    uint32_t nowMs = Hal::ins().millis();
+    serviceVisitLink(nowMs);
+
     if (sleepTransitionActive) {
-        uint32_t elapsed = Hal::ins().millis() - sleepTransitionStartMs;
+        uint32_t elapsed = nowMs - sleepTransitionStartMs;
         if (elapsed >= SLEEP_TRANSITION_MS) {
             Hal::ins().setBrightness(sleepTransitionBaseBrightness);
             sleepTransitionActive = false;
@@ -76,6 +83,43 @@ SceneID MenuScene::update() {
         Hal::ins().setBrightness(sleepTransitionBrightness(elapsed));
     }
     return nextScene;
+}
+
+void MenuScene::serviceVisitLink(uint32_t nowMs) {
+    GameEngine& engine = GameEngine::ins();
+    if (!engine.hasActiveVisitSession()) {
+        lastVisitStatusMs = 0;
+        return;
+    }
+    if (!engine.isVisitHost()) return;
+
+    BattleLink& link = BattleLink::ins();
+    if (link.isBattlePeerSet()) {
+        link.update();
+        uint8_t remoteHunger = 0;
+        uint8_t remoteMotivation = 0;
+        while (link.takeReceivedVisitVitals(remoteHunger, remoteMotivation)) {
+            engine.setVisitRemoteVitals(remoteHunger, remoteMotivation);
+        }
+        if (link.takeReceivedVisitRecall()) {
+            engine.clearVisitSession();
+            lastVisitStatusMs = 0;
+            Serial.println("[Menu] Visit recalled by peer");
+            return;
+        }
+    }
+
+    if (!link.isBattlePeerSet() || link.isSending()) return;
+    if (lastVisitStatusMs != 0 &&
+        nowMs - lastVisitStatusMs < MENU_VISIT_STATUS_INTERVAL_MS) {
+        return;
+    }
+    if (link.sendVisitStatus(engine.getVisitRemainingMs(),
+                             engine.getVisitDurationMs(),
+                             engine.getGameSpeedX10(),
+                             true)) {
+        lastVisitStatusMs = nowMs;
+    }
 }
 
 void MenuScene::render() {

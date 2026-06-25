@@ -219,7 +219,7 @@ void TerrariumScene::persistViewState() {
         state.alertUntilMs = alertUntilMs;
 
         uint32_t nowMs = Hal::ins().millis();
-        if (visitor.active && nowMs < visitor.untilMs) {
+        if (GameEngine::ins().isVisitHost() && visitor.active && nowMs < visitor.untilMs) {
             state.visitorActive = true;
             state.visitorFalling = visitor.falling;
             state.visitorX = visitor.x;
@@ -276,6 +276,7 @@ void TerrariumScene::resetLocalViewState() {
 void TerrariumScene::restoreVisitorFromViewState(const TerrariumViewState& saved) {
     visitor.active = false;
     if (!saved.visitorActive || saved.visitorRemainingMs == 0) return;
+    if (!GameEngine::ins().isVisitHost()) return;
 
     uint32_t nowMs = Hal::ins().millis();
     visitor.active = true;
@@ -364,7 +365,10 @@ void TerrariumScene::startPendingVisitIfAny() {
         return;
     }
 
-    if (!GameEngine::ins().hasPendingVisitBug()) return;
+    if (!GameEngine::ins().hasPendingVisitBug()) {
+        visitor.active = false;
+        return;
+    }
 
     VisitBugSnapshot pending = GameEngine::ins().takePendingVisitBug();
     Bug& bug = GameEngine::ins().getBug();
@@ -828,7 +832,8 @@ void TerrariumScene::updateVisitGuestLink(uint32_t nowMs) {
 
     if (!visitPingInFlight &&
         nowMs - lastVisitPingMs >= VISIT_PING_INTERVAL_MS &&
-        link.sendVisitPing()) {
+        link.sendVisitPing(GameEngine::ins().getBug().getHunger(),
+                           GameEngine::ins().getBug().getMot())) {
         visitPingInFlight = true;
     }
 
@@ -851,6 +856,12 @@ void TerrariumScene::updateVisitGuestLink(uint32_t nowMs) {
 
 void TerrariumScene::updateVisitHostLink(uint32_t nowMs) {
     BattleLink& link = BattleLink::ins();
+    uint8_t remoteHunger = 0;
+    uint8_t remoteMotivation = 0;
+    while (link.takeReceivedVisitVitals(remoteHunger, remoteMotivation)) {
+        GameEngine::ins().setVisitRemoteVitals(remoteHunger, remoteMotivation);
+    }
+
     uint8_t intent = 0;
     while (link.takeReceivedVisitIntent(intent)) {
         applyVisitIntent(intent, nowMs);
