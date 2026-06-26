@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "asset/mainScene/beetle/hercules/adult"
 ORIGIN = ROOT / "spareAsset/origin/beetle/hercules/adult"
-ATTACK_ORIGIN = ROOT / "spareAsset/origin/attack"
+ATTACK_ORIGIN = ORIGIN / "attack"
 OUT_H = ROOT / "src/assets/HerculesAdultSprites.h"
 OUT_CPP = ROOT / "src/assets/HerculesAdultSprites.cpp"
 SPARE = ROOT / "spareAsset"

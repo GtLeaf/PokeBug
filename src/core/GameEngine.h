@@ -109,6 +109,16 @@ public:
         terrariumViewState.valid = true;
     }
     void clearTerrariumViewState() { terrariumViewState = TerrariumViewState(); }
+    void scheduleDebugLarvaSubstrateFade(uint32_t delayMs) {
+        debugLarvaSubstrateFadePending = true;
+        debugLarvaSubstrateFadeDueMs = Hal::ins().millis() + delayMs;
+    }
+    bool takeDebugLarvaSubstrateFadeDue(uint32_t nowMs) {
+        if (!debugLarvaSubstrateFadePending) return false;
+        if ((int32_t)(nowMs - debugLarvaSubstrateFadeDueMs) < 0) return false;
+        debugLarvaSubstrateFadePending = false;
+        return true;
+    }
 
     // 游戏速度（1 / 2 / 4 / 8… 影响虚拟时间）
     float getGameSpeed() const { return gameSpeed; }
@@ -445,6 +455,8 @@ private:
 
     Bug bug;
     TerrariumViewState terrariumViewState;
+    bool debugLarvaSubstrateFadePending = false;
+    uint32_t debugLarvaSubstrateFadeDueMs = 0;
     uint32_t lastSaveTime = 0;
 
     float gameSpeed = 1.0f;

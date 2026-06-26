@@ -21,7 +21,7 @@ bool SettingsScene::onButton(const ButtonEvent& ev) {
             GameEngine::ins().clearTerrariumViewState();
             GameEngine::ins().resetGameNow();
             GameEngine::ins().setGameSpeed(1.0f);
-            GameEngine::ins().setIdleTimeoutIndex(0);
+            GameEngine::ins().setIdleTimeoutIndex(3);
             GameEngine::ins().setMainSceneBg(GameEngine::BG_MOSS);
             GameEngine::ins().setWoodStyle(0);
             GameEngine::ins().setBowlStyle(0);

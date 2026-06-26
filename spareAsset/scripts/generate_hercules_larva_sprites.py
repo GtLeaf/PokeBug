@@ -49,6 +49,8 @@ BASE_FRAME_H = 52
 LARVA_SIZE_SCALE = 1.2
 AGE1_WALK0_TARGET_W = 56
 AGE1_WALK0_TARGET_H = 19
+AGE1_EAT0_TARGET_W = 57
+AGE1_EAT0_TARGET_H = 20
 LARVA_FRAME_W = round(BASE_FRAME_W * LARVA_SIZE_SCALE)
 LARVA_FRAME_H = round(BASE_FRAME_H * LARVA_SIZE_SCALE)
 LARVA_MAX_W = LARVA_FRAME_W
@@ -212,6 +214,10 @@ def make_frames():
         eat_max_h = max(crop.height for _, _, _, _, crop in eat_crops)
         eat_scale = min(first_walk_visible_w / eat_max_w,
                         first_walk_visible_h / eat_max_h)
+        if age == 1 and eat_crops:
+            eat0_crop = eat_crops[0][4]
+            eat_scale = min(AGE1_EAT0_TARGET_W / eat0_crop.width,
+                            AGE1_EAT0_TARGET_H / eat0_crop.height)
 
         for role, role_index, path, source, crop in idle_walk_crops + sleep_crops + eat_crops:
             if role == "eat":

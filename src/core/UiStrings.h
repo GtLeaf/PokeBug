@@ -99,6 +99,7 @@ static constexpr const char* MENU_TOY         = "Toy";         // 玩具
 static constexpr const char* CARE_ITEM_NOT_NEEDED = "Not needed yet."; // 暂不需要这个
 static constexpr const char* MENU_DEBUG_BEETLE = "Beetle";
 static constexpr const char* MENU_DEBUG_ATTR   = "Attributes";
+static constexpr const char* MENU_DEBUG_CLEAR_SUBSTRATE = "Clear Sub";
 static constexpr const char* MENU_DEBUG_STATE_STAGE_FMT = "Stage:%s";
 static constexpr const char* MENU_DEBUG_STATE_TEMPER_FMT = "Temper:%s";
 static constexpr const char* MENU_DEBUG_ATTR_FMT = "%s:%.0f/%u";

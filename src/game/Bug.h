@@ -91,7 +91,9 @@ public:
     uint8_t getHunger() const { return hunger; }
     void modHunger(int8_t delta);
     void ensureMinHunger(uint8_t minHunger = 1);
-    bool eatSubstrate(uint64_t now);
+    bool eatSubstrateBite(uint64_t now, uint8_t hungerGain);
+    uint8_t getLarvaFeedAmount() const { return larvaFeeds; }
+    uint8_t getLarvaAgeIndex(uint64_t now) const;
     void skipSimulationTime(uint64_t deltaMs);
     void addTrainingBonus(float sizDelta, float strDelta, float endDelta,
                           float spdDelta, float spiDelta);
@@ -188,16 +190,19 @@ public:
     // 阶段时长（按设计文档 v1.0）
     static constexpr uint32_t EGG_DURATION_MS      = 10ULL * 60 * 1000;  // 10 min
     static constexpr uint32_t LARVA_DURATION_MS    = 60ULL * 60 * 1000;  // 60 min
+    static constexpr uint32_t LARVA_AGE1_DURATION_MS = 15ULL * 60 * 1000; // age1 至少 15min
+    static constexpr uint32_t LARVA_AGE2_DURATION_MS = 15ULL * 60 * 1000; // age2 至少 15min
+    static constexpr uint8_t  LARVA_FEED_TO_AGE2 = 12;       // 累计进食量达到后才能进入 age2
+    static constexpr uint8_t  LARVA_FEED_TO_AGE3 = 30;       // 累计进食量达到后才能进入 age3
+    static constexpr uint8_t  LARVA_FEED_TO_PUPA = 60;       // 累计进食量达到后才能化蛹
     static constexpr uint32_t PUPA_DURATION_MS     = 20ULL * 60 * 1000;  // 20 min
     static constexpr uint32_t JUVENILE_DURATION_MS = 60ULL * 60 * 1000;  // 60 min
     static constexpr uint32_t EGG_SHAKE_DELAY_MS  = 30ULL * 1000;   // 每次摇晃卵延长 30s
     static constexpr uint32_t EGG_SHAKE_DELAY_MAX_MS = 2ULL * 60 * 1000; // 累计最多延长 2min
     static constexpr uint32_t HUNGER_DROP_MS      = 90ULL * 1000;   // 饥饿度每 90s -1（节奏更慢，便于观赏）
-    static constexpr uint32_t LARVA_HUNGER_DROP_MS = 45ULL * 1000;  // 幼虫代谢更快，每 45s -1
+    static constexpr uint32_t LARVA_HUNGER_DROP_MS = 10ULL * 1000;  // 幼虫代谢旺盛，每 10s -1
     static constexpr uint8_t  PUPA_TARGET_HUNGER = 30;              // 蛹期结束时保留的 HUN
-    static constexpr uint32_t LARVA_SUBSTRATE_EAT_MS = 60ULL * 1000; // 啃底材每口间隔
-    static constexpr uint8_t  LARVA_SUBSTRATE_EAT_HUNGER = 90;      // 低于该值开始啃底材
-    static constexpr uint8_t  LARVA_SUBSTRATE_HUNGER_GAIN = 6;      // 每口底材恢复 HUN
+    static constexpr uint8_t  LARVA_SUBSTRATE_HUNGER_GAIN = 3;      // 每口底材恢复 HUN
     static constexpr uint32_t STARVE_DEATH_MS     = 5ULL * 60 * 1000; // 饥饿 0 后持续 5min 死亡
     static constexpr uint32_t ADULT_SAP_PRODUCE_MS = 10ULL * 60 * 1000; // 成虫每 10min 产 1 份树汁
     static constexpr uint8_t  FOOD_MAX_AMOUNT     = 5;              // 一份食物分成 5 口吃完
@@ -270,7 +275,7 @@ private:
     // Citrus 累计 3 次奖励：每 1 = +0.1 SPI 上限
     uint8_t spiCapBonusTenths = 0;
 
-    uint8_t larvaFeeds = 0;
+    uint8_t larvaFeeds = 0; // 累计进食量：底材/食物每口 +1
     uint8_t pupaShakes = 0;
     uint8_t wins = 0;
     uint8_t losses = 0;
@@ -296,6 +301,7 @@ private:
     void checkStageTransition(uint64_t now);
     Temperament determineTemperament(uint64_t now);
     void updatePupaSpi(uint64_t now, uint32_t deltaMs);
+    void recordLarvaFeedAmount(uint8_t amount = 1);
 
     float spdGrowthMult() const { return 0.8f + dominant(geneAPP) * 0.1f; }
     uint8_t spdCap() const { return (uint8_t)(6 + (dominant(geneAPP) + recessive(geneAPP)) / 2); }

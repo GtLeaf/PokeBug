@@ -831,6 +831,10 @@ void MenuScene::executeSelection() {
                 Serial.printf("[Menu] Debug VS NPC generated, tier=%d index=%d\n",
                               (int)npc.tier, npc.index);
             }
+        } else if (selected == DEBUG_CLEAR_SUBSTRATE) {
+            GameEngine::ins().scheduleDebugLarvaSubstrateFade(3000);
+            nextScene = SCENE_TERRARIUM;
+            Serial.println("[Menu] Debug substrate fade scheduled");
         }
         return;
     }
@@ -1117,6 +1121,7 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
             case DEBUG_BEETLE: return UiStrings::MENU_DEBUG_BEETLE;
             case DEBUG_ATTR: return UiStrings::MENU_DEBUG_ATTR;
             case DEBUG_NPC: return UiStrings::MENU_DEBUG_NPC;
+            case DEBUG_CLEAR_SUBSTRATE: return UiStrings::MENU_DEBUG_CLEAR_SUBSTRATE;
             case DEBUG_BACK:
             default: return UiStrings::BACK;
         }

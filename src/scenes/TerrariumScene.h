@@ -130,6 +130,14 @@ private:
         bool flip = false;
     };
 
+    struct SubstrateDrop {
+        bool active = false;
+        float y = 0.0f;
+        float vy = 0.0f;
+        uint8_t slot = 0;
+        uint8_t level = 1;
+    };
+
     StaticLayerCache staticLayerCache;
     HudCache hudCache;
     BeetleFrameCache frameCache[FRAME_CACHE_SLOTS];
@@ -167,7 +175,15 @@ private:
     int larvaTargetX = 120;
     uint32_t larvaNextStepMs = 0;
     bool larvaFaceRight = true;
+    bool larvaTargetFaceRight = true;
     uint64_t observedLarvaEatGameMs = 0;
+    uint32_t larvaLastSubstrateBiteMs = 0;
+    uint8_t substrateLevels[15] = {};
+    uint8_t substrateBites[15] = {};
+    SubstrateDrop substrateDrops[5];
+    uint32_t substrateLastUpdateMs = 0;
+    bool substrateFadeActive = false;
+    uint32_t substrateFadeStartMs = 0;
     uint32_t restResumeAllowedMs = 0; // 允许重新进入夜间休息的时间戳
     uint32_t foodRefillGraceUntilMs = 0; // 刚吃空但仍饿时，等待玩家补食的时间窗
     uint32_t alertUntilMs = 0;        // 被戳后的警戒结束时间
@@ -295,11 +311,33 @@ private:
     static constexpr uint32_t LARVA_WALK_START_MS = 900;
     static constexpr uint32_t LARVA_WALK_STEP_MS = 80;
     static constexpr int LARVA_WALK_MIN_DELTA = 18;
-    static constexpr uint32_t LARVA_EAT_MIN_MS = 45000;
-    static constexpr uint32_t LARVA_EAT_MAX_MS = 90000;
+    static constexpr uint32_t LARVA_EAT_MIN_MS = 10000;
+    static constexpr uint32_t LARVA_EAT_MAX_MS = 18000;
+    static constexpr uint32_t LARVA_EAT_EMPTY_EXIT_MS = 1200;
     static constexpr uint32_t LARVA_SLEEP_MIN_MS = 30000;
     static constexpr uint32_t LARVA_SLEEP_MAX_MS = 90000;
     static constexpr uint32_t LARVA_SLEEP_FRAME_MS = 900;
+    // Visible substrate feeding starts early so hungry larvae have time to walk to placed substrate.
+    static constexpr uint8_t LARVA_SUBSTRATE_EAT_HUNGER_THRESHOLD = 98;
+    static constexpr uint8_t LARVA_FEED_URGENT_HUNGER = 60;
+    static constexpr uint8_t LARVA_SLEEP_SAFE_HUNGER = 75;
+    static constexpr uint32_t LARVA_SUBSTRATE_BITE_INTERVAL_MS = 900;
+    static constexpr int LARVA_SUBSTRATE_FEED_GAP_PX = 3;
+    static constexpr int LARVA_HEAD_OFFSET_PX = 29;
+    static constexpr int LARVA_HEAD_FEED_DISTANCE_PX = 8;
+    static constexpr int LARVA_HEAD_FEED_FALLBACK_DISTANCE_PX = 36;
+    static constexpr int LARVA_COLLISION_HALF_W_PX = 32;
+    static constexpr int SUBSTRATE_LEFT_X = 37;
+    static constexpr int SUBSTRATE_SLOT_W = 11;
+    static constexpr uint8_t SUBSTRATE_SLOT_COUNT = 15;
+    static constexpr uint8_t SUBSTRATE_DROP_SLOTS = 5;
+    static constexpr uint8_t SUBSTRATE_LEVEL1_BITES = 1;
+    static constexpr uint8_t SUBSTRATE_LEVEL2_BITES = 3;
+    static constexpr uint8_t SUBSTRATE_LEVEL3_BITES = SUBSTRATE_LEVEL2_BITES * 2;
+    static constexpr int SUBSTRATE_MERGE_VISUAL_GAP_PX = 4;
+    static constexpr uint32_t SUBSTRATE_FADE_MS = 1200;
+    static constexpr float SUBSTRATE_DROP_GRAVITY = 780.0f;
+    static constexpr float SUBSTRATE_DROP_START_VY = 30.0f;
     static constexpr uint8_t EAT_CONTINUE_HUNGER = 80;
     static constexpr uint32_t FOOD_REFILL_GRACE_MS = 3000;
     static constexpr uint8_t REST_GETDOWN_FRAME_INTERVAL = 8; // 入睡动作每帧约 0.4 秒
@@ -354,12 +392,14 @@ private:
     void drawBug();
     void drawFoodTray();
     void drawWood();
+    void drawLarvaSubstrate(uint8_t opacity = 255);
     void drawToy();
     void drawStatusBar();
     void drawVisitAwayOverlay();
     void drawVisitRecallConfirm();
     void drawDeathScreen();
     void resetLocalViewState();
+    void restoreLarvaSubstrateFromViewState(const TerrariumViewState& saved);
     void startPendingVisitIfAny();
     void restoreVisitorFromViewState(const TerrariumViewState& saved);
     void updateVisitor(uint32_t nowMs);
@@ -430,6 +470,36 @@ private:
     void enterRest();
     void enterLarvaState(LarvaState nextState, uint32_t nowMs);
     void updateLarvaState(Bug& bug, uint32_t nowMs);
+    uint32_t larvaWalkStartDelayMs(uint8_t hunger) const;
+    uint32_t larvaSubstrateBiteIntervalMs(uint8_t hunger) const;
+    void clearLarvaSubstrate();
+    void startLarvaSubstrateFade(uint32_t nowMs);
+    bool spawnLarvaSubstrate();
+    void updateLarvaSubstrate(uint32_t nowMs);
+    bool hasLarvaSubstrate() const;
+    uint8_t landedSubstrateSlots() const;
+    uint16_t landedSubstrateBites() const;
+    uint8_t activeSubstrateDrops() const;
+    uint8_t substrateFrameIndex(uint8_t level) const;
+    uint8_t substrateBiteCapacity(uint8_t level) const;
+    uint8_t substrateLevelForBites(uint8_t bites) const;
+    void setSubstrateBites(uint8_t slot, uint8_t bites);
+    void clearSubstrateSlot(uint8_t slot);
+    uint8_t substrateFrameWidth(uint8_t level) const;
+    uint8_t substrateFrameHeight(uint8_t level) const;
+    int substrateSlotCenterX(uint8_t slot) const;
+    bool substrateBounds(uint8_t slot, int& left, int& right) const;
+    bool substrateSlotReservedByDrop(uint8_t slot) const;
+    bool substrateSlotReserved(uint8_t slot) const;
+    bool findLarvaSubstrateDropSlot(uint8_t& outSlot) const;
+    void mergeLarvaSubstrate();
+    int larvaHeadX() const;
+    bool larvaCollidesWithSubstrateAt(int x) const;
+    int clampLarvaStepForSubstrate(int fromX, int toX) const;
+    bool findLarvaSubstrateFoodTarget(int& outX, bool* outFaceRight = nullptr) const;
+    int larvaSubstrateFoodSlotNearHead() const;
+    bool larvaNearSubstrateFood() const;
+    bool consumeLarvaSubstrateBite(Bug& bug, uint32_t nowMs);
     void setIdleDuration();
     int pickRestTargetX();
     void startClimbOrIdle();

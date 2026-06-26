@@ -65,7 +65,7 @@ private:
     static constexpr int FIGHT_ITEM_COUNT = 3;  // Create + Search + Back
     static constexpr int VISIT_ITEM_COUNT = 3;  // Create + Search + Back
     static constexpr int EXPLORE_ITEM_COUNT = 6; // 4 locations + Cup + Back
-    static constexpr int DEBUG_ITEM_COUNT = 4; // Beetle + Attr + VS NPC + Back
+    static constexpr int DEBUG_ITEM_COUNT = 5; // Beetle + Attr + VS NPC + Clear + Back
     static constexpr int DEBUG_STATE_ITEM_COUNT = 3; // Stage + Temper + Back
     static constexpr int DEBUG_ATTR_ITEM_COUNT = 6; // 5 attrs + Back
     static constexpr uint32_t FOOD_CONFIRM_MS = 250;
@@ -219,6 +219,7 @@ private:
         DEBUG_BEETLE = 0,
         DEBUG_ATTR,
         DEBUG_NPC,
+        DEBUG_CLEAR_SUBSTRATE,
         DEBUG_BACK,
     };
 

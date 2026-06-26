@@ -4,9 +4,9 @@
 
 namespace {
 constexpr size_t BUG_SAVE_MAX_BYTES = 192;
-constexpr uint8_t TERRARIUM_VIEW_SAVE_VERSION = 1;
+constexpr uint8_t TERRARIUM_VIEW_SAVE_VERSION = 2;
 
-struct TerrariumViewSaveData {
+struct TerrariumViewSaveDataV1 {
     uint8_t version;
     uint8_t valid;
     int16_t bugX;
@@ -27,7 +27,36 @@ struct TerrariumViewSaveData {
     uint32_t alertUntilMs;
 } __attribute__((packed));
 
-static_assert(sizeof(TerrariumViewSaveData) <= 64, "Terrarium view save data too large");
+struct TerrariumViewSaveData {
+    uint8_t version;
+    uint8_t valid;
+    int16_t bugX;
+    int16_t bugY;
+    uint32_t animFrame;
+    uint8_t adultState;
+    uint8_t flags;
+    uint8_t turnFrameIndex;
+    int16_t targetX;
+    int16_t slideTargetX;
+    int16_t climbTargetX;
+    uint32_t stateTimer;
+    uint32_t stateDuration;
+    uint8_t eatFrameInterval;
+    uint8_t eatBitesThisSession;
+    uint32_t restResumeAllowedMs;
+    uint32_t foodRefillGraceUntilMs;
+    uint32_t alertUntilMs;
+    uint8_t substrateLevels[TerrariumViewState::SUBSTRATE_SLOT_COUNT];
+    uint8_t substrateBites[TerrariumViewState::SUBSTRATE_SLOT_COUNT];
+    uint8_t substrateDropActiveMask;
+    uint8_t substrateDropSlots[TerrariumViewState::SUBSTRATE_DROP_SLOTS];
+    uint8_t substrateDropLevels[TerrariumViewState::SUBSTRATE_DROP_SLOTS];
+    int16_t substrateDropY[TerrariumViewState::SUBSTRATE_DROP_SLOTS];
+    int16_t substrateDropVy[TerrariumViewState::SUBSTRATE_DROP_SLOTS];
+} __attribute__((packed));
+
+static_assert(sizeof(TerrariumViewSaveDataV1) <= 64, "Terrarium view v1 save data too large");
+static_assert(sizeof(TerrariumViewSaveData) <= 128, "Terrarium view save data too large");
 
 uint8_t packTerrariumFlags(const TerrariumViewState& state) {
     uint8_t flags = 0;
@@ -225,6 +254,17 @@ bool SaveManager::saveTerrariumViewState(const TerrariumViewState& state) {
     sd.restResumeAllowedMs = state.restResumeAllowedMs;
     sd.foodRefillGraceUntilMs = state.foodRefillGraceUntilMs;
     sd.alertUntilMs = state.alertUntilMs;
+    for (uint8_t i = 0; i < TerrariumViewState::SUBSTRATE_SLOT_COUNT; ++i) {
+        sd.substrateLevels[i] = state.substrateLevels[i];
+        sd.substrateBites[i] = state.substrateBites[i];
+    }
+    sd.substrateDropActiveMask = state.substrateDropActiveMask;
+    for (uint8_t i = 0; i < TerrariumViewState::SUBSTRATE_DROP_SLOTS; ++i) {
+        sd.substrateDropSlots[i] = state.substrateDropSlots[i];
+        sd.substrateDropLevels[i] = state.substrateDropLevels[i];
+        sd.substrateDropY[i] = state.substrateDropY[i];
+        sd.substrateDropVy[i] = state.substrateDropVy[i];
+    }
 
     prefs.putBytes(KEY_TERRARIUM_VIEW, &sd, sizeof(sd));
     prefs.end();
@@ -238,10 +278,44 @@ bool SaveManager::loadTerrariumViewState(TerrariumViewState& state) {
     if (!prefs.begin(NAMESPACE, true)) return false;
 
     size_t len = prefs.getBytesLength(KEY_TERRARIUM_VIEW);
-    if (len != sizeof(TerrariumViewSaveData)) {
+    if (len != sizeof(TerrariumViewSaveData) && len != sizeof(TerrariumViewSaveDataV1)) {
         prefs.end();
         state = TerrariumViewState();
         return false;
+    }
+
+    if (len == sizeof(TerrariumViewSaveDataV1)) {
+        TerrariumViewSaveDataV1 sd = {};
+        prefs.getBytes(KEY_TERRARIUM_VIEW, &sd, sizeof(sd));
+        prefs.end();
+
+        if (sd.version != 1 || sd.valid == 0) {
+            state = TerrariumViewState();
+            return false;
+        }
+
+        state = TerrariumViewState();
+        state.valid = true;
+        state.bugX = sd.bugX;
+        state.bugY = sd.bugY;
+        state.animFrame = sd.animFrame;
+        state.adultState = sd.adultState;
+        unpackTerrariumFlags(sd.flags, state);
+        state.turnFrameIndex = sd.turnFrameIndex;
+        state.targetX = sd.targetX;
+        state.slideTargetX = sd.slideTargetX;
+        state.climbTargetX = sd.climbTargetX;
+        state.stateTimer = sd.stateTimer;
+        state.stateDuration = sd.stateDuration;
+        state.eatFrameInterval = sd.eatFrameInterval;
+        state.eatBitesThisSession = sd.eatBitesThisSession;
+        state.restResumeAllowedMs = sd.restResumeAllowedMs;
+        state.foodRefillGraceUntilMs = sd.foodRefillGraceUntilMs;
+        state.alertUntilMs = sd.alertUntilMs;
+
+        Serial.printf("[Save] Terrarium view loaded: state=%u x=%d faceRight=%d\n",
+                      state.adultState, state.bugX, state.faceRight ? 1 : 0);
+        return true;
     }
 
     TerrariumViewSaveData sd = {};
@@ -271,6 +345,17 @@ bool SaveManager::loadTerrariumViewState(TerrariumViewState& state) {
     state.restResumeAllowedMs = sd.restResumeAllowedMs;
     state.foodRefillGraceUntilMs = sd.foodRefillGraceUntilMs;
     state.alertUntilMs = sd.alertUntilMs;
+    for (uint8_t i = 0; i < TerrariumViewState::SUBSTRATE_SLOT_COUNT; ++i) {
+        state.substrateLevels[i] = sd.substrateLevels[i];
+        state.substrateBites[i] = sd.substrateBites[i];
+    }
+    state.substrateDropActiveMask = sd.substrateDropActiveMask;
+    for (uint8_t i = 0; i < TerrariumViewState::SUBSTRATE_DROP_SLOTS; ++i) {
+        state.substrateDropSlots[i] = sd.substrateDropSlots[i];
+        state.substrateDropLevels[i] = sd.substrateDropLevels[i];
+        state.substrateDropY[i] = sd.substrateDropY[i];
+        state.substrateDropVy[i] = sd.substrateDropVy[i];
+    }
 
     Serial.printf("[Save] Terrarium view loaded: state=%u x=%d faceRight=%d\n",
                   state.adultState, state.bugX, state.faceRight ? 1 : 0);

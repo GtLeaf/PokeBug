@@ -227,16 +227,36 @@ void Bug::updateHunger(uint64_t now, uint32_t deltaMs) {
     if (hunger < 30 && mot > 50) mot = 50;
 }
 
-bool Bug::eatSubstrate(uint64_t now) {
+bool Bug::eatSubstrateBite(uint64_t now, uint8_t hungerGain) {
     if (stage != Stage::LARVA) return false;
-    if (hunger > LARVA_SUBSTRATE_EAT_HUNGER) return false;
-    if (now - lastEatTime < LARVA_SUBSTRATE_EAT_MS) return false;
+    if (hunger >= 100) return false;
 
-    modHunger((int8_t)LARVA_SUBSTRATE_HUNGER_GAIN);
+    modHunger((int8_t)hungerGain);
+    recordLarvaFeedAmount();
     deathTimerStart = 0;
     lastEatTime = now;
     clampAttributes();
     return true;
+}
+
+void Bug::recordLarvaFeedAmount(uint8_t amount) {
+    if (stage != Stage::LARVA || amount == 0) return;
+    uint16_t total = (uint16_t)larvaFeeds + amount;
+    larvaFeeds = (uint8_t)(total > 255 ? 255 : total);
+}
+
+uint8_t Bug::getLarvaAgeIndex(uint64_t now) const {
+    if (stage != Stage::LARVA) return 0;
+    uint64_t elapsed = now > stageStartTime ? now - stageStartTime : 0;
+    if (elapsed >= LARVA_AGE1_DURATION_MS + LARVA_AGE2_DURATION_MS &&
+        larvaFeeds >= LARVA_FEED_TO_AGE3) {
+        return 2;
+    }
+    if (elapsed >= LARVA_AGE1_DURATION_MS &&
+        larvaFeeds >= LARVA_FEED_TO_AGE2) {
+        return 1;
+    }
+    return 0;
 }
 
 void Bug::updatePupaSpi(uint64_t now, uint32_t deltaMs) {
@@ -265,7 +285,7 @@ bool Bug::canAdvanceStage(uint64_t now) const {
         case Stage::EGG:
             return elapsed >= EGG_DURATION_MS;
         case Stage::LARVA:
-            return elapsed >= LARVA_DURATION_MS;
+            return elapsed >= LARVA_DURATION_MS && larvaFeeds >= LARVA_FEED_TO_PUPA;
         case Stage::PUPA:
             return elapsed >= PUPA_DURATION_MS;
         case Stage::JUVENILE:
@@ -307,6 +327,7 @@ void Bug::advanceStage(uint64_t now) {
             stageStartTime += EGG_DURATION_MS;
             stage = Stage::LARVA;
             temperament = determineTemperament(stageStartTime);
+            larvaFeeds = 0;
             // 孵化时给初始食物
             foodCounts[(uint8_t)FoodType::DROP] = 6;
             break;
@@ -346,6 +367,9 @@ void Bug::debugSetStage(Stage nextStage, uint64_t now) {
     pupaShakes = 0;
     if (stage == Stage::EGG) {
         eggStartTime = now;
+        larvaFeeds = 0;
+    } else if (stage == Stage::LARVA) {
+        larvaFeeds = 0;
     }
     clampAttributes();
 }
@@ -632,6 +656,7 @@ bool Bug::eatFromTray(uint64_t now, bool forceBite) {
 
     foodAmount--;
     modHunger((int8_t)FoodTypeInfo::hungerPerBite(trayFoodType));
+    if (stage == Stage::LARVA) recordLarvaFeedAmount();
     deathTimerStart = 0;
     lastEatTime = now;
 
@@ -640,7 +665,6 @@ bool Bug::eatFromTray(uint64_t now, bool forceBite) {
 
     if (foodAmount == 0) {
         foodInTray = false;
-        if (stage == Stage::LARVA) larvaFeeds++;
     }
 
     clampAttributes();
