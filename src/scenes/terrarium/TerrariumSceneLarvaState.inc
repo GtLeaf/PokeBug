@@ -56,8 +56,9 @@ void TerrariumScene::updateLarvaState(Bug& bug, uint32_t nowMs) {
         observedLarvaEatGameMs = lastEatGameMs;
         larvaTargetX = bugX;
         if (larvaState == LarvaState::EAT) {
-            larvaStateStartMs = nowMs;
-            larvaStateDurationMs = random(LARVA_EAT_MIN_MS, LARVA_EAT_MAX_MS + 1);
+            uint32_t elapsed = nowMs - larvaStateStartMs;
+            uint32_t minDuration = elapsed + random(LARVA_EAT_EMPTY_EXIT_MS, LARVA_EAT_EMPTY_EXIT_MS + 1800);
+            if (larvaStateDurationMs < minDuration) larvaStateDurationMs = minDuration;
         } else {
             enterLarvaState(LarvaState::EAT, nowMs);
         }
@@ -138,4 +139,3 @@ void TerrariumScene::updateLarvaState(Bug& bug, uint32_t nowMs) {
         larvaNextStepMs = nowMs + LARVA_WALK_STEP_MS;
     }
 }
-

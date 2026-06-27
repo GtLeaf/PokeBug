@@ -36,6 +36,7 @@ enum class LarvaState {
 struct AdultBeetleActor {
     int x = 120;
     int y = 80;
+    uint8_t z = 0;
     AdultState state = AdultState::IDLE;
     bool faceRight = true;
     bool turnTargetFaceRight = true;
@@ -43,8 +44,10 @@ struct AdultBeetleActor {
     bool slideAfterTurn = false;
     bool climbAfterTurn = false;
     bool walkTargetIsRest = false;
+    bool woodDismountActive = false;
     uint8_t turnFrameIndex = 0;
     int targetX = 120;
+    uint8_t targetZ = 0;
     int slideTargetX = 120;
     int climbTargetX = 120;
     bool tiltHighSideIsRight = true;
@@ -87,12 +90,6 @@ private:
         uint8_t bg = 0xFF;
         bool night = false;
         Stage stage = Stage::EGG;
-        uint8_t bowlStyle = 0xFF;
-        uint8_t woodStyle = 0xFF;
-        uint8_t foodStyle = 0xFF;
-        bool woodPlaced = false;
-        bool foodInTray = false;
-        uint8_t foodAmount = 0;
     };
 
     struct HudCache {
@@ -146,6 +143,7 @@ private:
     AdultBeetleActor localActor;
     int& bugX = localActor.x;
     int& bugY = localActor.y;
+    uint8_t& bugZ = localActor.z;
     uint32_t animFrame = 0;
 
     uint32_t resetPressStart = 0;
@@ -159,13 +157,16 @@ private:
     bool& slideAfterTurn = localActor.slideAfterTurn;  // 转身后进入 SLIDE
     bool& climbAfterTurn = localActor.climbAfterTurn;  // 转身后进入 CLIMB
     bool& walkTargetIsRest = localActor.walkTargetIsRest; // 当前 WALK 目标是否是睡眠点
+    bool& woodDismountActive = localActor.woodDismountActive; // 从腐木下到地面的过渡
     uint8_t& turnFrameIndex = localActor.turnFrameIndex;
     int& targetX = localActor.targetX;
+    uint8_t& targetZ = localActor.targetZ;
     int& slideTargetX = localActor.slideTargetX;         // SLIDE 目标位置
     int& climbTargetX = localActor.climbTargetX;         // CLIMB 目标位置
     bool& tiltHighSideIsRight = localActor.tiltHighSideIsRight;  // 高处是否在右侧
     uint32_t& stateTimer = localActor.stateTimer;      // 当前状态已持续帧数
     uint32_t& stateDuration = localActor.stateDuration;   // 当前状态目标持续帧数
+    bool eatAfterTurn = false; // 转向食盘后再进入进食，避免背对食盘咬食
     uint8_t eatFrameInterval = 0; // EAT 动画每帧持续帧数
     uint8_t eatBitesThisSession = 0;
     uint32_t eatLastBiteMs = 0;   // 成虫咬食使用现实时间节奏，避免被游戏速度压缩
@@ -234,6 +235,7 @@ private:
     int visitorToyChargeDir = 1;
     uint32_t visitorToyAttackStartMs = 0;
     uint32_t toyNoCatchUntilMs = 0;
+    bool toyReplayReadyAfterImpact = false;
     bool toyVisible = false;
     bool toyEntryActive = false;
     ToyButtonInteraction toyEntryInteraction = ToyButtonInteraction::THROW_ARC;
@@ -287,13 +289,29 @@ private:
     uint8_t pendingVisitEatGain = 0;
     uint8_t pendingVisitEatHunger = 0;
     uint8_t pendingVisitEatFood = 0;
+    char terrariumToastText[32] = {0};
+    uint32_t terrariumToastUntilMs = 0;
     AdultState visitorLastLoggedState = AdultState::IDLE;
     bool visitorStateLogInitialized = false;
     uint32_t lastVisitorStateLogMs = 0;
 
     static constexpr int GROUND_Y = 125;   // 甲虫贴地时脚所在的 Y 坐标
     static constexpr int FOOD_X = 55;      // 食物盘旁站立位置（中心点）
-    static constexpr int WOOD_REST_X = 154; // 腐木上的休息位置（腐木中心）
+    static constexpr int WOOD_REST_X = 192; // 腐木上的休息位置（腐木中心）
+    static constexpr uint8_t TERRARIUM_DEPTH_MIN_Z = 0;
+    static constexpr uint8_t TERRARIUM_DEPTH_MAX_Z = 10;
+    static constexpr uint8_t TERRARIUM_DEPTH_INTERACTION_Z = 0;
+    static constexpr uint8_t TERRARIUM_PROP_Z = 1;
+    static constexpr int TERRARIUM_DEPTH_Y_STEP = 1;
+    static constexpr float TERRARIUM_DEPTH_SCALE_STEP = 0.015f;
+    static constexpr uint8_t WANDER_TO_DEPTH_CHANCE_PERCENT = 28;
+    static constexpr bool WOOD_SLEEP_TEST_ALWAYS = true; // 测试期：放置腐木后 100% 上木休息
+    static constexpr int WOOD_DRAW_RIGHT_X = 235;
+    static constexpr int WOOD_SURFACE_LEFT_X = 142;
+    static constexpr int WOOD_SURFACE_RIGHT_X = 226;
+    static constexpr int WOOD_SURFACE_LOW_Y = 119;  // 当前腐木 UI 左低
+    static constexpr int WOOD_SURFACE_HIGH_Y = 96;  // 当前腐木 UI 右高
+    static constexpr int WOOD_DISMOUNT_RAMP_PX = 10;
     static constexpr uint32_t REST_WAKEUP_COOLDOWN_MIN_MS = 10000; // 唤醒后清醒最短时间 10s
     static constexpr uint32_t REST_WAKEUP_COOLDOWN_MAX_MS = 30000; // 唤醒后清醒最长时间 30s
     static constexpr int MIN_X = HerculesAdultSprites::TERRARIUM_MIN_X; // 由成虫生成脚本按最大巨体尺寸导出
@@ -398,6 +416,8 @@ private:
     void drawVisitAwayOverlay();
     void drawVisitRecallConfirm();
     void drawDeathScreen();
+    void showTerrariumToast(const char* msg, uint32_t durationMs = 1800);
+    void drawTerrariumToast();
     void resetLocalViewState();
     void restoreLarvaSubstrateFromViewState(const TerrariumViewState& saved);
     void startPendingVisitIfAny();
@@ -413,6 +433,7 @@ private:
     bool chooseVisitorForHostInteraction() const;
     int hostInteractionTargetX(bool targetVisitor) const;
     float hostInteractionTargetScale(bool targetVisitor) const;
+    int hostInteractionTargetFootY(bool targetVisitor) const;
     void reactVisitorToHostPoke(uint32_t nowMs);
     void applyTiltToVisitor(TiltDir dir, float magnitude);
     void updateVisitGuestLink(uint32_t nowMs);
@@ -427,6 +448,7 @@ private:
     float visitorAdultDrawScale() const;
     uint16_t visitorAdultColor() const;
     void resetToy();
+    void clearToyAfterImpactReplay(uint32_t nowMs);
     void updateToyPhysics(uint32_t nowMs);
     void startToyCharge(uint32_t nowMs, int pushDir);
     void triggerToyHit(uint32_t nowMs, int pushDir, float chargeRatio);
@@ -461,11 +483,22 @@ private:
     void drawLarva(int x, int y, uint8_t palette);
     void drawPupa(int x, int y, uint8_t palette);
     void drawAdult(int x, int y, uint8_t palette);
+    int woodSurfaceYAt(int x) const;
+    int woodRouteFootYAt(int x) const;
+    bool isAdultOnWoodRoute() const;
+    int adultFootY() const;
+    int adultDepthFootY() const;
+    float adultDepthScale() const;
+    bool isAtInteractionDepth() const;
+    uint8_t clampDepthZ(int z) const;
+    uint8_t pickWanderTargetZ() const;
 
     void updateAdultMovement();
     void updateJuvenileMovement();
     void startTurn(bool targetFaceRight, bool continueWalking);
+    void startEatWhenFacingFood();
     void startWalkTo(int x, bool restTarget = false);
+    void startWalkToDepth(int x, int z, bool restTarget = false);
     void enterEat();
     void enterRest();
     void enterLarvaState(LarvaState nextState, uint32_t nowMs);
@@ -505,6 +538,7 @@ private:
     void startClimbOrIdle();
     bool wantsToEat();
     bool wantsToRestOnWood();
+    bool shouldForceWoodSleepForTest() const;
     bool wantsToWander();
 
     // 倾斜交互

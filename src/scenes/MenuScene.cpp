@@ -21,7 +21,7 @@ namespace {
 constexpr uint32_t MENU_VISIT_STATUS_INTERVAL_MS = 3000;
 
 bool careItemsNotNeeded(Stage stage) {
-    return stage == Stage::EGG || stage == Stage::LARVA || stage == Stage::PUPA;
+    return stage != Stage::JUVENILE && stage != Stage::ADULT;
 }
 
 }

@@ -482,7 +482,7 @@ int TerrariumScene::getPokeTargetY() const {
         case Stage::JUVENILE:
         case Stage::ADULT:
         default:
-            return GROUND_Y - 20;
+            return adultFootY() - 20;
     }
 }
 
@@ -496,6 +496,35 @@ void TerrariumScene::startPokeFeedback(uint32_t now, uint32_t durationMs, bool w
         pokeFingerFrameIndex = random(ActionAssets::FINGER_FRAME_COUNT);
         pokeFingerYOffset = (int8_t)random(-3, 4);
     }
+}
+
+void TerrariumScene::showTerrariumToast(const char* msg, uint32_t durationMs) {
+    if (!msg) return;
+    strncpy(terrariumToastText, msg, sizeof(terrariumToastText) - 1);
+    terrariumToastText[sizeof(terrariumToastText) - 1] = '\0';
+    terrariumToastUntilMs = Hal::ins().millis() + durationMs;
+}
+
+void TerrariumScene::drawTerrariumToast() {
+    uint32_t now = Hal::ins().millis();
+    if (terrariumToastText[0] == '\0' || now >= terrariumToastUntilMs) return;
+
+    float fs = PixelRenderer::getContentFontScale();
+    if (fs < 1.5f) fs = 1.5f;
+    LGFX_Sprite& canvas = Hal::ins().canvas();
+    PixelRenderer::applyTextStyle(fs);
+    int textW = canvas.textWidth(terrariumToastText);
+    int boxW = textW + 18;
+    if (boxW > Hal::DISPLAY_W - 16) boxW = Hal::DISPLAY_W - 16;
+    int boxH = (int)(18 * fs);
+    int boxX = (Hal::DISPLAY_W - boxW) / 2;
+    int boxY = 52;
+    PixelRenderer::fillRect(boxX, boxY, boxW, boxH, PixelRenderer::rgb565(18, 18, 24));
+    canvas.drawRect(boxX, boxY, boxW, boxH, PixelRenderer::YELLOW);
+    PixelRenderer::drawPixelText(boxX + (boxW - textW) / 2,
+                                 boxY + (boxH - (int)(8 * fs)) / 2,
+                                 terrariumToastText,
+                                 PixelRenderer::WHITE, fs);
 }
 
 void TerrariumScene::drawPokeAction() {

@@ -133,8 +133,8 @@ uint8_t LobbyScene::roomPurpose() const {
 bool LobbyScene::validatePendingGift() {
     ItemStack gift = GameEngine::ins().getPendingGiftItem();
     if (gift.amount == 0) return false;
-    if (ItemCatalog::kind(gift.id) != ItemKind::FOOD) return false;
-    return GameEngine::ins().getBug().getItemCount(gift.id) >= gift.amount;
+    if (!ItemCatalog::isExchangeable(gift.id)) return false;
+    return GameEngine::ins().getItemCount(gift.id) >= gift.amount;
 }
 
 void LobbyScene::formatGiftMessage(const char* prefix, uint16_t itemId, uint8_t amount) {

@@ -12,6 +12,9 @@ void ExploreScene::render() {
         case State::FINAL_SUMMARY:
             drawPopup();
             break;
+        case State::RELEASE_PROMPT:
+            drawReleasePrompt();
+            break;
         case State::NPC_PROMPT:
             drawNpcPrompt();
             break;
@@ -99,6 +102,29 @@ void ExploreScene::drawPopup() {
                                                       : UiStrings::EXPLORE_NEXT_RETURN;
     tw = canvas.textWidth(nav);
     PixelRenderer::drawPixelText(cx - tw / 2, Hal::DISPLAY_H - 44, nav, PixelRenderer::GRAY, fs);
+}
+
+void ExploreScene::drawReleasePrompt() {
+    LGFX_Sprite& canvas = Hal::ins().canvas();
+    float fs = PixelRenderer::getContentFontScale();
+    drawExploring(0, false);
+    fillRectAlpha(14, 26, Hal::DISPLAY_W - 28, Hal::DISPLAY_H - 52, PixelRenderer::rgb565(24, 24, 24), 195);
+    canvas.drawRect(14, 26, Hal::DISPLAY_W - 28, Hal::DISPLAY_H - 52, PixelRenderer::WHITE);
+
+    int cx = Hal::DISPLAY_W / 2;
+    PixelRenderer::applyTextStyle(fs);
+    int tw = canvas.textWidth(resultLine1);
+    PixelRenderer::drawPixelText(cx - tw / 2, 36, resultLine1, PixelRenderer::YELLOW, fs);
+
+    tw = canvas.textWidth(UiStrings::EXPLORE_RELEASE_CONFIRM);
+    PixelRenderer::drawPixelText(cx - tw / 2, 56, UiStrings::EXPLORE_RELEASE_CONFIRM, PixelRenderer::WHITE, fs);
+
+    const char* detail = resultLine2[0] ? resultLine2 : UiStrings::EXPLORE_RELEASE_EGG;
+    tw = canvas.textWidth(detail);
+    PixelRenderer::drawPixelText(cx - tw / 2, 74, detail, PixelRenderer::CYAN, fs);
+
+    PixelRenderer::drawPixelText(cx - 58, Hal::DISPLAY_H - 36, UiStrings::EXPLORE_RELEASE_ACTION, PixelRenderer::GREEN, fs);
+    PixelRenderer::drawPixelText(cx + 18, Hal::DISPLAY_H - 36, UiStrings::EXPLORE_LEAVE, PixelRenderer::GRAY, fs);
 }
 
 void ExploreScene::drawNpcPrompt() {

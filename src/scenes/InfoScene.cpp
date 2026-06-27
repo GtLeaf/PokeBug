@@ -127,15 +127,18 @@ void InfoScene::renderStatus() {
                                  temperamentColor(bug.getTemperament()), fs);
     y += rowStep;
 
-    canvas.drawFastHLine(marginX, y - (int)(4 * fs), Hal::DISPLAY_W - marginX * 2 - 12, PixelRenderer::GRAY);
-    y += (int)(4 * fs);
+    y += (int)(2 * fs);
+    canvas.drawFastHLine(marginX, y, Hal::DISPLAY_W - marginX * 2 - 12, PixelRenderer::GRAY);
+    y += (int)(6 * fs);
 
     snprintf(buf, sizeof(buf), "%s: %d", UiStrings::MOT, bug.getMot());
     PixelRenderer::drawPixelText(marginX, y, buf, PixelRenderer::WHITE, fs);
-    y += rowStep;
 
     snprintf(buf, sizeof(buf), "%s: %d", UiStrings::HUN, bug.getHunger());
-    PixelRenderer::drawPixelText(marginX, y, buf, PixelRenderer::WHITE, fs);
+    PixelRenderer::applyTextStyle(fs);
+    int hunW = canvas.textWidth(buf);
+    int hunRight = Hal::DISPLAY_W - marginX - 16;
+    PixelRenderer::drawPixelText(hunRight - hunW, y, buf, PixelRenderer::WHITE, fs);
 }
 
 void InfoScene::renderAttributes() {

@@ -559,8 +559,9 @@ bool TerrariumScene::consumeLarvaSubstrateBite(Bug& bug, uint32_t nowMs) {
         setSubstrateBites(nearestSlot, substrateBites[nearestSlot] - 1);
     }
     if (larvaState == LarvaState::EAT) {
-        larvaStateStartMs = nowMs;
-        larvaStateDurationMs = random(LARVA_EAT_MIN_MS, LARVA_EAT_MAX_MS + 1);
+        uint32_t elapsed = nowMs - larvaStateStartMs;
+        uint32_t minDuration = elapsed + random(LARVA_EAT_EMPTY_EXIT_MS, LARVA_EAT_EMPTY_EXIT_MS + 1800);
+        if (larvaStateDurationMs < minDuration) larvaStateDurationMs = minDuration;
     } else {
         enterLarvaState(LarvaState::EAT, nowMs);
     }

@@ -9,6 +9,7 @@ static const char* npcBugNameForIndex(uint8_t idx);
 #include "../hardware/PixelRenderer.h"
 #include "../assets/NpcData.h"
 #include "../game/Bug.h"
+#include <cmath>
 #include <cstring>
 
 uint8_t CupScene::sRound = 0;
@@ -96,6 +97,8 @@ bool CupScene::onButton(const ButtonEvent& ev) {
             bug.incrementCupStreak();
             state = State::BRACKET;
             stateStartMs = Hal::ins().millis();
+            bracketScroll = 0.0f;
+            bracketScrollLastMs = stateStartMs;
             return true;
         }
         if (ev.btn == 1) {
@@ -135,6 +138,11 @@ bool CupScene::onButton(const ButtonEvent& ev) {
 }
 
 void CupScene::advanceToNextRound(bool won) {
+    if (won && !GameEngine::ins().isFeatureUnlocked(GameEngine::FEATURE_TOY_BALL_UNLOCKED)) {
+        GameEngine::ins().unlockFeature(GameEngine::FEATURE_TOY_BALL_UNLOCKED);
+        GameEngine::ins().addToyBall(1);
+        Serial.println("[Cup] Ball unlocked by first cup round win");
+    }
     if (won && sRound < 3 && sOpponents[sRound].tier == NpcData::Tier::LEGEND) {
         sBeatLegend[sRound] = true;
     }
@@ -158,11 +166,15 @@ void CupScene::advanceToNextRound(bool won) {
 void CupScene::finishCup(uint8_t rank) {
     sFinalRank = rank;
     Bug& bug = GameEngine::ins().getBug();
+    bool firstChampion = rank == 1 && bug.getCupWins() == 0;
     if (rank > 0) {
         bug.recordCupResult(rank);
         if (rank == 1) {
             bug.recordCupWin();
             bug.setAchievementFlag(1 << 1); // 冠军之路
+            if (firstChampion && GameEngine::ins().unlockMainSceneBg(GameEngine::BG_ENTOMOLOGIST)) {
+                Serial.println("[Cup] Lab background unlocked by first champion");
+            }
         }
         if (sBeatLegend[0] || sBeatLegend[1] || sBeatLegend[2]) {
             bug.recordCupLegendKill();
@@ -250,21 +262,119 @@ void CupScene::drawBracket() {
     int tw = canvas.textWidth(title);
     PixelRenderer::drawPixelText(cx - tw / 2, 8, title, PixelRenderer::YELLOW, fs);
 
+    static constexpr int VIEW_X = 6;
+    static constexpr int VIEW_Y = 24;
+    static constexpr int VIEW_W = Hal::DISPLAY_W - VIEW_X * 2;
+    static constexpr int VIEW_H = 78;
+    static constexpr int CONTENT_W = 386;
+    static constexpr int COL_QF_X = 8;
+    static constexpr int COL_SF_X = 174;
+    static constexpr int COL_FINAL_X = 300;
+    const int rowY[4] = {8, 24, 44, 60};
+    static constexpr int TEXT_GAP = 4;
+
+    int maxScroll = CONTENT_W > VIEW_W ? CONTENT_W - VIEW_W : 0;
+    updateBracketScroll(maxScroll);
+
+    PixelRenderer::fillRect(VIEW_X, VIEW_Y, VIEW_W, VIEW_H, PixelRenderer::rgb565(8, 8, 12));
+    canvas.drawRect(VIEW_X, VIEW_Y, VIEW_W, VIEW_H, PixelRenderer::GRAY);
+    canvas.setClipRect(VIEW_X + 1, VIEW_Y + 1, VIEW_W - 2, VIEW_H - 2);
+
+    int ox = VIEW_X + 4 - (int)bracketScroll;
+    int oy = VIEW_Y + 5;
+    PixelRenderer::drawPixelText(ox + COL_QF_X, oy - 1, UiStrings::CUP_ROUND_QUARTER,
+                                 PixelRenderer::CYAN, fs);
+    PixelRenderer::drawPixelText(ox + COL_SF_X, oy - 1, UiStrings::CUP_ROUND_SEMI,
+                                 PixelRenderer::CYAN, fs);
+    PixelRenderer::drawPixelText(ox + COL_FINAL_X, oy - 1, UiStrings::CUP_ROUND_FINAL,
+                                 PixelRenderer::CYAN, fs);
+
     char buf[48];
     // 玩家固定 A1
     snprintf(buf, sizeof(buf), UiStrings::CUP_YOU_VS, npcNameForIndex(sOpponents[0].index));
-    PixelRenderer::drawPixelText(12, 30, buf, PixelRenderer::WHITE, fs);
+    PixelRenderer::drawPixelText(ox + COL_QF_X, oy + rowY[0] + TEXT_GAP, buf,
+                                 sRound == 0 ? PixelRenderer::YELLOW : PixelRenderer::WHITE, fs);
 
     for (int i = 1; i < 4; i++) {
         snprintf(buf, sizeof(buf), "%s%s%s",
                  npcNameForIndex(sOpponents[i * 2 - 1].index),
                  UiStrings::CUP_VS,
                  npcNameForIndex(sOpponents[i * 2].index));
-        PixelRenderer::drawPixelText(12, 30 + i * 14, buf, PixelRenderer::GRAY, fs);
+        PixelRenderer::drawPixelText(ox + COL_QF_X, oy + rowY[i] + TEXT_GAP, buf, PixelRenderer::GRAY, fs);
+    }
+
+    uint16_t lineColor = PixelRenderer::rgb565(80, 92, 118);
+    for (int pair = 0; pair < 2; ++pair) {
+        int y1 = oy + rowY[pair * 2] + 9;
+        int y2 = oy + rowY[pair * 2 + 1] + 9;
+        int midY = (y1 + y2) / 2;
+        int qRight = ox + COL_QF_X + 128;
+        int sfLeft = ox + COL_SF_X - 10;
+        canvas.drawFastHLine(qRight, y1, 18, lineColor);
+        canvas.drawFastHLine(qRight, y2, 18, lineColor);
+        canvas.drawFastVLine(qRight + 18, y1, y2 - y1 + 1, lineColor);
+        int span = sfLeft - (qRight + 18);
+        if (span > 0) canvas.drawFastHLine(qRight + 18, midY, span, lineColor);
+    }
+
+    int sf1Y = oy + 20;
+    int sf2Y = oy + 52;
+    int finalY = oy + 36;
+    PixelRenderer::drawPixelText(ox + COL_SF_X, sf1Y, sRound >= 1 ? "Winner A" : "...",
+                                 sRound == 1 ? PixelRenderer::YELLOW : PixelRenderer::WHITE, fs);
+    PixelRenderer::drawPixelText(ox + COL_SF_X, sf2Y, sRound >= 1 ? "Winner B" : "...",
+                                 sRound == 1 ? PixelRenderer::YELLOW : PixelRenderer::WHITE, fs);
+    int sfRight = ox + COL_SF_X + 82;
+    int finalLeft = ox + COL_FINAL_X - 8;
+    canvas.drawFastHLine(sfRight, sf1Y + 5, 16, lineColor);
+    canvas.drawFastHLine(sfRight, sf2Y + 5, 16, lineColor);
+    canvas.drawFastVLine(sfRight + 16, sf1Y + 5, sf2Y - sf1Y + 1, lineColor);
+    int finalSpan = finalLeft - (sfRight + 16);
+    if (finalSpan > 0) canvas.drawFastHLine(sfRight + 16, finalY + 5, finalSpan, lineColor);
+    PixelRenderer::drawPixelText(ox + COL_FINAL_X, finalY, sRound >= 2 ? "Finalist" : "...",
+                                 sRound == 2 ? PixelRenderer::YELLOW : PixelRenderer::WHITE, fs);
+
+    canvas.clearClipRect();
+    if (bracketScroll > 1.0f) {
+        PixelRenderer::drawPixelText(VIEW_X + 5, VIEW_Y + VIEW_H - 12, "<", PixelRenderer::GRAY, fs);
+    }
+    if (bracketScroll < (float)maxScroll - 1.0f) {
+        PixelRenderer::drawPixelText(VIEW_X + VIEW_W - 12, VIEW_Y + VIEW_H - 12, ">",
+                                     PixelRenderer::GRAY, fs);
     }
 
     tw = canvas.textWidth(UiStrings::CUP_START_ROUND);
     PixelRenderer::drawPixelText(cx - tw / 2, 110, UiStrings::CUP_START_ROUND, PixelRenderer::GREEN, fs);
+}
+
+void CupScene::updateBracketScroll(int maxScroll) {
+    if (maxScroll <= 0) {
+        bracketScroll = 0.0f;
+        bracketScrollLastMs = Hal::ins().millis();
+        return;
+    }
+
+    uint32_t now = Hal::ins().millis();
+    if (bracketScrollLastMs == 0) bracketScrollLastMs = now;
+    uint32_t dt = now - bracketScrollLastMs;
+    if (dt > 120) dt = 120;
+    bracketScrollLastMs = now;
+
+    float ax, ay, az;
+    Hal::ins().getAccel(ax, ay, az);
+    float mag = Hal::ins().getAccelMagnitude();
+    if (fabsf(ay) > 1.5f || mag > 2.0f) return;
+
+    static constexpr float TILT_DEADZONE_G = 0.22f;
+    if (fabsf(ax) <= TILT_DEADZONE_G) return;
+
+    float strength = (fabsf(ax) - TILT_DEADZONE_G) / 0.55f;
+    if (strength > 1.0f) strength = 1.0f;
+
+    float dir = (ax < 0.0f) ? 1.0f : -1.0f;
+    bracketScroll += dir * strength * 72.0f * ((float)dt / 1000.0f);
+    if (bracketScroll < 0.0f) bracketScroll = 0.0f;
+    if (bracketScroll > (float)maxScroll) bracketScroll = (float)maxScroll;
 }
 
 void CupScene::drawRoundIntro() {

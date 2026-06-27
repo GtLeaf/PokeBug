@@ -165,6 +165,7 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
     if (mode == Mode::GIFT) {
         switch (index) {
             case GIFT_FOOD: return UiStrings::MENU_GIFT_FOOD;
+            case GIFT_TOY: return UiStrings::MENU_GIFT_TOY;
             case GIFT_RECEIVE: return UiStrings::MENU_GIFT_RECEIVE;
             case GIFT_BACK:
             default: return UiStrings::BACK;
@@ -207,6 +208,7 @@ const char* MenuScene::itemLabel(int index, char* buf, size_t bufSize) const {
             case DEBUG_ATTR: return UiStrings::MENU_DEBUG_ATTR;
             case DEBUG_NPC: return UiStrings::MENU_DEBUG_NPC;
             case DEBUG_CLEAR_SUBSTRATE: return UiStrings::MENU_DEBUG_CLEAR_SUBSTRATE;
+            case DEBUG_UNLOCK_ALL: return UiStrings::MENU_DEBUG_UNLOCK_ALL;
             case DEBUG_BACK:
             default: return UiStrings::BACK;
         }
@@ -283,6 +285,7 @@ void MenuScene::executeSleep() {
 
 bool MenuScene::isCupAvailable() const {
     const Bug& bug = GameEngine::ins().getBug();
+    if (!GameEngine::ins().isFeatureUnlocked(GameEngine::FEATURE_CUP_UNLOCKED)) return false;
     if (bug.getStage() != Stage::ADULT || bug.isDead() || bug.getHunger() < 30) return false;
     return GameEngine::ins().getCupCycleState() == GameEngine::CupCycleState::REGISTER_OPEN;
 }
@@ -567,4 +570,3 @@ void MenuScene::drawToast() {
         p++;
     }
 }
-

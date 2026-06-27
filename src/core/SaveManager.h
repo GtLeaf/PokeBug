@@ -1,5 +1,6 @@
 #pragma once
 #include "../game/Bug.h"
+#include "ProgressionState.h"
 #include "TerrariumViewState.h"
 
 // ============================================================
@@ -39,6 +40,11 @@ public:
     bool loadExploreGlobal(uint32_t& day, uint8_t& timeOfDay, uint8_t& countToday);
     void clearExploreGlobal();
 
+    // 全局解锁/运营进度（跨虫持久）
+    bool saveProgression(const ProgressionState& state);
+    bool loadProgression(ProgressionState& state);
+    void clearProgression();
+
     // 培养缸当前表现状态（成虫位置、朝向、动作等）
     bool saveTerrariumViewState(const TerrariumViewState& state);
     bool loadTerrariumViewState(TerrariumViewState& state);
@@ -66,6 +72,7 @@ private:
     static constexpr const char* KEY_EXPLORE_DAY   = "explore_day";
     static constexpr const char* KEY_EXPLORE_TOD   = "explore_tod";
     static constexpr const char* KEY_EXPLORE_COUNT = "explore_count";
+    static constexpr const char* KEY_PROGRESSION = "progression";
     static constexpr const char* KEY_TERRARIUM_VIEW = "terr_view";
     static constexpr uint8_t SAVE_VERSION = 9;
 

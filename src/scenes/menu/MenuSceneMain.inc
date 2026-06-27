@@ -2,14 +2,10 @@ void MenuScene::onEnter() {
     mode = GameEngine::ins().getPrevSceneID() == SCENE_LOBBY ? Mode::SOCIAL : Mode::MAIN;
     Bug& bug = GameEngine::ins().getBug();
     if (careItemsNotNeeded(bug.getStage())) {
-        bool changed = GameEngine::ins().getBowlStyle() != 0xFF ||
-                       GameEngine::ins().getWoodStyle() != 0xFF ||
-                       bug.isWoodPlaced();
-        GameEngine::ins().setBowlStyle(0xFF);
+        bool changed = bug.hasFoodInTray() || bug.isWoodPlaced();
         bug.setFoodTray(0, (FoodType)GameEngine::ins().getFoodStyle());
-        GameEngine::ins().setWoodStyle(0xFF);
         bug.removeWood();
-        if (changed) saveSettingsNow();
+        if (changed) GameEngine::ins().forceSave();
     }
 
     // 从培养缸进入时重置；从 Lobby 回来时回到 social；从子菜单返回时保持上次位置。
@@ -224,8 +220,23 @@ void MenuScene::drawList() {
             PixelRenderer::drawRgb565RleScaled(iconX, iconY, MenuAssets::FRAME_W, MenuAssets::FRAME_H,
                                                MenuAssets::MAIN_ICON_RLE, offset, length, iconScale);
             leftW = ICON_SLOT_W;
+        } else if (mode == Mode::BOX && iconIndex >= 0 && iconIndex < MenuAssets::BOX_ICON_COUNT) {
+            if (isSelected) {
+                PixelRenderer::fillRect(boxX - 4, y - BOX_H / 2, 2, BOX_H, PixelRenderer::YELLOW);
+            }
+
+            uint16_t offset = pgm_read_word(&MenuAssets::BOX_ICON_FRAMES[iconIndex].offset);
+            uint16_t length = pgm_read_word(&MenuAssets::BOX_ICON_FRAMES[iconIndex].length);
+            float iconScale = relScale;
+            int scaledIconW = (int)(MenuAssets::FRAME_W * iconScale);
+            int scaledIconH = (int)(MenuAssets::FRAME_H * iconScale);
+            int iconX = boxX + (ICON_SLOT_W - scaledIconW) / 2;
+            int iconY = y - scaledIconH / 2;
+            PixelRenderer::drawRgb565RleScaled(iconX, iconY, MenuAssets::FRAME_W, MenuAssets::FRAME_H,
+                                               MenuAssets::BOX_ICON_RLE, offset, length, iconScale);
+            leftW = ICON_SLOT_W;
         } else {
-            // 子菜单仍使用统一尺寸色块；主菜单由 MenuAssets 图标承担视觉识别。
+            // 未配置图标的子菜单继续使用统一尺寸色块。
             int drawBoxW = (int)(BOX_W * relScale);
             int drawBoxH = (int)(BOX_H * relScale);
             PixelRenderer::fillRect(boxX, y - drawBoxH / 2, drawBoxW, drawBoxH, boxColor);
@@ -255,17 +266,26 @@ void MenuScene::drawSimpleList() {
     for (int i = 0; i < count; i++) {
         int y = startY + i * rowStep;
 
-        uint16_t color = (i == selected) ? PixelRenderer::YELLOW : PixelRenderer::WHITE;
+        bool disabled = false;
+        if (mode == Mode::TOY && i == TOY_BALL) {
+            disabled = !GameEngine::ins().isToyStyleUnlocked(GameEngine::TOY_BALL) ||
+                       (GameEngine::ins().getActiveToyBallDurability() == 0 &&
+                        GameEngine::ins().getToyBallCount() == 0);
+        }
+        uint16_t color = disabled ? PixelRenderer::GRAY :
+                         ((i == selected) ? PixelRenderer::YELLOW : PixelRenderer::WHITE);
+        if (disabled && i == selected) color = PixelRenderer::rgb565(180, 180, 0);
 
         if (i == selected) {
-            PixelRenderer::fillRect(4, y, 4, (int)(8 * fs), PixelRenderer::YELLOW);
+            PixelRenderer::fillRect(4, y, 4, (int)(8 * fs),
+                                    disabled ? PixelRenderer::GRAY : PixelRenderer::YELLOW);
         }
 
         char label[24];
         int textX = 14;
         if (mode == Mode::TOY) {
             textX = 22;
-            if (i < TOY_ITEM_COUNT - 1 && i == GameEngine::ins().getToyStyle()) {
+            if (i < TOY_ITEM_COUNT - 1 && i == GameEngine::ins().getToyStyle() && !disabled) {
                 int cx = 14;
                 int cy = y + (int)(4 * fs);
                 canvas.fillTriangle(cx, cy - 3, cx + 3, cy, cx, cy + 3, PixelRenderer::CYAN);
@@ -426,4 +446,3 @@ void MenuScene::drawGiftQuantityDialog() {
         x += btnW[i] + gap;
     }
 }
-

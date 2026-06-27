@@ -35,10 +35,16 @@ void setup() {
 
         // 推进虚拟时间 10 分钟并更新。设备深睡时，甲虫也按睡眠状态结算。
         uint64_t gameNow = bug.getLastUpdateTime() + (uint64_t)(600000 * gameSpeed);
+        Stage prevStage = bug.getStage();
         bug.ensureMinHunger(1);
         bug.setSleeping(true);
         bug.update(gameNow);
         bug.setSleeping(false);
+        if (prevStage == Stage::PUPA && bug.getStage() != Stage::PUPA) {
+            if (bowlStyle == 0xFF || bowlStyle >= 3) bowlStyle = 0;
+            GameEngine::prepareJuvenileStarterTray(bug, bowlStyle);
+            Serial.printf("[Boot] Pupa hatched during deep sleep: bowlStyle=%u\n", bowlStyle);
+        }
 
         uint32_t exploreDay = (uint32_t)(gameNow / GameEngine::GAME_DAY_MS);
         uint8_t exploreTod = GameEngine::TIME_MORNING;

@@ -1,3 +1,4 @@
+void Bug::release(uint64_t now) {
     auto clampNibble = [](int v) -> int {
         if (v < 0) return 0;
         if (v > 15) return 15;
@@ -47,6 +48,7 @@
     uint8_t nextGeneEND = inheritByAchievement(geneEND, end, endCap());
     uint8_t nextGeneAPP = inheritByAchievement(geneAPP, spd, spdCap());
     uint8_t prevGen = generation;
+    uint8_t prevReleaseCount = releaseCountTotal;
 
     initNew(now);
     geneVIG = nextGeneVIG;
@@ -55,7 +57,7 @@
     geneEND = nextGeneEND;
     geneAPP = nextGeneAPP;
     generation = prevGen + 1;
-    releaseCountTotal++; // 新虫继承累计放生次数（文档为累计纪念）
+    releaseCountTotal = prevReleaseCount < 255 ? (uint8_t)(prevReleaseCount + 1) : 255;
 }
 
 void Bug::addReleaseCount() {

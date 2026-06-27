@@ -11,6 +11,7 @@ struct TerrariumViewState {
     bool valid = false;
     int bugX = 120;
     int bugY = 80;
+    uint8_t bugZ = 0;
     uint32_t animFrame = 0;
     uint8_t adultState = 0;
     bool faceRight = true;
@@ -20,6 +21,7 @@ struct TerrariumViewState {
     bool climbAfterTurn = false;
     uint8_t turnFrameIndex = 0;
     int targetX = 120;
+    uint8_t targetZ = 0;
     int slideTargetX = 120;
     int climbTargetX = 120;
     bool tiltHighSideIsRight = true;

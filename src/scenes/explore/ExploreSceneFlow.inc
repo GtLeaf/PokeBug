@@ -34,6 +34,7 @@ void ExploreScene::startNewSession() {
     currentRound = 1;
     totalSapGain = 0;
     finalRecorded = false;
+    releaseEventSeen = false;
     saveSession();
 }
 
@@ -45,6 +46,7 @@ void ExploreScene::restoreSession() {
     currentRound = sCurrentRound;
     totalSapGain = sTotalSapGain;
     finalRecorded = sFinalRecorded;
+    releaseEventSeen = sReleaseEventSeen;
 }
 
 void ExploreScene::saveSession() {
@@ -52,6 +54,7 @@ void ExploreScene::saveSession() {
     sCurrentRound = currentRound;
     sTotalSapGain = totalSapGain;
     sFinalRecorded = finalRecorded;
+    sReleaseEventSeen = releaseEventSeen;
 }
 
 void ExploreScene::clearSession() {
@@ -59,6 +62,7 @@ void ExploreScene::clearSession() {
     sCurrentRound = 1;
     sTotalSapGain = 0;
     sFinalRecorded = false;
+    sReleaseEventSeen = false;
 }
 
 SceneID ExploreScene::update() {
@@ -127,8 +131,22 @@ void ExploreScene::triggerEvent(uint32_t now) {
     } else if (roll < (acc += weights.rare)) {
         eventType = EventType::RARE;
         rareSubType = random(6);
+    } else if (roll < (acc += weights.release)) {
+        eventType = EventType::RELEASE;
     } else {
         eventType = EventType::NOTHING;
+    }
+
+    if (eventType == EventType::RELEASE && releaseEventSeen) {
+        eventType = EventType::NOTHING;
+    }
+
+    if (eventType == EventType::RELEASE) {
+        releaseEventSeen = true;
+        snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_RELEASE_EVENT);
+        snprintf(resultLine2, sizeof(resultLine2), "%s", UiStrings::EXPLORE_RELEASE_EGG);
+        beginEventReveal(now, State::RELEASE_PROMPT);
+        return;
     }
 
     if (eventType == EventType::NPC) {
@@ -163,6 +181,28 @@ void ExploreScene::applyEventReward(bool flee) {
     Bug& bug = GameEngine::ins().getBug();
     resultLine1[0] = '\0';
     resultLine2[0] = '\0';
+    uint8_t location = GameEngine::ins().getExploreLocation();
+    if (location >= GameEngine::EXPLORE_LOCATION_COUNT) location = GameEngine::EXPLORE_PARK;
+    auto locationFood = [&]() -> FoodType {
+        switch (location) {
+            case GameEngine::EXPLORE_PARK: return FoodType::CUBE;
+            case GameEngine::EXPLORE_BACK_HILL: return FoodType::SLICE;
+            case GameEngine::EXPLORE_RIVERSIDE: return FoodType::CITRUS;
+            case GameEngine::EXPLORE_OLD_WOODS: return FoodType::BERRY;
+            default: return FoodType::DROP;
+        }
+    };
+    auto addLocationFood = [&](uint8_t amount) {
+        FoodType type = locationFood();
+        bool newlyUnlocked = GameEngine::ins().unlockFood(type);
+        bug.addFood(type, amount);
+        totalSapGain += amount;
+        if (newlyUnlocked) {
+            snprintf(resultLine1, sizeof(resultLine1), "%s unlocked", FoodTypeInfo::name(type));
+        } else {
+            snprintf(resultLine1, sizeof(resultLine1), "%s +%d", FoodTypeInfo::name(type), amount);
+        }
+    };
 
     switch (eventType) {
         case EventType::SAP:
@@ -171,9 +211,7 @@ void ExploreScene::applyEventReward(bool flee) {
             snprintf(resultLine1, sizeof(resultLine1), UiStrings::EXPLORE_SAP_PLUS, eventValue);
             break;
         case EventType::FOOD_SOURCE:
-            bug.addFood(FoodType::DROP, eventValue);
-            totalSapGain += eventValue;
-            snprintf(resultLine1, sizeof(resultLine1), UiStrings::EXPLORE_FOOD_SOURCE_PLUS, eventValue);
+            addLocationFood(eventValue);
             break;
         case EventType::WOOD:
             bug.addFood(FoodType::DROP, 2);
@@ -201,8 +239,10 @@ void ExploreScene::applyEventReward(bool flee) {
                         case 0: {
                             uint8_t sap = (uint8_t)random(2, 5);
                             if (tod == GameEngine::TIME_AFTERNOON) sap++;
-                            addSap(sap);
-                            snprintf(resultLine1, sizeof(resultLine1), UiStrings::EXPLORE_PICNIC_CRUMBS, sap);
+                            addLocationFood(sap);
+                            if (resultLine2[0] == '\0') {
+                                snprintf(resultLine2, sizeof(resultLine2), UiStrings::EXPLORE_PICNIC_CRUMBS, sap);
+                            }
                             break;
                         }
                         case 1:
@@ -237,8 +277,8 @@ void ExploreScene::applyEventReward(bool flee) {
                             snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_SUN_BARK);
                             break;
                         case 1:
-                            addSap(2);
-                            snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_ANT_TRAIL);
+                            addLocationFood(2);
+                            snprintf(resultLine2, sizeof(resultLine2), "%s", UiStrings::EXPLORE_ANT_TRAIL);
                             break;
                         case 2:
                             addSap(1);
@@ -267,9 +307,9 @@ void ExploreScene::applyEventReward(bool flee) {
                             snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_MOSS_CARPET);
                             break;
                         case 1:
-                            addSap(3);
+                            addLocationFood(3);
                             addStat(0.0f, 0.0f, 0.0f, 0.0f, 0.2f, UiStrings::EXPLORE_SPI_PLUS);
-                            snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_FIREFLIES);
+                            if (resultLine2[0] == '\0') snprintf(resultLine2, sizeof(resultLine2), "%s", UiStrings::EXPLORE_FIREFLIES);
                             break;
                         case 2:
                             addSap(1);
@@ -301,8 +341,8 @@ void ExploreScene::applyEventReward(bool flee) {
                             snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_ANCIENT_RESIN);
                             break;
                         case 1:
-                            addSap(2);
-                            snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_DEER_MUSHROOM);
+                            addLocationFood(2);
+                            snprintf(resultLine2, sizeof(resultLine2), "%s", UiStrings::EXPLORE_DEER_MUSHROOM);
                             break;
                         case 2:
                             addSap(3);
@@ -328,6 +368,10 @@ void ExploreScene::applyEventReward(bool flee) {
             }
             break;
         }
+        case EventType::RELEASE:
+            snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_RELEASE_EVENT);
+            snprintf(resultLine2, sizeof(resultLine2), "%s", UiStrings::EXPLORE_RELEASE_EGG);
+            break;
         case EventType::NOTHING:
             snprintf(resultLine1, sizeof(resultLine1), "%s", UiStrings::EXPLORE_NOTHING_HAPPENED);
             break;
@@ -374,6 +418,17 @@ void ExploreScene::applyNpcBattleResult(const NpcBattleResult& res) {
     resultLine1[0] = '\0';
     resultLine2[0] = '\0';
     if (res.won) {
+        uint8_t location = GameEngine::ins().getExploreLocation();
+        if (location >= GameEngine::EXPLORE_LOCATION_COUNT) location = GameEngine::EXPLORE_PARK;
+        auto locationFood = [&]() -> FoodType {
+            switch (location) {
+                case GameEngine::EXPLORE_PARK: return FoodType::CUBE;
+                case GameEngine::EXPLORE_BACK_HILL: return FoodType::JELLY;
+                case GameEngine::EXPLORE_RIVERSIDE: return FoodType::CITRUS;
+                case GameEngine::EXPLORE_OLD_WOODS: return FoodType::BERRY;
+                default: return FoodType::DROP;
+            }
+        };
         int sap = 0;
         switch (res.tier) {
             case NpcData::Tier::ROOKIE:  sap = 1; break;
@@ -382,9 +437,23 @@ void ExploreScene::applyNpcBattleResult(const NpcBattleResult& res) {
             case NpcData::Tier::LEGEND:  sap = random(3, 6); break;
             default: break;
         }
-        bug.addFood(FoodType::DROP, sap);
+        FoodType rewardFood = locationFood();
+        bool foodUnlocked = GameEngine::ins().unlockFood(rewardFood);
+        bug.addFood(rewardFood, sap);
         totalSapGain += sap;
-        snprintf(resultLine1, sizeof(resultLine1), UiStrings::EXPLORE_VICTORY_SAP, sap);
+        if (foodUnlocked) {
+            snprintf(resultLine1, sizeof(resultLine1), "%s unlocked", FoodTypeInfo::name(rewardFood));
+        } else {
+            snprintf(resultLine1, sizeof(resultLine1), "Victory! %s +%d", FoodTypeInfo::name(rewardFood), sap);
+        }
+        if (location == GameEngine::EXPLORE_PARK &&
+            GameEngine::ins().unlockMainSceneBg(GameEngine::BG_SCHOOL)) {
+            snprintf(resultLine2, sizeof(resultLine2), "School unlocked");
+        }
+        if (location == GameEngine::EXPLORE_OLD_WOODS && res.legend &&
+            GameEngine::ins().unlockFeature(GameEngine::FEATURE_CUP_UNLOCKED)) {
+            snprintf(resultLine2, sizeof(resultLine2), "Cup unlocked");
+        }
         if (res.spiBoosted) {
             snprintf(resultLine2, sizeof(resultLine2), "%s", UiStrings::EXPLORE_SPI_PLUS);
         }
@@ -414,6 +483,13 @@ void ExploreScene::applyNpcBattleResult(const NpcBattleResult& res) {
         bug.setMot(0);
         enterFinalSummary(UiStrings::EXPLORE_DEFEATED, UiStrings::EXPLORE_MOT_ZERO);
     }
+}
+
+void ExploreScene::releaseForEgg() {
+    Bug& bug = GameEngine::ins().getBug();
+    bug.release(GameEngine::ins().getGameNow());
+    GameEngine::ins().forceSave();
+    enterFinalSummary(UiStrings::EXPLORE_RELEASED, UiStrings::EXPLORE_NEW_EGG);
 }
 
 bool ExploreScene::onButton(const ButtonEvent& ev) {
@@ -448,6 +524,18 @@ bool ExploreScene::onButton(const ButtonEvent& ev) {
         return false;
     }
 
+    if (state == State::RELEASE_PROMPT) {
+        if (ev.btn == 0) {
+            releaseForEgg();
+            return true;
+        }
+        if (ev.btn == 1) {
+            enterFinalSummary(UiStrings::EXPLORE_LEFT, UiStrings::EXPLORE_SAFE_RETURN);
+            return true;
+        }
+        return false;
+    }
+
     if (state == State::FINAL_SUMMARY) {
         if (ev.btn == 0) {
             state = State::RETURNING;
@@ -470,4 +558,3 @@ bool ExploreScene::onButton(const ButtonEvent& ev) {
 
     return false;
 }
-

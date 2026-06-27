@@ -25,13 +25,7 @@ bool TerrariumScene::staticLayerMatches() const {
     const Bug& bug = GameEngine::ins().getBug();
     return staticLayerCache.bg == GameEngine::ins().getMainSceneBg() &&
            staticLayerCache.night == GameEngine::ins().isNight() &&
-           staticLayerCache.stage == bug.getStage() &&
-           staticLayerCache.bowlStyle == GameEngine::ins().getBowlStyle() &&
-           staticLayerCache.woodStyle == GameEngine::ins().getWoodStyle() &&
-           staticLayerCache.foodStyle == GameEngine::ins().getFoodStyle() &&
-           staticLayerCache.woodPlaced == bug.isWoodPlaced() &&
-           staticLayerCache.foodInTray == bug.hasFoodInTray() &&
-           staticLayerCache.foodAmount == bug.getFoodAmount();
+           staticLayerCache.stage == bug.getStage();
 }
 
 void TerrariumScene::rebuildStaticLayer() {
@@ -42,8 +36,6 @@ void TerrariumScene::rebuildStaticLayer() {
 
     PixelRenderer::bind(&staticLayerCache.sprite);
     drawBackground();
-    drawFoodTray();
-    drawWood();
     PixelRenderer::bind(&Hal::ins().canvas());
 
     const Bug& bug = GameEngine::ins().getBug();
@@ -51,12 +43,6 @@ void TerrariumScene::rebuildStaticLayer() {
     staticLayerCache.bg = GameEngine::ins().getMainSceneBg();
     staticLayerCache.night = GameEngine::ins().isNight();
     staticLayerCache.stage = bug.getStage();
-    staticLayerCache.bowlStyle = GameEngine::ins().getBowlStyle();
-    staticLayerCache.woodStyle = GameEngine::ins().getWoodStyle();
-    staticLayerCache.foodStyle = GameEngine::ins().getFoodStyle();
-    staticLayerCache.woodPlaced = bug.isWoodPlaced();
-    staticLayerCache.foodInTray = bug.hasFoodInTray();
-    staticLayerCache.foodAmount = bug.getFoodAmount();
 }
 
 void TerrariumScene::drawStaticLayer() {
@@ -70,8 +56,6 @@ void TerrariumScene::drawStaticLayer() {
     }
 
     drawBackground();
-    drawFoodTray();
-    drawWood();
 }
 
 bool TerrariumScene::hudCacheMatches(const char* clockBuf) const {
@@ -312,4 +296,3 @@ bool TerrariumScene::drawCachedFrame(int drawX, int drawY,
     cache->sprite.pushSprite(&Hal::ins().canvas(), drawX - 1, drawY - 1, CACHE_TRANSPARENT);
     return true;
 }
-

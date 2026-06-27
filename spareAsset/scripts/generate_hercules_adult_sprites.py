@@ -25,7 +25,7 @@ ACTION_SOURCES = [
     {"name": "EAT", "kind": "frames_dir", "dir": ORIGIN / "eat"},
     {"name": "SLEEP_GETDOWN", "kind": "frames_dir", "dir": ORIGIN / "sleep/getDown", "scale_group": "SLEEP"},
     {"name": "SLEEP_BREATH", "kind": "frames_dir", "dir": ORIGIN / "sleep/breath", "scale_group": "SLEEP"},
-    {"name": "TURN", "kind": "frames_dir", "dir": ORIGIN / "turn"},
+    {"name": "TURN", "kind": "frames_dir", "dir": ORIGIN / "turn", "target_sizes": [(57, 48), (56, 49)]},
     {"name": "THREATEN", "kind": "frames_dir", "dir": ORIGIN / "threaten"},
     {"name": "ATTACK_DOWN", "kind": "frames_dir", "dir": ATTACK_ORIGIN / "down", "scale_group": "ATTACK"},
     {"name": "ATTACK_UP", "kind": "frames_dir", "dir": ATTACK_ORIGIN / "up", "scale_group": "ATTACK"},
@@ -55,6 +55,11 @@ ACTION_NAMES = [source["name"] for source in ACTION_SOURCES]
 ADULT_BASE_SCALE = 1.73
 ADULT_RUNTIME_MAX_SCALE = 1.20
 SCREEN_WIDTH = 240
+# Exported frames keep transparent safety margin. The horn tip often lands on
+# the right edge after tight cropping; padding prevents right-facing sprites
+# from reading as clipped in-game.
+FRAME_PAD_X = 6
+FRAME_PAD_Y = 3
 
 BASE_POLICY = {
     "WALK": {"max_w": 48, "max_h": 28},
@@ -275,17 +280,33 @@ def apply_palette_key(img, class_img, soft_palette_mask):
     return keyed
 
 
+def pad_frame(img):
+    if FRAME_PAD_X <= 0 and FRAME_PAD_Y <= 0:
+        return img
+    padded = Image.new(
+        "RGBA",
+        (img.width + FRAME_PAD_X * 2, img.height + FRAME_PAD_Y * 2),
+        (0, 0, 0, 0),
+    )
+    padded.alpha_composite(img, (FRAME_PAD_X, FRAME_PAD_Y))
+    return padded
+
+
 def source_path(filename):
     path = Path(filename)
     return path if path.is_absolute() else SRC / path
 
 
-def build_frame(name, frame_index, raw_crop, raw_classes, source_label, scale):
+def build_frame(name, frame_index, raw_crop, raw_classes, source_label, scale, target_size=None):
     bbox = raw_crop.getbbox()
     crop = raw_crop.crop(bbox) if bbox else Image.new("RGBA", (1, 1), (0, 0, 0, 0))
     class_crop = raw_classes.crop(bbox) if bbox else Image.new("L", (1, 1), CLASS_NONE)
+    resized_size = target_size or (
+        max(1, round(crop.width * scale)),
+        max(1, round(crop.height * scale)),
+    )
     resized = crop.resize(
-        (max(1, round(crop.width * scale)), max(1, round(crop.height * scale))),
+        resized_size,
         Image.Resampling.LANCZOS,
     )
     resized_classes = class_crop.resize(resized.size, Image.Resampling.NEAREST)
@@ -294,7 +315,7 @@ def build_frame(name, frame_index, raw_crop, raw_classes, source_label, scale):
     resized = resized.crop(bbox) if bbox else resized
     resized_classes = resized_classes.crop(bbox) if bbox else resized_classes
     resized_soft_palette = resized_soft_palette.crop(bbox) if bbox else resized_soft_palette
-    keyed = apply_palette_key(resized, resized_classes, resized_soft_palette)
+    keyed = pad_frame(apply_palette_key(resized, resized_classes, resized_soft_palette))
     keyed.save(EXTRACTED / f"{name.lower()}_{frame_index}.png")
     palette_pixels = sum(1 for v in image_data(resized_classes) if v == CLASS_PALETTE)
     print(
@@ -375,10 +396,12 @@ def compute_group_scales(raw_sets, policy):
 def make_frames(source, raw_sets, group_scales):
     name = source["name"]
     scale = group_scales[scale_group(source)]
-    return [
-        build_frame(name, i, raw_crop, raw_classes, source_label, scale)
-        for i, (raw_crop, raw_classes, source_label) in enumerate(raw_sets[name])
-    ]
+    target_sizes = source.get("target_sizes")
+    frames = []
+    for i, (raw_crop, raw_classes, source_label) in enumerate(raw_sets[name]):
+        target_size = target_sizes[i] if target_sizes and i < len(target_sizes) else None
+        frames.append(build_frame(name, i, raw_crop, raw_classes, source_label, scale, target_size))
+    return frames
 
 
 def encode(img):

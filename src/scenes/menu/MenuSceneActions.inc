@@ -91,10 +91,13 @@ bool MenuScene::onButton(const ButtonEvent& ev) {
                 // 食物子菜单：A 将当前高亮项设为全局食物（左侧菱形标记跟随），Back 返回箱子
                 if (selected < FOOD_ITEM_COUNT - 1) {
                     Bug& bug = GameEngine::ins().getBug();
-                    if (bug.getFoodCount((FoodType)selected) > 0) {
+                    FoodType type = (FoodType)selected;
+                    if (!GameEngine::ins().isFoodUnlocked(type)) {
+                        showToast(UiStrings::LOCKED);
+                    } else if (bug.getFoodCount(type) > 0) {
                         GameEngine::ins().setFoodStyle((uint8_t)selected);
                         foodConfirmTime = GameEngine::ins().getGameNow() + FOOD_CONFIRM_MS;
-                        Serial.printf("[Menu] Global food set to: %s\n", FoodTypeInfo::name((FoodType)selected));
+                        Serial.printf("[Menu] Global food set to: %s\n", FoodTypeInfo::name(type));
                     }
                 } else {
                     enterMode(Mode::BOX);
@@ -129,7 +132,21 @@ void MenuScene::executeSelection() {
             enterMode(Mode::BOX);
             return;
         }
-        if (selected == TOY_NONE || selected == TOY_BALL) {
+        if (selected == TOY_BALL) {
+            if (!GameEngine::ins().isToyStyleUnlocked(GameEngine::TOY_BALL)) {
+                showToast(UiStrings::TOY_BALL_LOCKED);
+                return;
+            }
+            if (!GameEngine::ins().equipToyBall()) {
+                showToast(UiStrings::TOY_BALL_EMPTY);
+                return;
+            }
+            saveSettingsNow();
+            Serial.printf("[Menu] Toy style: %s dur=%u stock=%u\n",
+                          GameEngine::ins().getToyStyleName(),
+                          GameEngine::ins().getActiveToyBallDurability(),
+                          GameEngine::ins().getToyBallCount());
+        } else if (selected == TOY_NONE) {
             GameEngine::ins().setToyStyle((uint8_t)selected);
             saveSettingsNow();
             Serial.printf("[Menu] Toy style: %s\n", GameEngine::ins().getToyStyleName());
@@ -147,9 +164,7 @@ void MenuScene::executeSelection() {
 
     if (mode == Mode::BOWL) {
         if (careItemsNotNeeded(bug.getStage())) {
-            GameEngine::ins().setBowlStyle(0xFF);
             bug.setFoodTray(0, (FoodType)GameEngine::ins().getFoodStyle());
-            saveSettingsNow();
             showToast(UiStrings::CARE_ITEM_NOT_NEEDED);
             return;
         }
@@ -203,13 +218,16 @@ void MenuScene::executeSelection() {
     if (mode == Mode::BOX) {
         switch (selected) {
             case BOX_FOOD:
-                enterMode(Mode::FOOD);
+                if (careItemsNotNeeded(bug.getStage())) {
+                    showToast(UiStrings::CARE_ITEM_NOT_NEEDED);
+                } else {
+                    enterMode(Mode::FOOD);
+                }
                 break;
             case BOX_WOOD:
                 if (careItemsNotNeeded(bug.getStage())) {
                     bug.removeWood();
-                    GameEngine::ins().setWoodStyle(0xFF);
-                    saveSettingsNow();
+                    GameEngine::ins().forceSave();
                     showToast(UiStrings::CARE_ITEM_NOT_NEEDED);
                 } else {
                     enterMode(Mode::WOOD);
@@ -217,9 +235,8 @@ void MenuScene::executeSelection() {
                 break;
             case BOX_BOWL:
                 if (careItemsNotNeeded(bug.getStage())) {
-                    GameEngine::ins().setBowlStyle(0xFF);
                     bug.setFoodTray(0, (FoodType)GameEngine::ins().getFoodStyle());
-                    saveSettingsNow();
+                    GameEngine::ins().forceSave();
                     showToast(UiStrings::CARE_ITEM_NOT_NEEDED);
                 } else {
                     enterMode(Mode::BOWL);
@@ -269,6 +286,13 @@ void MenuScene::executeSelection() {
                 return;
             }
             enterMode(Mode::GIFT_FOOD);
+        } else if (selected == GIFT_TOY) {
+            uint8_t count = GameEngine::ins().getToyBallCount();
+            if (count == 0) {
+                showToast(UiStrings::TOY_BALL_EMPTY);
+                return;
+            }
+            openGiftQuantity(ItemCatalog::toy(GameEngine::TOY_BALL), count);
         } else if (selected == GIFT_RECEIVE) {
             GameEngine::ins().clearPendingGiftItem();
             GameEngine::ins().setLobbyMode(LobbyMode::LOBBY_GIFT_RECEIVE);
@@ -312,7 +336,9 @@ void MenuScene::executeSelection() {
         }
 
         if (selected == LOCATION_CUP) {
-            if (bug.getStage() != Stage::ADULT) {
+            if (!GameEngine::ins().isFeatureUnlocked(GameEngine::FEATURE_CUP_UNLOCKED)) {
+                showToast(UiStrings::LOCKED);
+            } else if (bug.getStage() != Stage::ADULT) {
                 showToast(UiStrings::CUP_NEED_ADULT);
             } else if (bug.isDead()) {
                 showToast(UiStrings::CUP_BEETLE_DIED);
@@ -378,6 +404,12 @@ void MenuScene::executeSelection() {
             GameEngine::ins().scheduleDebugLarvaSubstrateFade(3000);
             nextScene = SCENE_TERRARIUM;
             Serial.println("[Menu] Debug substrate fade scheduled");
+        } else if (selected == DEBUG_UNLOCK_ALL) {
+            GameEngine::ins().unlockAllProgression();
+            GameEngine::ins().setMainSceneBg(GameEngine::BG_ENTOMOLOGIST);
+            saveSettingsNow();
+            showToast(UiStrings::UNLOCKED);
+            Serial.println("[Menu] Debug unlock all progression");
         }
         return;
     }
@@ -394,11 +426,8 @@ void MenuScene::executeSelection() {
             bug.debugSetStage(nextStage, GameEngine::ins().getGameNow());
             GameEngine::ins().clearTerrariumViewState();
             if (careItemsNotNeeded(nextStage)) {
-                GameEngine::ins().setBowlStyle(0xFF);
                 bug.setFoodTray(0, (FoodType)GameEngine::ins().getFoodStyle());
-                GameEngine::ins().setWoodStyle(0xFF);
                 bug.removeWood();
-                saveSettingsNow();
             }
             GameEngine::ins().forceSave();
 
@@ -438,7 +467,11 @@ void MenuScene::executeSelection() {
             enterMode(Mode::SOCIAL);
             break;
         case EXPLORE: {
-            enterMode(Mode::EXPLORE);
+            if (bug.getStage() != Stage::ADULT) {
+                showToast(UiStrings::UNLOCKED_AS_ADULT);
+            } else {
+                enterMode(Mode::EXPLORE);
+            }
             break;
         }
         case SETTINGS:
@@ -455,4 +488,3 @@ void MenuScene::executeSelection() {
             break;
     }
 }
-

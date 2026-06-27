@@ -10,6 +10,7 @@ bool ExploreScene::sSessionActive = false;
 uint8_t ExploreScene::sCurrentRound = 1;
 int ExploreScene::sTotalSapGain = 0;
 bool ExploreScene::sFinalRecorded = false;
+bool ExploreScene::sReleaseEventSeen = false;
 
 namespace {
 
@@ -23,29 +24,30 @@ struct ExploreEventWeights {
     uint8_t wood;
     uint8_t npc;
     uint8_t rare;
+    uint8_t release;
     uint8_t nothing;
 };
 
 static constexpr ExploreEventWeights EVENT_TABLE[GameEngine::EXPLORE_LOCATION_COUNT][3] = {
     { // Park
-        {40, 15, 10, 10, 5, 20},
-        {30, 20, 10, 15, 8, 17},
-        {25, 15, 10, 20, 10, 20},
+        {40, 15, 10, 10, 5, 0, 20},
+        {30, 20, 10, 15, 8, 0, 17},
+        {25, 15, 10, 20, 10, 0, 20},
     },
     { // Back Hill
-        {20, 10, 30, 10, 10, 20},
-        {30, 15, 20, 10, 10, 15},
-        {15, 10, 20, 25, 10, 20},
+        {20, 10, 30, 10, 10, 8, 12},
+        {30, 15, 20, 10, 10, 8, 7},
+        {15, 10, 20, 25, 10, 8, 12},
     },
     { // Riverside
-        {15, 15, 10, 15, 30, 15},
-        {25, 20, 10, 15, 15, 15},
-        {10, 10, 10, 20, 25, 25},
+        {15, 15, 10, 15, 30, 0, 15},
+        {25, 20, 10, 15, 15, 0, 15},
+        {10, 10, 10, 20, 25, 0, 25},
     },
     { // Old Woods
-        {10, 10, 15, 20, 25, 20},
-        {10, 10, 15, 25, 20, 20},
-        {5, 5, 10, 35, 20, 25},
+        {10, 10, 15, 20, 25, 10, 10},
+        {10, 10, 15, 25, 20, 10, 10},
+        {5, 5, 10, 35, 20, 12, 13},
     },
 };
 

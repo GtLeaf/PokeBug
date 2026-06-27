@@ -61,11 +61,11 @@ private:
     static constexpr int FOOD_ITEM_COUNT = 7;
     static constexpr int TOY_ITEM_COUNT = 3; // None + Ball + Back
     static constexpr int SOCIAL_ITEM_COUNT = 4; // Gift + Fight + Visit + Back
-    static constexpr int GIFT_ITEM_COUNT = 3;   // Food + Receive + Back
+    static constexpr int GIFT_ITEM_COUNT = 4;   // Food + Toy + Receive + Back
     static constexpr int FIGHT_ITEM_COUNT = 3;  // Create + Search + Back
     static constexpr int VISIT_ITEM_COUNT = 3;  // Create + Search + Back
     static constexpr int EXPLORE_ITEM_COUNT = 6; // 4 locations + Cup + Back
-    static constexpr int DEBUG_ITEM_COUNT = 5; // Beetle + Attr + VS NPC + Clear + Back
+    static constexpr int DEBUG_ITEM_COUNT = 6; // Beetle + Attr + VS NPC + Clear + Unlock + Back
     static constexpr int DEBUG_STATE_ITEM_COUNT = 3; // Stage + Temper + Back
     static constexpr int DEBUG_ATTR_ITEM_COUNT = 6; // 5 attrs + Back
     static constexpr uint32_t FOOD_CONFIRM_MS = 250;
@@ -190,6 +190,7 @@ private:
 
     enum GiftItem {
         GIFT_FOOD = 0,
+        GIFT_TOY,
         GIFT_RECEIVE,
         GIFT_BACK,
     };
@@ -220,6 +221,7 @@ private:
         DEBUG_ATTR,
         DEBUG_NPC,
         DEBUG_CLEAR_SUBSTRATE,
+        DEBUG_UNLOCK_ALL,
         DEBUG_BACK,
     };
 

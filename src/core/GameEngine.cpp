@@ -53,6 +53,11 @@ void GameEngine::begin() {
         }
     }
 
+    if (!SaveManager::ins().loadProgression(progression)) {
+        progression = ProgressionState();
+    }
+    ensureDefaultProgression();
+
     // 加载设置
     float loadedFont = 1.5f;
     uint8_t loadedBri = 128;
@@ -181,7 +186,7 @@ void GameEngine::run() {
     if (!gameTimePaused) {
         uint32_t virtualElapsed = (uint32_t)(realElapsed * gameSpeed);
         gameNow += virtualElapsed;
-        bug.update(gameNow);
+        updateBugWithStageDefaults(gameNow);
         syncExploreClock(true);
     }
 
@@ -245,6 +250,7 @@ void GameEngine::run() {
                                         gameSpeed, idleTimeoutIndex, mainSceneBg,
                                         woodStyle, bowlStyle, foodStyle, toyStyle);
         SaveManager::ins().saveCupGlobal(cupSeason, lastCupGameTime, (uint8_t)cupCycleState);
+        saveProgression();
         Serial.println("[Engine] Enter deep sleep");
         Hal::ins().setBrightness(0);
         esp_sleep_enable_timer_wakeup(600 * 1000000ULL);
@@ -334,6 +340,32 @@ bool GameEngine::handleGlobalButtonEvent(const ButtonEvent& ev) {
         return true;
     }
     return false;
+}
+
+bool GameEngine::prepareJuvenileStarterTray(Bug& targetBug, uint8_t selectedBowlStyle) {
+    uint8_t style = selectedBowlStyle;
+    if (style == 0xFF || style >= 3) style = 0;
+
+    targetBug.setFoodTray(0, FoodType::DROP);
+    targetBug.setFoodTray((uint8_t)(style + 1), FoodType::DROP);
+    targetBug.addFood(FoodType::DROP, 1);
+    return targetBug.placeFoodInTray(FoodType::DROP);
+}
+
+void GameEngine::updateBugWithStageDefaults(uint64_t now) {
+    Stage prevStage = bug.getStage();
+    bug.update(now);
+    applyStageTransitionDefaults(prevStage, bug.getStage());
+}
+
+void GameEngine::applyStageTransitionDefaults(Stage prevStage, Stage nextStage) {
+    if (prevStage == Stage::PUPA && nextStage != Stage::PUPA) {
+        setBowlStyle(bowlStyle);
+        bool placed = prepareJuvenileStarterTray(bug, bowlStyle);
+        forceSave();
+        Serial.printf("[Engine] Pupa hatched: bowlStyle=%u Drop prepared=%u\n",
+                      bowlStyle, placed ? 1 : 0);
+    }
 }
 
 void GameEngine::processIMU() {

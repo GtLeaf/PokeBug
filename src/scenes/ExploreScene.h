@@ -20,6 +20,7 @@ private:
         EXPLORING,        // 轮次开始，先展示场景再触发事件
         EVENT_REVEAL,     // 事件出现前的轻微晃动
         EVENT_POPUP,      // 普通事件弹窗
+        RELEASE_PROMPT,   // 放生繁殖事件：确认后生成新卵
         NPC_PROMPT,       // NPC 遭遇：迎战/逃跑
         FINAL_SUMMARY,    // 3 轮完成或提前结束
         RETURNING,        // 返回培养缸
@@ -38,6 +39,7 @@ private:
     uint8_t currentRound = 1;
     int totalSapGain = 0;
     bool finalRecorded = false;
+    bool releaseEventSeen = false;
 
     // 当前事件
     enum class EventType {
@@ -46,6 +48,7 @@ private:
         WOOD,        // 发现木质环境资源，奖励树汁
         NPC,         // 遭遇对手
         RARE,        // 稀有事件
+        RELEASE,     // 繁殖地点，允许放生并获得新卵
         NOTHING,     // 无事发生
     };
     EventType eventType = EventType::NOTHING;
@@ -76,8 +79,10 @@ private:
     void applyEventReward(bool flee = false);
     void startNpcBattle();
     void applyNpcBattleResult(const NpcBattleResult& res);
+    void releaseForEgg();
     void drawExploring(int shakeX = 0, bool showProgressText = true);
     void drawPopup();
+    void drawReleasePrompt();
     void drawNpcPrompt();
     void drawResult();
     void drawSkyAndGround(int shakeX = 0);
@@ -86,4 +91,5 @@ private:
     static uint8_t sCurrentRound;
     static int sTotalSapGain;
     static bool sFinalRecorded;
+    static bool sReleaseEventSeen;
 };

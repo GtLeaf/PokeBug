@@ -149,7 +149,16 @@ void TerrariumScene::render() {
         }
     }
     drawLarvaSubstrate(substrateOpacity);
-    drawBug();
+    bool propsBehindLocalBug = bugZ <= TERRARIUM_PROP_Z;
+    if (propsBehindLocalBug) {
+        drawFoodTray();
+        drawWood();
+        drawBug();
+    } else {
+        drawBug();
+        drawFoodTray();
+        drawWood();
+    }
     drawVisitor();
     if (isMobileBeetleStage(bug.getStage()) && !bug.isDead()) {
         drawToy();
@@ -157,6 +166,7 @@ void TerrariumScene::render() {
     drawToyEntry();
     drawPokeAction();
     drawCachedStatusBar();
+    drawTerrariumToast();
 
     if (bug.isDead()) {
         drawDeathScreen();
@@ -218,13 +228,15 @@ bool TerrariumScene::onButton(const ButtonEvent& ev) {
             } else {
                 Serial.println("[Terrarium] Drop larva substrate failed");
             }
-        } else {
+        } else if (bug.getStage() == Stage::JUVENILE || bug.getStage() == Stage::ADULT) {
             // 短按 A：喂食
             if (bug.placeFoodInTray((FoodType)GameEngine::ins().getFoodStyle())) {
                 Serial.println("[Terrarium] Fed bug");
             } else {
                 Serial.println("[Terrarium] Feed failed");
             }
+        } else {
+            Serial.println("[Terrarium] Feed ignored before adult stage");
         }
         return true;
     }
@@ -259,6 +271,11 @@ bool TerrariumScene::onButton(const ButtonEvent& ev) {
             return true;
         }
 
+        if (bug.getStage() == Stage::ADULT && !isAtInteractionDepth()) {
+            Serial.printf("[Terrarium] Poke skipped: beetle depth z=%u\n", bugZ);
+            return true;
+        }
+
         bool ok = bug.poke(gameNow);
         if (ok) {
             mind.onPoked(now);
@@ -272,6 +289,7 @@ bool TerrariumScene::onButton(const ButtonEvent& ev) {
             startPokeFeedback(now, 600, true);
             pokeThreatenEndMs = now + POKE_REACTION_MS;  // 威吓保持约 3s
             if (bug.getStage() == Stage::ADULT) {
+                bool wasOnWood = isAdultOnWoodRoute();
                 // 若从夜间休息中被戳醒，设置随机清醒冷却，不能马上重新入睡
                 if (adultState == AdultState::REST) {
                     restResumeAllowedMs = now + random(REST_WAKEUP_COOLDOWN_MIN_MS,
@@ -282,10 +300,17 @@ bool TerrariumScene::onButton(const ButtonEvent& ev) {
                 turnTargetFaceRight = faceRight;
                 int dir = pokeFingerFromRight ? -1 : 1;
                 bugX += dir * 5;
+                if (wasOnWood) {
+                    if (bugX < WOOD_SURFACE_LEFT_X) bugX = WOOD_SURFACE_LEFT_X;
+                    if (bugX > WOOD_SURFACE_RIGHT_X) bugX = WOOD_SURFACE_RIGHT_X;
+                    bugZ = TERRARIUM_DEPTH_INTERACTION_Z;
+                    targetZ = TERRARIUM_DEPTH_INTERACTION_Z;
+                }
                 if (bugX < MIN_X) bugX = MIN_X;
                 if (bugX > MAX_X) bugX = MAX_X;
                 alertUntilMs = now + random(ALERT_MIN_MS, ALERT_MAX_MS + 1);
                 adultState = AdultState::IDLE;
+                woodDismountActive = false;
                 stateTimer = 0;
                 setIdleDuration();
             }
@@ -304,4 +329,3 @@ bool TerrariumScene::onButton(const ButtonEvent& ev) {
     }
     return false;
 }
-

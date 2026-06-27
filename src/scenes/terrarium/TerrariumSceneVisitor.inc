@@ -250,7 +250,10 @@ void TerrariumScene::beginActorTurn(AdultBeetleActor& actor, bool targetFaceRigh
     actor.walkAfterTurn = continueWalking;
     actor.slideAfterTurn = false;
     actor.climbAfterTurn = false;
-    if (!continueWalking) actor.walkTargetIsRest = false;
+    if (!continueWalking) {
+        actor.walkTargetIsRest = false;
+        actor.woodDismountActive = false;
+    }
     actor.turnFrameIndex = random(HerculesAdultSprites::TURN_FRAME_COUNT);
     actor.stateTimer = 0;
     actor.stateDuration = duration;
@@ -286,6 +289,10 @@ int TerrariumScene::hostInteractionTargetX(bool targetVisitor) const {
 
 float TerrariumScene::hostInteractionTargetScale(bool targetVisitor) const {
     return targetVisitor ? visitorAdultScale() : GameEngine::ins().getBug().getAdultScale();
+}
+
+int TerrariumScene::hostInteractionTargetFootY(bool targetVisitor) const {
+    return targetVisitor ? visitor.targetY : adultFootY();
 }
 
 void TerrariumScene::reactVisitorToHostPoke(uint32_t nowMs) {
@@ -583,4 +590,3 @@ bool TerrariumScene::flushVisitEatResult() {
     pendingVisitEatResult = false;
     return true;
 }
-

@@ -33,6 +33,8 @@ private:
 
     // 超时
     uint32_t stateStartMs = 0;
+    float bracketScroll = 0.0f;
+    uint32_t bracketScrollLastMs = 0;
     static constexpr uint32_t NOTIFY_TIMEOUT_MS = 30000;
 
     void initCup();
@@ -43,5 +45,6 @@ private:
     void drawBracket();
     void drawRoundIntro();
     void drawResult();
+    void updateBracketScroll(int maxScroll);
     const char* rankText(uint8_t rank) const;
 };

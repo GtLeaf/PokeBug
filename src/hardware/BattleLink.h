@@ -108,7 +108,7 @@ struct __attribute__((packed)) battle_result_t {
     uint8_t win;  // 发送方视角：1=胜，0=负
 };
 
-// 礼物包 7 bytes：item_id 使用 ItemCatalog 编码，当前 UI 只允许 Food。
+// 礼物包 7 bytes：item_id 使用 ItemCatalog 编码。
 struct __attribute__((packed)) gift_item_t {
     uint8_t type;
     uint8_t version;        // BATTLE_PROTOCOL_VERSION

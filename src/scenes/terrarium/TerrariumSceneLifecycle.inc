@@ -23,9 +23,7 @@ void TerrariumScene::onEnter() {
     Bug& bug = GameEngine::ins().getBug();
     Stage stage = bug.getStage();
     if (stage == Stage::EGG || stage == Stage::LARVA || stage == Stage::PUPA) {
-        GameEngine::ins().setBowlStyle(0xFF);
         bug.setFoodTray(0, (FoodType)GameEngine::ins().getFoodStyle());
-        GameEngine::ins().setWoodStyle(0xFF);
         bug.removeWood();
     }
     if (stage != Stage::EGG && stage != Stage::LARVA) {
@@ -43,6 +41,7 @@ void TerrariumScene::onEnter() {
         if (bugX < MIN_X) bugX = MIN_X;
         if (bugX > MAX_X) bugX = MAX_X;
         bugY = saved.bugY;
+        bugZ = 0;
         animFrame = saved.animFrame;
         faceRight = saved.faceRight;
         larvaFaceRight = faceRight;
@@ -59,6 +58,7 @@ void TerrariumScene::onEnter() {
     if (saved.valid && isMobileBeetleStage(bug.getStage()) && !bug.isDead()) {
         bugX = saved.bugX;
         bugY = saved.bugY;
+        bugZ = clampDepthZ(saved.bugZ);
         animFrame = saved.animFrame;
         adultState = saved.adultState <= (uint8_t)AdultState::ATTACK_UP ?
                      (AdultState)saved.adultState : AdultState::IDLE;
@@ -67,9 +67,12 @@ void TerrariumScene::onEnter() {
         walkAfterTurn = saved.walkAfterTurn;
         slideAfterTurn = saved.slideAfterTurn;
         climbAfterTurn = saved.climbAfterTurn;
+        eatAfterTurn = false;
         walkTargetIsRest = false;
+        woodDismountActive = false;
         turnFrameIndex = saved.turnFrameIndex;
         targetX = saved.targetX;
+        targetZ = clampDepthZ(saved.targetZ);
         slideTargetX = saved.slideTargetX;
         climbTargetX = saved.climbTargetX;
         tiltHighSideIsRight = saved.tiltHighSideIsRight;
@@ -104,6 +107,7 @@ void TerrariumScene::persistViewState() {
         TerrariumViewState state;
         state.bugX = bugX;
         state.bugY = bugY;
+        state.bugZ = bug.getStage() == Stage::ADULT ? bugZ : 0;
         state.animFrame = animFrame;
         state.adultState = (uint8_t)adultState;
         state.faceRight = bug.getStage() == Stage::LARVA ? larvaFaceRight : faceRight;
@@ -114,6 +118,7 @@ void TerrariumScene::persistViewState() {
         // walkTargetIsRest 是短暂运行时意图，不持久化，恢复后按普通 WALK 继续。
         state.turnFrameIndex = turnFrameIndex;
         state.targetX = targetX;
+        state.targetZ = bug.getStage() == Stage::ADULT ? targetZ : 0;
         state.slideTargetX = slideTargetX;
         state.climbTargetX = climbTargetX;
         state.tiltHighSideIsRight = tiltHighSideIsRight;
@@ -166,6 +171,7 @@ void TerrariumScene::persistViewState() {
 void TerrariumScene::resetLocalViewState() {
     bugX = 120;
     bugY = 80;
+    bugZ = 0;
     animFrame = 0;
     adultState = AdultState::IDLE;
     faceRight = true;
@@ -173,9 +179,12 @@ void TerrariumScene::resetLocalViewState() {
     walkAfterTurn = false;
     slideAfterTurn = false;
     climbAfterTurn = false;
+    eatAfterTurn = false;
     walkTargetIsRest = false;
+    woodDismountActive = false;
     turnFrameIndex = 0;
     targetX = bugX;
+    targetZ = 0;
     slideTargetX = bugX;
     climbTargetX = bugX;
     tiltHighSideIsRight = true;
@@ -365,4 +374,3 @@ void TerrariumScene::startPendingVisitIfAny() {
     chooseVisitorTarget();
     logVisitorState("spawn-pending", nowMs);
 }
-

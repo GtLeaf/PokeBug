@@ -5,8 +5,8 @@
 namespace HerculesPupaSprites {
 
 static constexpr uint8_t FRAME_COUNT = 3;
-static constexpr uint8_t FRAME_W = 58;
-static constexpr uint8_t FRAME_H = 70;
+static constexpr uint8_t FRAME_W = 70;
+static constexpr uint8_t FRAME_H = 84;
 
 struct RleFrame {
     uint16_t offset;

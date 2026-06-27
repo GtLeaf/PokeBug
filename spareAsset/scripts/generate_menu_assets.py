@@ -9,6 +9,9 @@ SRC_CANDIDATES = (
     ROOT / "spareAsset/origin/menu/main_menu.png",
     ROOT / "spareAsset/origin/menu/menu_main.png",
 )
+BOX_SRC_CANDIDATES = (
+    ROOT / "spareAsset/origin/menu/box/menu_box.png",
+)
 OUT_H = ROOT / "src/assets/MenuAssets.h"
 OUT_CPP = ROOT / "src/assets/MenuAssets.cpp"
 SPARE = ROOT / "spareAsset"
@@ -184,6 +187,48 @@ def remove_connected_edge_green(im):
     return im
 
 
+def remove_edge_warm_fringe(im, passes=3):
+    im = im.convert("RGBA")
+    pix = im.load()
+    w, h = im.size
+    neighbors = (
+        (-1, -1), (0, -1), (1, -1),
+        (-1, 0),           (1, 0),
+        (-1, 1),  (0, 1),  (1, 1),
+    )
+
+    def is_warm_artifact(r, g, b, a):
+        if a < 80:
+            return False
+        return (
+            r <= 132 and g <= 88 and b <= 118 and
+            r > g + 10 and
+            b < r + 36
+        )
+
+    for _ in range(passes):
+        clear = []
+        for y in range(h):
+            for x in range(w):
+                r, g, b, a = pix[x, y]
+                if not is_warm_artifact(r, g, b, a):
+                    continue
+                touches_transparent = any(
+                    0 <= x + dx < w and
+                    0 <= y + dy < h and
+                    pix[x + dx, y + dy][3] < 80
+                    for dx, dy in neighbors
+                )
+                if touches_transparent:
+                    clear.append((x, y))
+
+        if not clear:
+            break
+        for x, y in clear:
+            pix[x, y] = (0, 0, 0, 0)
+    return im
+
+
 def trim_alpha(im):
     bbox = im.getbbox()
     return im.crop(bbox) if bbox else Image.new("RGBA", (1, 1), (0, 0, 0, 0))
@@ -268,10 +313,10 @@ def make_source_tiles(source):
     return tiles
 
 
-def make_frames():
-    src = next((p for p in SRC_CANDIDATES if p.exists()), None)
+def make_frames(src_candidates=SRC_CANDIDATES, prefix="menu_main"):
+    src = next((p for p in src_candidates if p.exists()), None)
     if src is None:
-        candidates = ", ".join(str(p) for p in SRC_CANDIDATES)
+        candidates = ", ".join(str(p) for p in src_candidates)
         raise FileNotFoundError(f"No menu source found. Expected one of: {candidates}")
 
     source = Image.open(src).convert("RGBA")
@@ -296,12 +341,14 @@ def make_frames():
             ((MENU_FRAME_W - resized.width) // 2, (MENU_FRAME_H - resized.height) // 2),
         )
         canvas = remove_connected_edge_green(canvas)
+        if prefix == "menu_box" and i == 6:
+            canvas = remove_edge_warm_fringe(canvas)
         frames.append(canvas)
-        canvas.save(EXTRACTED / f"menu_main_{i}.png")
+        canvas.save(EXTRACTED / f"{prefix}_{i}.png")
         bbox = canvas.getbbox()
         bbox_size = (bbox[2] - bbox[0], bbox[3] - bbox[1]) if bbox else (0, 0)
         print(
-            f"menu_main_{i}: source {source_size[0]}x{source_size[1]} -> "
+            f"{prefix}_{i}: source {source_size[0]}x{source_size[1]} -> "
             f"safe {MENU_SAFE_W}x{MENU_SAFE_H}, frame {MENU_FRAME_W}x{MENU_FRAME_H}, "
             f"visible {bbox_size[0]}x{bbox_size[1]}"
         )
@@ -340,14 +387,24 @@ def fmt(vals):
     )
 
 
-def write_preview(frames):
+def write_preview(frames, name="menu_main_sheet_preview.png"):
     sheet = Image.new("RGBA", (MENU_FRAME_W * len(frames), MENU_FRAME_H), (0, 0, 0, 0))
     for i, frame in enumerate(frames):
         sheet.alpha_composite(frame, (i * MENU_FRAME_W, 0))
-    sheet.save(PREVIEWS / "menu_main_sheet_preview.png")
+    sheet.save(PREVIEWS / name)
 
 
-def write_outputs(frames):
+def encode_frames(frames):
+    data = []
+    metas = []
+    for frame in frames:
+        enc = encode(frame)
+        metas.append((len(data), len(enc)))
+        data.extend(enc)
+    return metas, data
+
+
+def write_outputs(main_frames, box_frames):
     OUT_H.write_text(
         f"""#pragma once
 #include <Arduino.h>
@@ -357,7 +414,8 @@ namespace MenuAssets {{
 
 static constexpr uint8_t FRAME_W = {MENU_FRAME_W};
 static constexpr uint8_t FRAME_H = {MENU_FRAME_H};
-static constexpr uint8_t MAIN_ICON_COUNT = {len(frames)};
+static constexpr uint8_t MAIN_ICON_COUNT = {len(main_frames)};
+static constexpr uint8_t BOX_ICON_COUNT = {len(box_frames)};
 
 struct RleFrame {{
     uint16_t offset;
@@ -366,27 +424,34 @@ struct RleFrame {{
 
 extern const RleFrame MAIN_ICON_FRAMES[] PROGMEM;
 extern const uint16_t MAIN_ICON_RLE[] PROGMEM;
+extern const RleFrame BOX_ICON_FRAMES[] PROGMEM;
+extern const uint16_t BOX_ICON_RLE[] PROGMEM;
 
 }}
 """,
         encoding="utf-8",
     )
 
-    data = []
-    metas = []
-    for frame in frames:
-        enc = encode(frame)
-        metas.append((len(data), len(enc)))
-        data.extend(enc)
+    main_metas, main_data = encode_frames(main_frames)
+    box_metas, box_data = encode_frames(box_frames)
 
     cpp = ['#include "MenuAssets.h"', "", "namespace MenuAssets {", ""]
     cpp.append("const RleFrame MAIN_ICON_FRAMES[] PROGMEM = {")
-    for off, length in metas:
+    for off, length in main_metas:
         cpp.append(f"    {{ {off}, {length} }},")
     cpp.append("};")
     cpp.append("")
     cpp.append("const uint16_t MAIN_ICON_RLE[] PROGMEM = {")
-    cpp.append(fmt(data))
+    cpp.append(fmt(main_data))
+    cpp.append("};")
+    cpp.append("")
+    cpp.append("const RleFrame BOX_ICON_FRAMES[] PROGMEM = {")
+    for off, length in box_metas:
+        cpp.append(f"    {{ {off}, {length} }},")
+    cpp.append("};")
+    cpp.append("")
+    cpp.append("const uint16_t BOX_ICON_RLE[] PROGMEM = {")
+    cpp.append(fmt(box_data))
     cpp.append("};")
     cpp.append("")
     cpp.append("}")
@@ -398,9 +463,11 @@ def main():
     EXTRACTED.mkdir(parents=True, exist_ok=True)
     PREVIEWS.mkdir(parents=True, exist_ok=True)
     GENERATED.mkdir(parents=True, exist_ok=True)
-    frames = make_frames()
-    write_preview(frames)
-    write_outputs(frames)
+    main_frames = make_frames(SRC_CANDIDATES, "menu_main")
+    box_frames = make_frames(BOX_SRC_CANDIDATES, "menu_box")
+    write_preview(main_frames, "menu_main_sheet_preview.png")
+    write_preview(box_frames, "menu_box_sheet_preview.png")
+    write_outputs(main_frames, box_frames)
     (GENERATED / OUT_H.name).write_text(OUT_H.read_text(encoding="utf-8"), encoding="utf-8")
     (GENERATED / OUT_CPP.name).write_text(OUT_CPP.read_text(encoding="utf-8"), encoding="utf-8")
 

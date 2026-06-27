@@ -18,7 +18,7 @@ GENERATED = SPARE / "generated/src_assets"
 # 2. The sheet must contain exactly 3 frames from left to right:
 #    early, middle, late pupa.
 # 3. The generated frame contains the pupa chamber substrate plus pupa, no jar.
-#    Current visual target: full chamber about 72x88 px, pupa body about
+#    Current visual target: full chamber about 70x84 px, pupa body about
 #    50-56 px tall. This keeps the pupa body smaller than the adult beetle
 #    while the substrate chamber still reads as a protected pupa room.
 # 4. Run:
@@ -29,13 +29,16 @@ GENERATED = SPARE / "generated/src_assets"
 FRAME_COUNT = 3
 
 # Size tuning:
-# - Increase/decrease PUPA_CHAMBER_MAX_H to resize the pupa chamber while
+# - Increase/decrease PUPA_SIZE_SCALE to resize the pupa chamber while
 #   keeping source proportions. Pupa body height follows this value.
 # - Keep PUPA_FRAME_W/H at or above the max chamber size to avoid clipping.
-PUPA_FRAME_W = 58
-PUPA_FRAME_H = 70
-PUPA_CHAMBER_MAX_W = 58
-PUPA_CHAMBER_MAX_H = 70
+BASE_PUPA_FRAME_W = 58
+BASE_PUPA_FRAME_H = 70
+PUPA_SIZE_SCALE = 1.2
+PUPA_FRAME_W = round(BASE_PUPA_FRAME_W * PUPA_SIZE_SCALE)
+PUPA_FRAME_H = round(BASE_PUPA_FRAME_H * PUPA_SIZE_SCALE)
+PUPA_CHAMBER_MAX_W = PUPA_FRAME_W
+PUPA_CHAMBER_MAX_H = PUPA_FRAME_H
 
 
 def rgb565(r, g, b):

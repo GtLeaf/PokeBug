@@ -113,23 +113,43 @@ void TerrariumScene::updateToyPhysics(uint32_t nowMs) {
     handleToyVisitorCollision(nowMs, spec, left, right);
 
     Bug& bug = GameEngine::ins().getBug();
+    if (!isAtInteractionDepth()) return;
     if (adultState == AdultState::REST || adultState == AdultState::EAT) return;
 
     float adultScale = bug.getAdultScale();
     float beetleHalfW = TOY_BEETLE_HIT_HALF_W * adultScale;
-    float beetleTop = GROUND_Y - TOY_BEETLE_HIT_TOP * adultScale;
-    float beetleBottom = GROUND_Y - TOY_BEETLE_HIT_BOTTOM;
+    float beetleFootY = (float)adultFootY();
+    float beetleTop = beetleFootY - TOY_BEETLE_HIT_TOP * adultScale;
+    float beetleBottom = beetleFootY - TOY_BEETLE_HIT_BOTTOM;
     float beetleLeft = bugX - beetleHalfW;
     float beetleRight = bugX + beetleHalfW;
+    static uint32_t lastWoodToyContactLogMs = 0;
 
     if (circleHitsRect(toyX, toyY, (float)spec.radius,
                        beetleLeft, beetleTop, beetleRight, beetleBottom)) {
         int pushDir = toyX >= bugX ? 1 : -1;
+        bool shouldLogWoodToyContact = TOY_DEBUG_LOGS &&
+                                       bug.isWoodPlaced() &&
+                                       bugX >= WOOD_SURFACE_LEFT_X - WOOD_DISMOUNT_RAMP_PX &&
+                                       nowMs - lastWoodToyContactLogMs >= 500;
         bool topImpact = toyVy > 0.0f &&
                          toyY <= beetleTop + (float)spec.radius + 4.0f &&
                          toyX >= beetleLeft - (float)spec.radius &&
                          toyX <= beetleRight + (float)spec.radius;
         if (topImpact) {
+            if (shouldLogWoodToyContact) {
+                Serial.printf("[WoodToy] contact top x=%d state=%s onWood=%u foot=%d toy=%d/%d v=%d/%d noCatch=%ld\n",
+                              bugX,
+                              adultStateName(adultState),
+                              isAdultOnWoodRoute() ? 1 : 0,
+                              adultFootY(),
+                              (int)roundf(toyX),
+                              (int)roundf(toyY),
+                              (int)roundf(toyVx),
+                              (int)roundf(toyVy),
+                              (long)(toyNoCatchUntilMs > nowMs ? toyNoCatchUntilMs - nowMs : 0));
+                lastWoodToyContactLogMs = nowMs;
+            }
             if (fabsf(toyVx) > 8.0f) pushDir = toyVx > 0.0f ? 1 : -1;
             toyY = beetleTop - (float)spec.radius - 1.0f;
             if (toyY < top) toyY = top;
@@ -151,6 +171,22 @@ void TerrariumScene::updateToyPhysics(uint32_t nowMs) {
                         nowMs - toyLastHitMs >= TOY_HIT_COOLDOWN_MS &&
                         speed <= TOY_CATCH_MAX_SPEED &&
                         !toyMovingIntoBeetle;
+        if (shouldLogWoodToyContact) {
+            Serial.printf("[WoodToy] contact side x=%d state=%s onWood=%u foot=%d speed=%d canReact=%u movingInto=%u cooldown=%ld toy=%d/%d v=%d/%d\n",
+                          bugX,
+                          adultStateName(adultState),
+                          isAdultOnWoodRoute() ? 1 : 0,
+                          adultFootY(),
+                          (int)roundf(speed),
+                          canReact ? 1 : 0,
+                          toyMovingIntoBeetle ? 1 : 0,
+                          (long)(toyNoCatchUntilMs > nowMs ? toyNoCatchUntilMs - nowMs : 0),
+                          (int)roundf(toyX),
+                          (int)roundf(toyY),
+                          (int)roundf(toyVx),
+                          (int)roundf(toyVy));
+            lastWoodToyContactLogMs = nowMs;
+        }
         if (canReact) {
             startToyCharge(nowMs, pushDir);
         } else {
@@ -245,23 +281,65 @@ void TerrariumScene::handleToyVisitorCollision(uint32_t nowMs, const ToySpec& sp
 
 bool TerrariumScene::startToyButtonInteraction(uint32_t nowMs, bool allowVisitorTarget) {
     if (!isToyEnabled()) {
-        Serial.println("[Terrarium] B toy interaction skipped: toy disabled/poke style");
+        if (TOY_DEBUG_LOGS) {
+            Serial.printf("[ToyThrow] press skip disabled style=%u\n",
+                          GameEngine::ins().getToyStyle());
+        }
         return false;
     }
-    if (toyEntryActive) {
-        Serial.println("[Terrarium] B toy interaction consumed: entry active");
-        return true;
-    }
     toyType = toyTypeForStyle(GameEngine::ins().getToyStyle());
+    const ToySpec& spec = currentToySpec();
+    bool toyAirborne = toyVisible &&
+                       toyY < (float)(TOY_TANK_BOTTOM - spec.radius - 2);
+    bool toyMoving = toyVisible &&
+                     (fabsf(toyVx) > 8.0f || fabsf(toyVy) > 8.0f);
+    bool toyBusy = toyEntryActive || toyCharging || visitorToyCharging ||
+                   toyReplayReadyAfterImpact || toyVisible ||
+                   nowMs < toyNoCatchUntilMs;
+    if (TOY_DEBUG_LOGS) {
+        Serial.printf("[ToyThrow] press state style=%u visible=%u airborne=%u moving=%u replay=%u cooldown=%ld x=%d y=%d vx=%d vy=%d\n",
+                      GameEngine::ins().getToyStyle(),
+                      toyVisible ? 1 : 0,
+                      toyAirborne ? 1 : 0,
+                      toyMoving ? 1 : 0,
+                      toyReplayReadyAfterImpact ? 1 : 0,
+                      (long)(toyNoCatchUntilMs > nowMs ? toyNoCatchUntilMs - nowMs : 0),
+                      (int)roundf(toyX),
+                      (int)roundf(toyY),
+                      (int)roundf(toyVx),
+                      (int)roundf(toyVy));
+    }
+    if (toyBusy) {
+        if (TOY_DEBUG_LOGS) {
+            Serial.printf("[ToyThrow] press reset busy entry=%u localCharge=%u visitorCharge=%u airborne=%u moving=%u replay=%u cooldown=%ld\n",
+                          toyEntryActive ? 1 : 0,
+                          toyCharging ? 1 : 0,
+                          visitorToyCharging ? 1 : 0,
+                          toyAirborne ? 1 : 0,
+                          toyMoving ? 1 : 0,
+                          toyReplayReadyAfterImpact ? 1 : 0,
+                          (long)(toyNoCatchUntilMs > nowMs ? toyNoCatchUntilMs - nowMs : 0));
+        }
+        clearToyAfterImpactReplay(nowMs);
+    }
+
     ToyButtonInteraction interaction = toyButtonInteractionForStyle(GameEngine::ins().getToyStyle());
     bool targetVisitor = allowVisitorTarget &&
                          GameEngine::ins().isVisitHost() &&
                          chooseVisitorForHostInteraction();
-    if (VISITOR_DEBUG_LOGS) {
-        Serial.printf("[Terrarium] B toy interaction style=%u interaction=%u targetVisitor=%u\n",
+    if (!targetVisitor && !isAtInteractionDepth()) {
+        if (TOY_DEBUG_LOGS) {
+            Serial.printf("[ToyThrow] press skip depth z=%u\n", bugZ);
+        }
+        return true;
+    }
+    if (TOY_DEBUG_LOGS) {
+        Serial.printf("[ToyThrow] press accept style=%u interaction=%u targetVisitor=%u targetX=%d scale=%d\n",
                       GameEngine::ins().getToyStyle(),
                       (uint8_t)interaction,
-                      targetVisitor ? 1 : 0);
+                      targetVisitor ? 1 : 0,
+                      hostInteractionTargetX(targetVisitor),
+                      (int)roundf(hostInteractionTargetScale(targetVisitor) * 100.0f));
     }
     int interactionX = hostInteractionTargetX(targetVisitor);
     float interactionScale = hostInteractionTargetScale(targetVisitor);
@@ -281,6 +359,7 @@ bool TerrariumScene::startToyButtonInteraction(uint32_t nowMs, bool allowVisitor
 void TerrariumScene::startToyArcThrow(uint32_t nowMs, int targetX, float targetScale, bool targetVisitor) {
     if (!isToyEnabled()) return;
     const ToySpec& spec = currentToySpec();
+    int targetFootY = hostInteractionTargetFootY(targetVisitor);
     toyEntryTargetX = targetX;
     toyEntryTargetVisitor = targetVisitor;
     toyVisible = false;
@@ -290,10 +369,9 @@ void TerrariumScene::startToyArcThrow(uint32_t nowMs, int targetX, float targetS
     toyEntryStartMs = nowMs;
     toyThrowFromX = 120 + random(-42, 43);
     toyThrowFromY = Hal::DISPLAY_H + 18;
-    toyThrowTargetX = targetX + random(-24, 25);
-    toyThrowTargetY = GROUND_Y -
-                      (int)(TOY_BEETLE_HIT_TOP * targetScale + (float)spec.radius - 1.0f) +
-                      random(-2, 3);
+    int beetleTop = targetFootY - (int)(TOY_BEETLE_HIT_TOP * targetScale);
+    toyThrowTargetX = targetX + random(-18, 19);
+    toyThrowTargetY = beetleTop - spec.radius + 2 + random(0, 3);
     if (toyThrowTargetY < TOY_TANK_TOP + spec.radius) toyThrowTargetY = TOY_TANK_TOP + spec.radius;
     if (toyThrowTargetY > TOY_TANK_BOTTOM - spec.radius) toyThrowTargetY = TOY_TANK_BOTTOM - spec.radius;
     toyThrowArcH = random(48, 83);
@@ -304,11 +382,24 @@ void TerrariumScene::startToyArcThrow(uint32_t nowMs, int targetX, float targetS
     toyVy = 0.0f;
     toySpin = 0.0f;
     toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_HIT_MS;
+    if (TOY_DEBUG_LOGS) {
+        Serial.printf("[ToyThrow] start arc targetVisitor=%u target=%d/%d foot=%d from=%d/%d final=%d/%d cooldown=%lu\n",
+                      targetVisitor ? 1 : 0,
+                      targetX,
+                      (int)roundf(targetScale * 100.0f),
+                      targetFootY,
+                      toyThrowFromX,
+                      toyThrowFromY,
+                      toyThrowTargetX,
+                      toyThrowTargetY,
+                      (unsigned long)TOY_NO_CATCH_AFTER_HIT_MS);
+    }
 }
 
 void TerrariumScene::startToyDrop(uint32_t nowMs, int targetX, float targetScale, bool targetVisitor) {
     if (!isToyEnabled()) return;
     const ToySpec& spec = currentToySpec();
+    int targetFootY = hostInteractionTargetFootY(targetVisitor);
     toyEntryTargetX = targetX;
     toyEntryTargetVisitor = targetVisitor;
     toyVisible = false;
@@ -316,10 +407,9 @@ void TerrariumScene::startToyDrop(uint32_t nowMs, int targetX, float targetScale
     toyEntryActive = true;
     toyEntryInteraction = ToyButtonInteraction::DROP_DOWN;
     toyEntryStartMs = nowMs;
-    toyThrowTargetX = targetX + random(-18, 19);
-    toyThrowTargetY = GROUND_Y -
-                      (int)(TOY_BEETLE_HIT_TOP * targetScale + (float)spec.radius - 1.0f) +
-                      random(-2, 3);
+    int beetleTop = targetFootY - (int)(TOY_BEETLE_HIT_TOP * targetScale);
+    toyThrowTargetX = targetX + random(-12, 13);
+    toyThrowTargetY = beetleTop - spec.radius + 2 + random(0, 3);
     if (toyThrowTargetY < TOY_TANK_TOP + spec.radius) toyThrowTargetY = TOY_TANK_TOP + spec.radius;
     if (toyThrowTargetY > TOY_TANK_BOTTOM - spec.radius) toyThrowTargetY = TOY_TANK_BOTTOM - spec.radius;
     toyThrowFromX = toyThrowTargetX + random(-8, 9);
@@ -332,6 +422,18 @@ void TerrariumScene::startToyDrop(uint32_t nowMs, int targetX, float targetScale
     toyVy = 0.0f;
     toySpin = 0.0f;
     toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_HIT_MS;
+    if (TOY_DEBUG_LOGS) {
+        Serial.printf("[ToyThrow] start drop targetVisitor=%u target=%d/%d foot=%d from=%d/%d final=%d/%d cooldown=%lu\n",
+                      targetVisitor ? 1 : 0,
+                      targetX,
+                      (int)roundf(targetScale * 100.0f),
+                      targetFootY,
+                      toyThrowFromX,
+                      toyThrowFromY,
+                      toyThrowTargetX,
+                      toyThrowTargetY,
+                      (unsigned long)TOY_NO_CATCH_AFTER_HIT_MS);
+    }
 }
 
 void TerrariumScene::finishToyEntry(uint32_t nowMs) {
@@ -379,11 +481,12 @@ void TerrariumScene::finishToyEntry(uint32_t nowMs) {
         }
     } else {
         Bug& bug = GameEngine::ins().getBug();
-        if (isMobileBeetleStage(bug.getStage()) && !bug.isDead()) {
+        if (isMobileBeetleStage(bug.getStage()) && !bug.isDead() && isAtInteractionDepth()) {
             float scale = bug.getAdultScale();
             float beetleHalfW = TOY_BEETLE_HIT_HALF_W * scale;
-            float beetleTop = GROUND_Y - TOY_BEETLE_HIT_TOP * scale;
-            float beetleBottom = GROUND_Y - TOY_BEETLE_HIT_BOTTOM;
+            float beetleFootY = (float)adultFootY();
+            float beetleTop = beetleFootY - TOY_BEETLE_HIT_TOP * scale;
+            float beetleBottom = beetleFootY - TOY_BEETLE_HIT_BOTTOM;
             float beetleLeft = (float)bugX - beetleHalfW;
             float beetleRight = (float)bugX + beetleHalfW;
             if (circleHitsRect(toyX, toyY, (float)spec.radius,
@@ -395,7 +498,25 @@ void TerrariumScene::finishToyEntry(uint32_t nowMs) {
         }
     }
 
-    alertUntilMs = nowMs + random(ALERT_MIN_MS, ALERT_MAX_MS + 1);
+    if (TOY_DEBUG_LOGS) {
+        Serial.printf("[ToyThrow] finish interaction=%u targetVisitor=%u hit=%u replay=%u x=%d y=%d vx=%d vy=%d noCatch=%ld state=%s\n",
+                      (uint8_t)finishedInteraction,
+                      toyEntryTargetVisitor ? 1 : 0,
+                      entryHit ? 1 : 0,
+                      toyReplayReadyAfterImpact ? 1 : 0,
+                      (int)roundf(toyX),
+                      (int)roundf(toyY),
+                      (int)roundf(toyVx),
+                      (int)roundf(toyVy),
+                      (long)(toyNoCatchUntilMs > nowMs ? toyNoCatchUntilMs - nowMs : 0),
+                      adultStateName(adultState));
+    }
+
+    if (!toyEntryTargetVisitor && GameEngine::ins().damageActiveToyBall()) {
+        showTerrariumToast(UiStrings::TOY_BALL_BROKE);
+        clearToyAfterImpactReplay(nowMs);
+        Serial.println("[ToyThrow] active ball broke, switched to poke");
+    }
 }
 
 void TerrariumScene::drawToyBall(int centerX, int centerY, int radius, uint8_t phase) {
@@ -461,4 +582,3 @@ void TerrariumScene::drawToy() {
     uint8_t phase = (uint8_t)((int)(toyAngle * 2.0f) & 0x03);
     drawToyBall((int)roundf(toyX), (int)roundf(toyY), radius, phase);
 }
-

@@ -3,13 +3,59 @@ bool TerrariumScene::wantsToEat() {
 }
 
 void TerrariumScene::startTurn(bool targetFaceRight, bool continueWalking) {
+    eatAfterTurn = false;
     beginActorTurn(localActor, targetFaceRight, continueWalking, 0, TURN_DURATION_FRAMES);
+}
+
+void TerrariumScene::startEatWhenFacingFood() {
+    if (faceRight) {
+        startTurn(false, false);
+        eatAfterTurn = true;
+        return;
+    }
+    enterEat();
 }
 
 // 开始向目标位置行走
 void TerrariumScene::startWalkTo(int x, bool restTarget) {
+    startWalkToDepth(x, TERRARIUM_DEPTH_INTERACTION_Z, restTarget);
+}
+
+void TerrariumScene::startWalkToDepth(int x, int z, bool restTarget) {
+    bool wasOnWood = isAdultOnWoodRoute();
     beginActorWalkTo(localActor, x);
+    if (restTarget && GameEngine::ins().getBug().isWoodPlaced()) {
+        targetX = WOOD_REST_X;
+    }
+    targetZ = clampDepthZ(z);
     walkTargetIsRest = restTarget;
+    woodDismountActive = wasOnWood &&
+                         !restTarget &&
+                         targetZ == TERRARIUM_DEPTH_INTERACTION_Z;
+    if (TOY_DEBUG_LOGS &&
+        restTarget &&
+        GameEngine::ins().getBug().isWoodPlaced()) {
+        Serial.printf("[WoodToy] rest-walk-start x=%d target=%d z=%u state=%s onWood=%u toyVisible=%u toyCharge=%u replay=%u noCatch=%ld\n",
+                      bugX,
+                      targetX,
+                      bugZ,
+                      adultStateName(adultState),
+                      wasOnWood ? 1 : 0,
+                      toyVisible ? 1 : 0,
+                      toyCharging ? 1 : 0,
+                      toyReplayReadyAfterImpact ? 1 : 0,
+                      (long)(toyNoCatchUntilMs > Hal::ins().millis() ? toyNoCatchUntilMs - Hal::ins().millis() : 0));
+    }
+    if (WOOD_ADULT_DEBUG_LOGS &&
+        GameEngine::ins().getBug().getStage() == Stage::ADULT &&
+        GameEngine::ins().getBug().isWoodPlaced()) {
+        Serial.printf("[WoodAdult] startWalk x=%d z=%u -> target=%d/%u rest=%u face=%u onWood=%u dismount=%u\n",
+                      bugX, bugZ, targetX, targetZ,
+                      walkTargetIsRest ? 1 : 0,
+                      faceRight ? 1 : 0,
+                      isAdultOnWoodRoute() ? 1 : 0,
+                      woodDismountActive ? 1 : 0);
+    }
 
     bool needFaceRight = (targetX > bugX);
     if (needFaceRight != faceRight) {
@@ -22,7 +68,11 @@ void TerrariumScene::startWalkTo(int x, bool restTarget) {
 }
 
 void TerrariumScene::enterEat() {
+    faceRight = false;
     adultState = AdultState::EAT;
+    bugZ = TERRARIUM_DEPTH_INTERACTION_Z;
+    targetZ = TERRARIUM_DEPTH_INTERACTION_Z;
+    woodDismountActive = false;
     stateTimer = 0;
     stateDuration = random(EAT_DURATION_MIN_FRAMES, EAT_DURATION_MAX_FRAMES + 1);
     eatFrameInterval = (uint8_t)random(EAT_FRAME_INTERVAL_MIN, EAT_FRAME_INTERVAL_MAX + 1);
@@ -32,10 +82,40 @@ void TerrariumScene::enterEat() {
 
 void TerrariumScene::enterRest() {
     adultState = AdultState::REST;
+    bool woodPlaced = GameEngine::ins().getBug().isWoodPlaced();
+    int beforeX = bugX;
+    uint8_t beforeZ = bugZ;
+    if (woodPlaced) {
+        bugX = WOOD_REST_X;
+    }
+    bugZ = TERRARIUM_DEPTH_INTERACTION_Z;
+    targetZ = TERRARIUM_DEPTH_INTERACTION_Z;
     stateTimer = 0;
     stateDuration = 0;
     walkTargetIsRest = false;
-    faceRight = random(2) == 0;
+    woodDismountActive = false;
+    if (!woodPlaced) {
+        faceRight = random(2) == 0;
+    }
+    if (TOY_DEBUG_LOGS && woodPlaced) {
+        Serial.printf("[WoodToy] enter-rest before=%d/%u after=%d/%u jump=%d toyVisible=%u toyCharge=%u replay=%u noCatch=%ld alert=%ld\n",
+                      beforeX,
+                      beforeZ,
+                      bugX,
+                      bugZ,
+                      bugX - beforeX,
+                      toyVisible ? 1 : 0,
+                      toyCharging ? 1 : 0,
+                      toyReplayReadyAfterImpact ? 1 : 0,
+                      (long)(toyNoCatchUntilMs > Hal::ins().millis() ? toyNoCatchUntilMs - Hal::ins().millis() : 0),
+                      (long)(alertUntilMs > Hal::ins().millis() ? alertUntilMs - Hal::ins().millis() : 0));
+    }
+    if (WOOD_ADULT_DEBUG_LOGS &&
+        GameEngine::ins().getBug().getStage() == Stage::ADULT &&
+        woodPlaced) {
+        Serial.printf("[WoodAdult] enterRest x=%d z=%u foot=%d face=%u\n",
+                      bugX, bugZ, adultFootY(), faceRight ? 1 : 0);
+    }
 }
 
 void TerrariumScene::setIdleDuration() {
@@ -56,8 +136,17 @@ void TerrariumScene::setIdleDuration() {
 bool TerrariumScene::wantsToRestOnWood() {
     Bug& bug = GameEngine::ins().getBug();
     if (!bug.isWoodPlaced()) return false;
+    if (WOOD_SLEEP_TEST_ALWAYS) return true;
     if (bug.getHunger() < 35) return false;
     return mind.isDesiring(Desire::REST);
+}
+
+bool TerrariumScene::shouldForceWoodSleepForTest() const {
+    const Bug& bug = GameEngine::ins().getBug();
+    return WOOD_SLEEP_TEST_ALWAYS &&
+           bug.getStage() == Stage::ADULT &&
+           bug.isWoodPlaced() &&
+           !bug.isDead();
 }
 
 bool TerrariumScene::wantsToWander() {
@@ -90,9 +179,75 @@ void TerrariumScene::updateAdultMovement() {
     stateTimer++;
     if (toyCharging) return;
     bool aiDecisionFrame = (stateTimer % AI_DECISION_INTERVAL_FRAMES) == 0;
+    uint32_t nowMs = Hal::ins().millis();
+
+    static bool woodLogInitialized = false;
+    static AdultState lastWoodState = AdultState::IDLE;
+    static int lastWoodX = 0;
+    static uint8_t lastWoodZ = 0;
+    static int lastWoodTargetX = 0;
+    static uint8_t lastWoodTargetZ = 0;
+    static bool lastWoodFaceRight = false;
+    static bool lastWoodRoute = false;
+    static bool lastWoodWalkRest = false;
+    static bool lastWoodDismount = false;
+    static bool lastWoodWalkAfterTurn = false;
+    static bool lastWoodSlideAfterTurn = false;
+    static bool lastWoodClimbAfterTurn = false;
+    static uint32_t lastWoodLogMs = 0;
+
+    if (WOOD_ADULT_DEBUG_LOGS &&
+        bug.getStage() == Stage::ADULT &&
+        bug.isWoodPlaced()) {
+        bool onWoodRoute = isAdultOnWoodRoute();
+        bool changed = !woodLogInitialized ||
+                       adultState != lastWoodState ||
+                       bugX != lastWoodX ||
+                       bugZ != lastWoodZ ||
+                       targetX != lastWoodTargetX ||
+                       targetZ != lastWoodTargetZ ||
+                       faceRight != lastWoodFaceRight ||
+                       onWoodRoute != lastWoodRoute ||
+                       walkTargetIsRest != lastWoodWalkRest ||
+                       woodDismountActive != lastWoodDismount ||
+                       walkAfterTurn != lastWoodWalkAfterTurn ||
+                       slideAfterTurn != lastWoodSlideAfterTurn ||
+                       climbAfterTurn != lastWoodClimbAfterTurn;
+        if (changed || (onWoodRoute && nowMs - lastWoodLogMs >= 1500)) {
+            Serial.printf("[WoodAdult] tick state=%s x=%d/%d z=%u/%u foot=%d face=%u onWood=%u rest=%u dismount=%u after(w/s/c)=%u/%u/%u timer=%lu/%lu resumeIn=%ld\n",
+                          adultStateName(adultState),
+                          bugX, targetX,
+                          bugZ, targetZ,
+                          adultFootY(),
+                          faceRight ? 1 : 0,
+                          onWoodRoute ? 1 : 0,
+                          walkTargetIsRest ? 1 : 0,
+                          woodDismountActive ? 1 : 0,
+                          walkAfterTurn ? 1 : 0,
+                          slideAfterTurn ? 1 : 0,
+                          climbAfterTurn ? 1 : 0,
+                          (unsigned long)stateTimer,
+                          (unsigned long)stateDuration,
+                          (long)(restResumeAllowedMs > nowMs ? restResumeAllowedMs - nowMs : 0));
+            woodLogInitialized = true;
+            lastWoodState = adultState;
+            lastWoodX = bugX;
+            lastWoodZ = bugZ;
+            lastWoodTargetX = targetX;
+            lastWoodTargetZ = targetZ;
+            lastWoodFaceRight = faceRight;
+            lastWoodRoute = onWoodRoute;
+            lastWoodWalkRest = walkTargetIsRest;
+            lastWoodDismount = woodDismountActive;
+            lastWoodWalkAfterTurn = walkAfterTurn;
+            lastWoodSlideAfterTurn = slideAfterTurn;
+            lastWoodClimbAfterTurn = climbAfterTurn;
+            lastWoodLogMs = nowMs;
+        }
+    }
 
     // threaten（威吓）期间不主动移动，但允许因大角度倾斜而滑落。
-    if (pokeThreatenEndMs != 0 && Hal::ins().millis() < pokeThreatenEndMs) {
+    if (pokeThreatenEndMs != 0 && nowMs < pokeThreatenEndMs) {
         if (adultState != AdultState::SLIDE) {
             return;
         }
@@ -100,12 +255,39 @@ void TerrariumScene::updateAdultMovement() {
 
     switch (adultState) {
         case AdultState::IDLE:
+            if (shouldForceWoodSleepForTest() &&
+                Hal::ins().millis() >= restResumeAllowedMs) {
+                int restTarget = pickRestTargetX();
+                bool atRestTarget = bug.isWoodPlaced() ? bugX == restTarget
+                                                       : abs(restTarget - bugX) <= 2;
+                if (TOY_DEBUG_LOGS &&
+                    (toyVisible || toyCharging || visitorToyCharging ||
+                     toyReplayReadyAfterImpact || Hal::ins().millis() < toyNoCatchUntilMs)) {
+                    Serial.printf("[WoodToy] force-rest state=%s x=%d target=%d at=%u toyVisible=%u localCharge=%u visitorCharge=%u replay=%u noCatch=%ld\n",
+                                  adultStateName(adultState),
+                                  bugX,
+                                  restTarget,
+                                  atRestTarget ? 1 : 0,
+                                  toyVisible ? 1 : 0,
+                                  toyCharging ? 1 : 0,
+                                  visitorToyCharging ? 1 : 0,
+                                  toyReplayReadyAfterImpact ? 1 : 0,
+                                  (long)(toyNoCatchUntilMs > Hal::ins().millis() ? toyNoCatchUntilMs - Hal::ins().millis() : 0));
+                }
+                if (isAtInteractionDepth() && atRestTarget) {
+                    enterRest();
+                } else {
+                    startWalkTo(restTarget, true);
+                }
+                break;
+            }
             if (foodRefillGraceUntilMs != 0) {
                 uint32_t nowMs = Hal::ins().millis();
                 if (bug.getHunger() < EAT_CONTINUE_HUNGER &&
-                    bug.hasFoodInTray() && bug.getFoodAmount() > 0 && abs(bugX - FOOD_X) <= 3) {
+                    bug.hasFoodInTray() && bug.getFoodAmount() > 0 &&
+                    isAtInteractionDepth() && abs(bugX - FOOD_X) <= 3) {
                     foodRefillGraceUntilMs = 0;
-                    enterEat();
+                    startEatWhenFacingFood();
                     break;
                 }
                 if (nowMs < foodRefillGraceUntilMs) {
@@ -143,7 +325,9 @@ void TerrariumScene::updateAdultMovement() {
                     case Desire::REST:
                         if (Hal::ins().millis() >= restResumeAllowedMs) {
                             int restTarget = pickRestTargetX();
-                            if (abs(restTarget - bugX) <= 2) {
+                            bool atRestTarget = bug.isWoodPlaced() ? bugX == restTarget
+                                                                   : abs(restTarget - bugX) <= 2;
+                            if (isAtInteractionDepth() && atRestTarget) {
                                 enterRest();
                             } else {
                                 startWalkTo(restTarget, true);
@@ -159,7 +343,7 @@ void TerrariumScene::updateAdultMovement() {
                             newTarget = (bugX < 120) ? random(140, MAX_X + 1)
                                                        : random(MIN_X, 100);
                         }
-                        startWalkTo(newTarget);
+                        startWalkToDepth(newTarget, pickWanderTargetZ());
                         break;
                     }
                     case Desire::STARE:
@@ -199,18 +383,29 @@ void TerrariumScene::updateAdultMovement() {
                 localActor.turning = false;
                 faceRight = turnTargetFaceRight;
                 stateTimer = 0;
-                if (slideAfterTurn) {
-                    slideAfterTurn = false;
+                bool doSlide = slideAfterTurn;
+                bool doClimb = climbAfterTurn;
+                bool doWalk = walkAfterTurn;
+                bool doEat = eatAfterTurn;
+                slideAfterTurn = false;
+                climbAfterTurn = false;
+                walkAfterTurn = false;
+                eatAfterTurn = false;
+                if (doSlide) {
+                    woodDismountActive = false;
                     adultState = AdultState::SLIDE;
                     stateDuration = 0;
-                } else if (climbAfterTurn) {
-                    climbAfterTurn = false;
+                } else if (doClimb) {
+                    woodDismountActive = false;
                     adultState = AdultState::CLIMB;
                     stateDuration = 0;
-                } else if (walkAfterTurn) {
+                } else if (doWalk) {
                     adultState = AdultState::WALK;
                     stateDuration = 0;
+                } else if (doEat) {
+                    enterEat();
                 } else {
+                    woodDismountActive = false;
                     adultState = AdultState::IDLE;
                     setIdleDuration();
                 }
@@ -219,27 +414,49 @@ void TerrariumScene::updateAdultMovement() {
 
         case AdultState::WALK:
             {
-                int dx = (targetX > bugX) ? 1 : -1;
-                faceRight = (dx > 0);
-                bool walkingToFood = (targetX == FOOD_X);
+                int dx = 0;
+                if (abs(targetX - bugX) > 2) {
+                    dx = (targetX > bugX) ? 1 : -1;
+                    faceRight = (dx > 0);
+                }
+                bool walkingToFood = (targetX == FOOD_X && targetZ == TERRARIUM_DEPTH_INTERACTION_Z);
 
                 // 每 3 帧移动 1 像素，模拟甲虫缓慢爬行；进食心切时走快点
                 uint8_t stepInterval = (walkingToFood && mind.isDesiring(Desire::EAT)) ? 2 : 3;
                 if (stateTimer % stepInterval == 0) {
-                    bugX += dx;
-                    if (bugX < MIN_X) bugX = MIN_X;
-                    if (bugX > MAX_X) bugX = MAX_X;
+                    if (dx != 0) {
+                        bugX += dx;
+                        if (bugX < MIN_X) bugX = MIN_X;
+                        int maxWalkX = ((walkTargetIsRest || woodDismountActive) && bug.isWoodPlaced())
+                                       ? WOOD_REST_X
+                                       : MAX_X;
+                        if (bugX > maxWalkX) bugX = maxWalkX;
+                    }
+                    if (bugZ < targetZ) {
+                        bugZ++;
+                    } else if (bugZ > targetZ) {
+                        bugZ--;
+                    }
+                    if (woodDismountActive &&
+                        (bugX <= WOOD_SURFACE_LEFT_X - WOOD_DISMOUNT_RAMP_PX ||
+                         bugX >= WOOD_SURFACE_RIGHT_X + WOOD_DISMOUNT_RAMP_PX ||
+                         bugZ != TERRARIUM_DEPTH_INTERACTION_Z)) {
+                        woodDismountActive = false;
+                    }
                 }
 
                 // 到达目标
-                if (abs(targetX - bugX) <= 2) {
-                    if (targetX == FOOD_X && bug.getHunger() < EAT_CONTINUE_HUNGER &&
+                bool reachedX = walkTargetIsRest ? bugX == targetX : abs(targetX - bugX) <= 2;
+                if (reachedX && bugZ == targetZ) {
+                    if (targetX == FOOD_X && isAtInteractionDepth() &&
+                        bug.getHunger() < EAT_CONTINUE_HUNGER &&
                         bug.hasFoodInTray() && bug.getFoodAmount() > 0) {
-                        enterEat();
-                    } else if (walkTargetIsRest) {
+                        startEatWhenFacingFood();
+                    } else if (walkTargetIsRest && isAtInteractionDepth()) {
                         enterRest();
                     } else {
                         walkTargetIsRest = false;
+                        woodDismountActive = false;
                         adultState = AdultState::IDLE;
                         stateTimer = 0;
                         setIdleDuration();
@@ -332,7 +549,7 @@ void TerrariumScene::updateAdultMovement() {
             // 休息/睡觉：有腐木时会优先趴在腐木旁；没有腐木时也会找一处安静位置睡。
             {
                 bool alerted = alertUntilMs != 0 && Hal::ins().millis() < alertUntilMs;
-                if (bug.getHunger() < 35 || alerted) {
+                if ((!WOOD_SLEEP_TEST_ALWAYS && bug.getHunger() < 35) || alerted) {
                     adultState = AdultState::IDLE;
                     stateTimer = 0;
                     setIdleDuration();
@@ -345,6 +562,9 @@ void TerrariumScene::updateAdultMovement() {
                     !GameEngine::ins().isNight() &&
                     stateTimer > 180 &&
                     random(1000) < REST_WAKE_CHANCE_PER_DECISION_1000) {
+                    restResumeAllowedMs = Hal::ins().millis() +
+                                          random(REST_WAKEUP_COOLDOWN_MIN_MS,
+                                                 REST_WAKEUP_COOLDOWN_MAX_MS + 1);
                     adultState = AdultState::IDLE;
                     stateTimer = 0;
                     setIdleDuration();
@@ -364,6 +584,8 @@ void TerrariumScene::updateAdultMovement() {
 
 void TerrariumScene::updateJuvenileMovement() {
     stateTimer++;
+    bugZ = TERRARIUM_DEPTH_INTERACTION_Z;
+    targetZ = TERRARIUM_DEPTH_INTERACTION_Z;
     if (toyCharging) return;
     bool aiDecisionFrame = (stateTimer % AI_DECISION_INTERVAL_FRAMES) == 0;
 
@@ -393,7 +615,9 @@ void TerrariumScene::updateJuvenileMovement() {
                 localActor.turning = false;
                 faceRight = turnTargetFaceRight;
                 stateTimer = 0;
-                if (walkAfterTurn) {
+                bool doWalk = walkAfterTurn;
+                walkAfterTurn = false;
+                if (doWalk) {
                     adultState = AdultState::WALK;
                     stateDuration = 0;
                 } else {
@@ -443,7 +667,7 @@ void TerrariumScene::updateJuvenileMovement() {
 void TerrariumScene::drawFoodTray() {
     Bug& bug = GameEngine::ins().getBug();
     Stage stage = bug.getStage();
-    if (stage == Stage::EGG || stage == Stage::LARVA || stage == Stage::PUPA) return;
+    if (stage != Stage::JUVENILE && stage != Stage::ADULT) return;
     if (GameEngine::ins().getBowlStyle() == 0xFF) return;
 
     static constexpr int BOWL_X = 14;
@@ -460,7 +684,7 @@ void TerrariumScene::drawFoodTray() {
                                  bowlOffset, bowlLength);
 
     if (bug.hasFoodInTray() && bug.getFoodAmount() > 0) {
-        uint8_t foodStyle = GameEngine::ins().getFoodStyle();
+        uint8_t foodStyle = (uint8_t)bug.getFoodInTrayType();
         if (foodStyle >= FoodAssets::SPRITE_COUNT) foodStyle = 0;
         uint16_t foodOffset = pgm_read_word(&FoodAssets::SPRITE_FRAMES[foodStyle].offset);
         uint16_t foodLength = pgm_read_word(&FoodAssets::SPRITE_FRAMES[foodStyle].length);
@@ -478,18 +702,17 @@ void TerrariumScene::drawFoodTray() {
 void TerrariumScene::drawWood() {
     Bug& bug = GameEngine::ins().getBug();
     Stage stage = bug.getStage();
-    if (stage == Stage::EGG || stage == Stage::LARVA || stage == Stage::PUPA) return;
+    if (stage != Stage::JUVENILE && stage != Stage::ADULT) return;
     if (!bug.isWoodPlaced()) return;
 
     uint8_t style = GameEngine::ins().getWoodStyle();
     if (style >= WoodAssets::SPRITE_COUNT) style = 0;
     uint16_t offset = pgm_read_word(&WoodAssets::SPRITE_FRAMES[style].offset);
     uint16_t length = pgm_read_word(&WoodAssets::SPRITE_FRAMES[style].length);
-    PixelRenderer::drawRgb565Rle(197 - WoodAssets::FRAME_W,
+    PixelRenderer::drawRgb565Rle(WOOD_DRAW_RIGHT_X - WoodAssets::FRAME_W,
                                  GROUND_Y - WoodAssets::FRAME_H + 6,
                                  WoodAssets::FRAME_W,
                                  WoodAssets::FRAME_H,
                                  WoodAssets::SPRITE_RLE,
                                  offset, length);
 }
-

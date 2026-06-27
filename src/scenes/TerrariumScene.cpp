@@ -28,9 +28,11 @@ namespace {
 constexpr int PUPA_BOTTOM_MARGIN_PX = 0;
 constexpr int PUPA_POKE_SHAKE_PX = 3;
 constexpr bool VISITOR_DEBUG_LOGS = false;
-constexpr float TOY_BEETLE_HIT_HALF_W = 34.0f;
-constexpr float TOY_BEETLE_HIT_TOP = 44.0f;
-constexpr float TOY_BEETLE_HIT_BOTTOM = 2.0f;
+constexpr bool WOOD_ADULT_DEBUG_LOGS = false;
+constexpr bool TOY_DEBUG_LOGS = true;
+constexpr float TOY_BEETLE_HIT_HALF_W = 27.0f;
+constexpr float TOY_BEETLE_HIT_TOP = 35.0f;
+constexpr float TOY_BEETLE_HIT_BOTTOM = 5.0f;
 
 bool isMobileBeetleStage(Stage stage) {
     return stage == Stage::ADULT || stage == Stage::JUVENILE;
@@ -165,6 +167,55 @@ void drawRgb565RleFaded(int x, int y, int w, int h,
             if (px < 0 || py < 0 || px >= Hal::DISPLAY_W || py >= Hal::DISPLAY_H) continue;
             uint16_t bg = (uint16_t)canvas.readPixel(px, py);
             canvas.drawPixel(px, py, blendRgb565(color, bg, opacity));
+        }
+    }
+}
+
+void drawRgb565RleMappedScaledSheared(int x, int y, int w, int h,
+                                      const uint16_t* data, uint16_t offset,
+                                      uint16_t length, float scale,
+                                      uint16_t keyMain, uint16_t targetMain,
+                                      uint16_t keyShadow, uint16_t targetShadow,
+                                      uint16_t keyMarking, uint16_t targetMarking,
+                                      bool flipX, int topShearPx) {
+    if (!data || w <= 0 || h <= 0 || scale <= 0.0f) return;
+    LGFX_Sprite& canvas = Hal::ins().canvas();
+
+    auto mapColor = [&](uint16_t color) -> uint16_t {
+        if (color == keyMain) return targetMain;
+        if (color == keyShadow) return targetShadow;
+        if (color == keyMarking) return targetMarking;
+        return color;
+    };
+
+    const uint16_t total = (uint16_t)(w * h);
+    const int drawW = scale > 1.0f ? (int)ceilf(scale) : 1;
+    const int drawH = scale > 1.0f ? (int)ceilf(scale) : 1;
+    const int shearDen = h > 1 ? h - 1 : 1;
+    uint16_t idx = 0;
+    uint16_t pixel = 0;
+    while (idx < length && pixel < total) {
+        uint16_t token = pgm_read_word(&data[offset + idx++]);
+        uint16_t run = token & 0x7FFF;
+        if (run == 0) continue;
+
+        if (token & 0x8000) {
+            pixel += run;
+            if (pixel > total) pixel = total;
+            continue;
+        }
+
+        for (uint16_t i = 0; i < run && idx < length && pixel < total; ++i, ++pixel) {
+            uint16_t color = mapColor(pgm_read_word(&data[offset + idx++]));
+            int col = pixel % w;
+            int row = pixel / w;
+            if (flipX) col = w - 1 - col;
+
+            // 伪倾斜：脚底行保持原位，越靠近背部/头顶越朝坡向错开。
+            int shear = ((h - 1 - row) * topShearPx) / shearDen;
+            int px = x + (int)(col * scale) + shear;
+            int py = y + (int)(row * scale);
+            canvas.fillRect(px, py, drawW, drawH, color);
         }
     }
 }

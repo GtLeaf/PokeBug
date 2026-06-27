@@ -68,6 +68,26 @@ uint32_t GameEngine::targetFrameTime() const {
     return ACTIVE_FRAME_MS;
 }
 
+void GameEngine::ensureDefaultProgression() {
+    progression.foodUnlockMask |= (uint16_t)(1U << (uint8_t)FoodType::DROP);
+    uint16_t validFoodMask = (uint16_t)((1U << (uint8_t)FoodType::COUNT) - 1U);
+    progression.foodUnlockMask &= validFoodMask;
+    if (progression.activeToyBallDurability > TOY_BALL_MAX_DURABILITY) {
+        progression.activeToyBallDurability = TOY_BALL_MAX_DURABILITY;
+    }
+    if (!isMainSceneBgUnlocked(mainSceneBg)) mainSceneBg = BG_MOSS;
+    if (!isFoodUnlocked((FoodType)foodStyle)) foodStyle = (uint8_t)FoodType::DROP;
+    if (toyStyle == TOY_BALL &&
+        (!isToyStyleUnlocked(TOY_BALL) || progression.activeToyBallDurability == 0)) {
+        toyStyle = TOY_NONE;
+    }
+}
+
+void GameEngine::saveProgression() {
+    ensureDefaultProgression();
+    SaveManager::ins().saveProgression(progression);
+}
+
 void GameEngine::forceSave() {
     if (curSceneID == SCENE_TERRARIUM && curScene) {
         static_cast<TerrariumScene*>(curScene)->persistViewState();
@@ -75,6 +95,7 @@ void GameEngine::forceSave() {
     SaveManager::ins().save(bug);
     SaveManager::ins().saveTerrariumViewState(terrariumViewState);
     saveExploreGlobal();
+    saveProgression();
 }
 
 void GameEngine::resetIdleTimer() {
@@ -90,12 +111,42 @@ void GameEngine::setIdleTimeoutIndex(uint8_t idx) {
 
 void GameEngine::setMainSceneBg(uint8_t id) {
     if (id >= BG_COUNT) id = BG_MOSS;
+    if (!isMainSceneBgUnlocked(id)) id = BG_MOSS;
     mainSceneBg = id;
 }
 
 void GameEngine::cycleMainSceneBg() {
-    mainSceneBg++;
-    if (mainSceneBg >= BG_COUNT) mainSceneBg = BG_MOSS;
+    uint8_t start = mainSceneBg;
+    do {
+        mainSceneBg++;
+        if (mainSceneBg >= BG_COUNT) mainSceneBg = BG_MOSS;
+    } while (mainSceneBg != start && !isMainSceneBgUnlocked(mainSceneBg));
+}
+
+bool GameEngine::isMainSceneBgUnlocked(uint8_t id) const {
+    switch (id) {
+        case BG_MOSS:
+        case BG_BEGINNER:
+        case BG_CHILD_ROOM:
+            return true;
+        case BG_ENTOMOLOGIST:
+            return isFeatureUnlocked(FEATURE_BG_LAB_UNLOCKED);
+        case BG_SCHOOL:
+            return isFeatureUnlocked(FEATURE_BG_SCHOOL_UNLOCKED);
+        default:
+            return false;
+    }
+}
+
+bool GameEngine::unlockMainSceneBg(uint8_t id) {
+    switch (id) {
+        case BG_ENTOMOLOGIST:
+            return unlockFeature(FEATURE_BG_LAB_UNLOCKED);
+        case BG_SCHOOL:
+            return unlockFeature(FEATURE_BG_SCHOOL_UNLOCKED);
+        default:
+            return false;
+    }
 }
 
 const char* GameEngine::getMainSceneBgName() const {
@@ -127,10 +178,14 @@ const char* GameEngine::getWoodStyleName() const {
 
 void GameEngine::setBowlStyle(uint8_t id) {
     if (id == 0xFF) {
-        bowlStyle = id;
+        bowlStyle = 0;
         return;
     }
     if (id >= 3) id = 0;
+    if (isBowlStyleUnlocked(id)) {
+        bowlStyle = id;
+        return;
+    }
     uint8_t wins = getBug().getWins();
     // Lv.2 需 2 胜，Lv.3 需 5 胜
     if (id >= 2 && wins < 5) id = 1;
@@ -148,6 +203,7 @@ void GameEngine::cycleBowlStyle() {
 
 bool GameEngine::isBowlStyleUnlocked(uint8_t id) const {
     if (id == 0xFF) return true;
+    if (isFeatureUnlocked(FEATURE_BOWL_ALL_UNLOCKED)) return id < 3;
     uint8_t wins = getBug().getWins();
     if (id == 0) return true;
     if (id == 1) return wins >= 2;
@@ -168,12 +224,32 @@ const char* GameEngine::getBowlStyleName() const {
 
 void GameEngine::setFoodStyle(uint8_t id) {
     if (id >= 6) id = 0;
+    if (!isFoodUnlocked((FoodType)id)) id = (uint8_t)FoodType::DROP;
     foodStyle = id;
 }
 
 void GameEngine::cycleFoodStyle() {
-    foodStyle++;
-    if (foodStyle >= 6) foodStyle = 0;
+    uint8_t start = foodStyle;
+    do {
+        foodStyle++;
+        if (foodStyle >= (uint8_t)FoodType::COUNT) foodStyle = 0;
+    } while (foodStyle != start && !isFoodUnlocked((FoodType)foodStyle));
+}
+
+bool GameEngine::isFoodUnlocked(FoodType type) const {
+    uint8_t idx = (uint8_t)type;
+    if (idx >= (uint8_t)FoodType::COUNT) return false;
+    return (progression.foodUnlockMask & (uint16_t)(1U << idx)) != 0;
+}
+
+bool GameEngine::unlockFood(FoodType type) {
+    uint8_t idx = (uint8_t)type;
+    if (idx >= (uint8_t)FoodType::COUNT) return false;
+    uint16_t bit = (uint16_t)(1U << idx);
+    if ((progression.foodUnlockMask & bit) != 0) return false;
+    progression.foodUnlockMask |= bit;
+    saveProgression();
+    return true;
 }
 
 const char* GameEngine::getFoodStyleName() const {
@@ -182,7 +258,55 @@ const char* GameEngine::getFoodStyleName() const {
 
 void GameEngine::setToyStyle(uint8_t id) {
     if (id >= TOY_COUNT) id = TOY_NONE;
+    if (id != TOY_NONE && !isToyStyleUnlocked(id)) id = TOY_NONE;
+    if (id == TOY_BALL && progression.activeToyBallDurability == 0) id = TOY_NONE;
     toyStyle = id;
+}
+
+bool GameEngine::isToyStyleUnlocked(uint8_t id) const {
+    if (id == TOY_NONE) return true;
+    if (id == TOY_BALL) return isFeatureUnlocked(FEATURE_TOY_BALL_UNLOCKED);
+    return false;
+}
+
+void GameEngine::addToyBall(uint8_t amount) {
+    if (amount == 0) return;
+    unlockFeature(FEATURE_TOY_BALL_UNLOCKED);
+    uint16_t sum = (uint16_t)progression.toyBallCount + amount;
+    progression.toyBallCount = sum > 255 ? 255 : (uint8_t)sum;
+    saveProgression();
+}
+
+bool GameEngine::equipToyBall() {
+    if (!isToyStyleUnlocked(TOY_BALL)) return false;
+    if (progression.activeToyBallDurability == 0) {
+        if (progression.toyBallCount == 0) return false;
+        progression.toyBallCount--;
+        progression.activeToyBallDurability = TOY_BALL_MAX_DURABILITY;
+    }
+    toyStyle = TOY_BALL;
+    saveProgression();
+    return true;
+}
+
+bool GameEngine::damageActiveToyBall() {
+    if (toyStyle != TOY_BALL || progression.activeToyBallDurability == 0) return false;
+    progression.activeToyBallDurability--;
+    bool broken = progression.activeToyBallDurability == 0;
+    if (broken) {
+        toyStyle = TOY_NONE;
+        saveSettingsSnapshot();
+    }
+    saveProgression();
+    return broken;
+}
+
+void GameEngine::clearActiveToyBall() {
+    if (progression.activeToyBallDurability == 0) return;
+    progression.activeToyBallDurability = 0;
+    if (toyStyle == TOY_BALL) toyStyle = TOY_NONE;
+    saveSettingsSnapshot();
+    saveProgression();
 }
 
 const char* GameEngine::getToyStyleName() const {
@@ -191,6 +315,75 @@ const char* GameEngine::getToyStyleName() const {
         case TOY_NONE:
         default:
             return UiStrings::TOY_NONE;
+    }
+}
+
+bool GameEngine::unlockFeature(ProgressFeature feature) {
+    uint32_t bit = (uint32_t)feature;
+    if ((progression.featureFlags & bit) != 0) return false;
+    progression.featureFlags |= bit;
+    saveProgression();
+    return true;
+}
+
+void GameEngine::unlockAllProgression() {
+    progression.featureFlags |= FEATURE_CUP_UNLOCKED |
+                                FEATURE_TOY_BALL_UNLOCKED |
+                                FEATURE_BG_LAB_UNLOCKED |
+                                FEATURE_BG_SCHOOL_UNLOCKED |
+                                FEATURE_BOWL_ALL_UNLOCKED;
+    progression.foodUnlockMask = (uint16_t)((1U << (uint8_t)FoodType::COUNT) - 1U);
+    if (progression.toyBallCount < 9) progression.toyBallCount = 9;
+    Bug& bug = getBug();
+    for (uint8_t i = 0; i < WoodTypeInfo::COUNT; ++i) {
+        bug.addWood(i, 1);
+    }
+    saveProgression();
+    forceSave();
+}
+
+uint8_t GameEngine::getItemCount(ItemId id) const {
+    switch (ItemCatalog::kind(id)) {
+        case ItemKind::FOOD:
+        case ItemKind::WOOD:
+            return bug.getItemCount(id);
+        case ItemKind::TOY:
+            return ItemCatalog::index(id) == TOY_BALL ? progression.toyBallCount : 0;
+        default:
+            return 0;
+    }
+}
+
+bool GameEngine::addItem(ItemId id, uint8_t amount) {
+    if (amount == 0 || !ItemCatalog::isExchangeable(id)) return false;
+    switch (ItemCatalog::kind(id)) {
+        case ItemKind::FOOD:
+            unlockFood((FoodType)ItemCatalog::index(id));
+            return bug.addItem(id, amount);
+        case ItemKind::WOOD:
+            return bug.addItem(id, amount);
+        case ItemKind::TOY:
+            if (ItemCatalog::index(id) != TOY_BALL) return false;
+            addToyBall(amount);
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool GameEngine::removeItem(ItemId id, uint8_t amount) {
+    if (amount == 0 || getItemCount(id) < amount) return false;
+    switch (ItemCatalog::kind(id)) {
+        case ItemKind::FOOD:
+        case ItemKind::WOOD:
+            return bug.removeItem(id, amount);
+        case ItemKind::TOY:
+            if (ItemCatalog::index(id) != TOY_BALL) return false;
+            progression.toyBallCount -= amount;
+            saveProgression();
+            return true;
+        default:
+            return false;
     }
 }
 
@@ -377,10 +570,10 @@ bool GameEngine::sleepUntilMorning() {
     bug.setSleeping(true);
     while (updated + UPDATE_STEP_MS < delta) {
         updated += UPDATE_STEP_MS;
-        bug.update(gameNow - delta + updated);
+        updateBugWithStageDefaults(gameNow - delta + updated);
         bug.ensureMinHunger(ACTIVE_SLEEP_MIN_HUNGER);  // 主动睡眠不会把 HUN 压到濒死值
     }
-    bug.update(gameNow);
+    updateBugWithStageDefaults(gameNow);
     bug.setSleeping(false);
     bug.ensureMinHunger(ACTIVE_SLEEP_MIN_HUNGER);
 

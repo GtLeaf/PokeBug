@@ -55,6 +55,26 @@ void TerrariumScene::drawBackground() {
                                 MainSceneAssets::ROOM_FULL_PALETTE);
 }
 
+namespace {
+int scaledSpriteExtentPx(uint8_t sourceSize, float scale) {
+    if (sourceSize == 0 || scale <= 0.0f) return 0;
+    if (scale > 1.0f) {
+        return (int)ceilf((float)(sourceSize - 1) * scale) + (int)ceilf(scale);
+    }
+    int extent = (int)((float)sourceSize * scale);
+    return extent > 0 ? extent : 1;
+}
+
+int clampSpriteDrawXToScreen(int drawX, uint8_t frameW, float scale) {
+    int drawW = scaledSpriteExtentPx(frameW, scale);
+    if (drawW <= 0) return drawX;
+    if (drawX < 0) return 0;
+    int maxX = Hal::DISPLAY_W - drawW;
+    if (maxX < 0) return 0;
+    return drawX > maxX ? maxX : drawX;
+}
+}
+
 void TerrariumScene::drawBug() {
     Bug& bug = GameEngine::ins().getBug();
     uint8_t pal = bug.getPaletteId();
@@ -84,7 +104,7 @@ void TerrariumScene::drawBug() {
             int baseY = 95;
             if (bug.getStage() == Stage::EGG) baseY = GROUND_Y - 7;
             else if (bug.getStage() == Stage::LARVA) baseY = GROUND_Y - 5;
-            else if (bug.getStage() == Stage::ADULT) baseY = GROUND_Y;
+            else if (bug.getStage() == Stage::ADULT) baseY = adultFootY();
             drawPokeCooldownHint(bugX, baseY);
         }
     }
@@ -102,13 +122,98 @@ void TerrariumScene::drawBug() {
                      pal);
             break;
         case Stage::JUVENILE:
-            drawAdult(bugX, GROUND_Y, pal);
+            drawAdult(bugX, adultFootY(), pal);
             break;
         case Stage::ADULT:
         default:
-            drawAdult(bugX, GROUND_Y, pal);
+            drawAdult(bugX, adultFootY(), pal);
             break;
     }
+}
+
+int TerrariumScene::woodSurfaceYAt(int x) const {
+    if (x <= WOOD_SURFACE_LEFT_X) return WOOD_SURFACE_LOW_Y;
+    if (x >= WOOD_SURFACE_RIGHT_X) return WOOD_SURFACE_HIGH_Y;
+
+    int span = WOOD_SURFACE_RIGHT_X - WOOD_SURFACE_LEFT_X;
+    int rise = WOOD_SURFACE_LOW_Y - WOOD_SURFACE_HIGH_Y;
+    return WOOD_SURFACE_LOW_Y - ((x - WOOD_SURFACE_LEFT_X) * rise) / span;
+}
+
+int TerrariumScene::woodRouteFootYAt(int x) const {
+    int ground = adultDepthFootY();
+    int leftRampX = WOOD_SURFACE_LEFT_X - WOOD_DISMOUNT_RAMP_PX;
+    int rightRampX = WOOD_SURFACE_RIGHT_X + WOOD_DISMOUNT_RAMP_PX;
+
+    if (x < WOOD_SURFACE_LEFT_X) {
+        if (x <= leftRampX) return ground;
+        return ground - ((x - leftRampX) * (ground - WOOD_SURFACE_LOW_Y)) / WOOD_DISMOUNT_RAMP_PX;
+    }
+    if (x > WOOD_SURFACE_RIGHT_X) {
+        if (x >= rightRampX) return ground;
+        return WOOD_SURFACE_HIGH_Y + ((x - WOOD_SURFACE_RIGHT_X) * (ground - WOOD_SURFACE_HIGH_Y)) /
+                                      WOOD_DISMOUNT_RAMP_PX;
+    }
+    return woodSurfaceYAt(x);
+}
+
+bool TerrariumScene::isAdultOnWoodRoute() const {
+    const Bug& bug = GameEngine::ins().getBug();
+    if (!isAtInteractionDepth()) return false;
+    if (bug.getStage() != Stage::ADULT || !bug.isWoodPlaced()) return false;
+    bool overWood = bugX >= WOOD_SURFACE_LEFT_X - WOOD_DISMOUNT_RAMP_PX &&
+                    bugX <= WOOD_SURFACE_RIGHT_X + WOOD_DISMOUNT_RAMP_PX;
+    if (!overWood) return false;
+    bool onWoodSurface = bugX >= WOOD_SURFACE_LEFT_X &&
+                         bugX <= WOOD_SURFACE_RIGHT_X;
+    if (bug.isDead()) return true;
+    if (pokeThreatenEndMs != 0 && Hal::ins().millis() < pokeThreatenEndMs) return true;
+    if (adultState == AdultState::REST) return true;
+    if (adultState == AdultState::THREATEN) return true;
+    if (onWoodSurface &&
+        (adultState == AdultState::IDLE || adultState == AdultState::TURN)) {
+        return true;
+    }
+    if (walkTargetIsRest &&
+        (adultState == AdultState::WALK || adultState == AdultState::TURN)) {
+        return true;
+    }
+    if (woodDismountActive &&
+        (adultState == AdultState::WALK || adultState == AdultState::TURN)) {
+        return true;
+    }
+    return false;
+}
+
+int TerrariumScene::adultFootY() const {
+    if (!isAdultOnWoodRoute()) return adultDepthFootY();
+    return woodRouteFootYAt(bugX);
+}
+
+int TerrariumScene::adultDepthFootY() const {
+    return GROUND_Y - (int)bugZ * TERRARIUM_DEPTH_Y_STEP;
+}
+
+float TerrariumScene::adultDepthScale() const {
+    float scale = 1.0f - (float)bugZ * TERRARIUM_DEPTH_SCALE_STEP;
+    return scale < 0.82f ? 0.82f : scale;
+}
+
+bool TerrariumScene::isAtInteractionDepth() const {
+    return bugZ == TERRARIUM_DEPTH_INTERACTION_Z;
+}
+
+uint8_t TerrariumScene::clampDepthZ(int z) const {
+    if (z < TERRARIUM_DEPTH_MIN_Z) return TERRARIUM_DEPTH_MIN_Z;
+    if (z > TERRARIUM_DEPTH_MAX_Z) return TERRARIUM_DEPTH_MAX_Z;
+    return (uint8_t)z;
+}
+
+uint8_t TerrariumScene::pickWanderTargetZ() const {
+    if (random(100) < WANDER_TO_DEPTH_CHANCE_PERCENT) {
+        return (uint8_t)random(1, TERRARIUM_DEPTH_MAX_Z + 1);
+    }
+    return TERRARIUM_DEPTH_INTERACTION_Z;
 }
 
 float TerrariumScene::visitorAdultScale() const {
@@ -231,6 +336,20 @@ void TerrariumScene::drawVisitorAdult(int x, int y) {
     int drawY = (int)(y - frameH * scale);
     if (visitor.faceRight && visitor.actor.state != AdultState::TURN) {
         drawX -= 2;
+    }
+    drawX = clampSpriteDrawXToScreen(drawX, frameW, scale);
+
+    if (visitor.actor.state == AdultState::CLIMB) {
+        int shearPx = visitor.faceRight ? 6 : -6;
+        drawRgb565RleMappedScaledSheared(drawX, drawY,
+                                         frameW, frameH,
+                                         data, offset, length,
+                                         scale,
+                                         HerculesAdultSprites::PALETTE_KEY, color,
+                                         HerculesAdultSprites::PALETTE_KEY, color,
+                                         HerculesAdultSprites::PALETTE_KEY, color,
+                                         flipSprite, shearPx);
+        return;
     }
 
     if (drawCachedMappedRleFrame(drawX, drawY,
@@ -361,6 +480,7 @@ void TerrariumScene::drawAdult(int x, int y, uint8_t palette) {
     uint8_t frameCount = HerculesAdultSprites::WALK_FRAME_COUNT;
     uint8_t frameIndex = (animFrame / 10) % frameCount;
     bool flipSprite = !faceRight;
+    bool depthWalkTransition = adultState == AdultState::WALK && bugZ != targetZ;
 
     if (bug.isDead()) {
         // 死亡叠层：使用 reset 第 0 帧
@@ -430,6 +550,14 @@ void TerrariumScene::drawAdult(int x, int y, uint8_t palette) {
         uint8_t interval = eatFrameInterval == 0 ? EAT_FRAME_INTERVAL_MIN : eatFrameInterval;
         frameIndex = (stateTimer / interval) % frameCount;
         flipSprite = !faceRight;
+    } else if (depthWalkTransition) {
+        // z 轴移动时使用 turn 帧作为清晰朝向提示：第 2 帧表示背向屏幕往深处走，第 1 帧表示往外走。
+        frames = HerculesAdultSprites::TURN_FRAMES;
+        data = HerculesAdultSprites::TURN_RLE;
+        frameCount = HerculesAdultSprites::TURN_FRAME_COUNT;
+        frameIndex = targetZ > bugZ ? 1 : 0;
+        if (frameIndex >= frameCount) frameIndex = frameCount - 1;
+        flipSprite = false;
     } else if (adultState == AdultState::TURN) {
         // 转身过渡每次随机取一张中间姿态；同一次转身中保持不变。
         frames = HerculesAdultSprites::TURN_FRAMES;
@@ -456,11 +584,32 @@ void TerrariumScene::drawAdult(int x, int y, uint8_t palette) {
     uint16_t length = pgm_read_word(&frames[frameIndex].length);
     uint8_t frameW = pgm_read_byte(&frames[frameIndex].width);
     uint8_t frameH = pgm_read_byte(&frames[frameIndex].height);
-    float adultScale = bug.getAdultScale();
+    float adultScale = bug.getAdultScale() * adultDepthScale();
     uint16_t adultHue = adultDepthColor(bug.getTemperament(), bug.getAdultDepth());
     int drawX = (int)(x - (frameW * adultScale) / 2.0f);
     int drawY = (int)(y - frameH * adultScale);
-    // y 是脚/底部参考点，让精灵底部对齐 y
+    if (faceRight && adultState != AdultState::TURN && !depthWalkTransition) {
+        drawX -= 2;
+    }
+    drawX = clampSpriteDrawXToScreen(drawX, frameW, adultScale);
+    bool shearWalkFrame = adultState == AdultState::CLIMB ||
+                          (adultState == AdultState::WALK &&
+                           !depthWalkTransition &&
+                           walkTargetIsRest &&
+                           GameEngine::ins().getBug().isWoodPlaced());
+    if (shearWalkFrame) {
+        int shearPx = faceRight ? 6 : -6;
+        drawRgb565RleMappedScaledSheared(drawX, drawY,
+                                         frameW, frameH,
+                                         data, offset, length,
+                                         adultScale,
+                                         HerculesAdultSprites::PALETTE_KEY, adultHue,
+                                         HerculesAdultSprites::PALETTE_KEY, adultHue,
+                                         HerculesAdultSprites::PALETTE_KEY, adultHue,
+                                         flipSprite, shearPx);
+        return;
+    }
+
     if (drawCachedMappedRleFrame(drawX, drawY,
                                  frameW, frameH,
                                  data, offset, length,

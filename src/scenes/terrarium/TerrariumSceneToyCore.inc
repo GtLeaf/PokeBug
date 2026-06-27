@@ -29,6 +29,44 @@ void TerrariumScene::resetToy() {
         visitor.actor.stateTimer = 0;
     }
     toyNoCatchUntilMs = 0;
+    toyReplayReadyAfterImpact = false;
+}
+
+void TerrariumScene::clearToyAfterImpactReplay(uint32_t nowMs) {
+    if (TOY_DEBUG_LOGS) {
+        Serial.printf("[ToyThrow] clear busy-before visible=%u entry=%u localCharge=%u visitorCharge=%u x=%d y=%d vx=%d vy=%d noCatch=%ld\n",
+                      toyVisible ? 1 : 0,
+                      toyEntryActive ? 1 : 0,
+                      toyCharging ? 1 : 0,
+                      visitorToyCharging ? 1 : 0,
+                      (int)roundf(toyX),
+                      (int)roundf(toyY),
+                      (int)roundf(toyVx),
+                      (int)roundf(toyVy),
+                      (long)(toyNoCatchUntilMs > nowMs ? toyNoCatchUntilMs - nowMs : 0));
+    }
+    toyVisible = false;
+    toyEntryActive = false;
+    toyCharging = false;
+    visitorToyCharging = false;
+    toyVx = 0.0f;
+    toyVy = 0.0f;
+    toySpin = 0.0f;
+    toyLastUpdateMs = nowMs;
+    toyLastHitMs = 0;
+    toyAttackStartMs = 0;
+    toyChargeStartMs = 0;
+    toyChargeDurationMs = 0;
+    visitorToyChargeStartMs = 0;
+    visitorToyChargeDurationMs = 0;
+    visitorToyAttackStartMs = 0;
+    toyNoCatchUntilMs = 0;
+    toyReplayReadyAfterImpact = false;
+    if (visitor.actor.state == AdultState::ATTACK_DOWN ||
+        visitor.actor.state == AdultState::ATTACK_UP) {
+        visitor.actor.state = AdultState::IDLE;
+        visitor.actor.stateTimer = 0;
+    }
 }
 
 bool TerrariumScene::isToyEnabled() const {
@@ -149,8 +187,37 @@ float TerrariumScene::visitorToyStrengthPower() const {
 
 void TerrariumScene::startToyCharge(uint32_t nowMs, int pushDir) {
     Bug& bug = GameEngine::ins().getBug();
+    bool onWoodRoute = isAdultOnWoodRoute();
+    if (!isAtInteractionDepth() || onWoodRoute) {
+        if (TOY_DEBUG_LOGS) {
+            Serial.printf("[WoodToy] charge-block push=%d x=%d z=%u state=%s onWood=%u toy=%d/%d vx=%d vy=%d noCatch=%ld\n",
+                          pushDir,
+                          bugX,
+                          bugZ,
+                          adultStateName(adultState),
+                          onWoodRoute ? 1 : 0,
+                          (int)roundf(toyX),
+                          (int)roundf(toyY),
+                          (int)roundf(toyVx),
+                          (int)roundf(toyVy),
+                          (long)(toyNoCatchUntilMs > nowMs ? toyNoCatchUntilMs - nowMs : 0));
+        }
+        deflectToyFromBeetle(pushDir);
+        toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_REBOUND_MS;
+        return;
+    }
     if (pushDir == 0) pushDir = faceRight ? 1 : -1;
     if (random(100) >= toyInterestPercent(bug.getTemperament())) {
+        if (TOY_DEBUG_LOGS) {
+            Serial.printf("[WoodToy] charge-interest-miss push=%d x=%d state=%s toy=%d/%d vx=%d vy=%d\n",
+                          pushDir,
+                          bugX,
+                          adultStateName(adultState),
+                          (int)roundf(toyX),
+                          (int)roundf(toyY),
+                          (int)roundf(toyVx),
+                          (int)roundf(toyVy));
+        }
         deflectToyFromBeetle(pushDir);
         toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_REBOUND_MS;
         return;
@@ -170,10 +237,24 @@ void TerrariumScene::startToyCharge(uint32_t nowMs, int pushDir) {
     if (toyX < TOY_TANK_LEFT + spec.radius) toyX = TOY_TANK_LEFT + spec.radius;
     if (toyX > TOY_TANK_RIGHT - spec.radius) toyX = TOY_TANK_RIGHT - spec.radius;
 
+    if (TOY_DEBUG_LOGS &&
+        (bug.isWoodPlaced() || bugX >= WOOD_SURFACE_LEFT_X - WOOD_DISMOUNT_RAMP_PX)) {
+        Serial.printf("[WoodToy] charge-start push=%d x=%d z=%u state=%s targetToy=%d/%d dur=%lu restResume=%ld alert=%ld\n",
+                      pushDir,
+                      bugX,
+                      bugZ,
+                      adultStateName(adultState),
+                      (int)roundf(toyX),
+                      (int)roundf(toyY),
+                      (unsigned long)toyChargeDurationMs,
+                      (long)(restResumeAllowedMs > nowMs ? restResumeAllowedMs - nowMs : 0),
+                      (long)(alertUntilMs > nowMs ? alertUntilMs - nowMs : 0));
+    }
     adultState = AdultState::IDLE;
     stateTimer = 0;
     stateDuration = (toyChargeDurationMs / 50) + 8;
     walkTargetIsRest = false;
+    woodDismountActive = false;
 }
 
 void TerrariumScene::startVisitorToyCharge(uint32_t nowMs, int pushDir) {
@@ -226,13 +307,38 @@ void TerrariumScene::triggerToyHit(uint32_t nowMs, int pushDir, float chargeRati
     toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_HIT_MS;
     toyCharging = false;
     toyChargeStartMs = 0;
+    if (TOY_DEBUG_LOGS &&
+        (bug.isWoodPlaced() || bugX >= WOOD_SURFACE_LEFT_X - WOOD_DISMOUNT_RAMP_PX)) {
+        Serial.printf("[WoodToy] charge-hit push=%d ratio=%d x=%d state=%s toyV=%d/%d noCatch=%lu\n",
+                      pushDir,
+                      (int)roundf(chargeRatio * 100.0f),
+                      bugX,
+                      adultStateName(adultState),
+                      (int)roundf(toyVx),
+                      (int)roundf(toyVy),
+                      (unsigned long)TOY_NO_CATCH_AFTER_HIT_MS);
+    }
 }
 
 void TerrariumScene::reactLocalToToyImpact(uint32_t nowMs, int pushDir) {
     Bug& bug = GameEngine::ins().getBug();
     if (bug.getStage() != Stage::ADULT || bug.isDead()) return;
-    if (adultState == AdultState::REST || adultState == AdultState::EAT) return;
+    if (!isAtInteractionDepth()) return;
+    if (adultState == AdultState::EAT) return;
 
+    bool wasOnWood = isAdultOnWoodRoute();
+    if (TOY_DEBUG_LOGS) {
+        Serial.printf("[ToyThrow] impact local push=%d state=%s onWood=%u x=%d foot=%d\n",
+                      pushDir,
+                      adultStateName(adultState),
+                      wasOnWood ? 1 : 0,
+                      bugX,
+                      adultFootY());
+    }
+    if (adultState == AdultState::REST || wasOnWood) {
+        restResumeAllowedMs = nowMs + random(REST_WAKEUP_COOLDOWN_MIN_MS,
+                                             REST_WAKEUP_COOLDOWN_MAX_MS + 1);
+    }
     faceRight = pushDir >= 0;
     turnTargetFaceRight = faceRight;
     pokeReactionStartMs = nowMs;
@@ -241,6 +347,7 @@ void TerrariumScene::reactLocalToToyImpact(uint32_t nowMs, int pushDir) {
     alertUntilMs = nowMs + random(ALERT_MIN_MS, ALERT_MAX_MS + 1);
     GameEngine::ins().recordVisitLocalPlay();
     adultState = AdultState::IDLE;
+    woodDismountActive = false;
     stateTimer = 0;
     setIdleDuration();
 }
@@ -253,6 +360,13 @@ void TerrariumScene::reactVisitorToToyImpact(uint32_t nowMs, int pushDir) {
         return;
     }
 
+    if (TOY_DEBUG_LOGS) {
+        Serial.printf("[ToyThrow] impact visitor push=%d state=%s x=%d targetY=%d\n",
+                      pushDir,
+                      adultStateName(visitor.actor.state),
+                      visitor.x,
+                      visitor.targetY);
+    }
     visitorToyCharging = false;
     visitorToyChargeStartMs = 0;
     visitor.faceRight = pushDir >= 0;
@@ -272,6 +386,7 @@ void TerrariumScene::reactVisitorToToyImpact(uint32_t nowMs, int pushDir) {
 void TerrariumScene::reboundToyFromEntryImpact(uint32_t nowMs, int pushDir,
                                                float beetleTop, const ToySpec& spec) {
     if (pushDir == 0) pushDir = 1;
+    toyReplayReadyAfterImpact = true;
     toyY = beetleTop - (float)spec.radius - 1.0f;
     if (toyY < TOY_TANK_TOP + spec.radius) toyY = (float)(TOY_TANK_TOP + spec.radius);
     if (toyX < TOY_TANK_LEFT + spec.radius) toyX = (float)(TOY_TANK_LEFT + spec.radius);
@@ -287,6 +402,16 @@ void TerrariumScene::reboundToyFromEntryImpact(uint32_t nowMs, int pushDir,
     toyVy = -vy * 0.9f;
     toySpin = (float)(pushDir * 11) * 0.9f;
     toyNoCatchUntilMs = nowMs + TOY_NO_CATCH_AFTER_REBOUND_MS;
+    if (TOY_DEBUG_LOGS) {
+        Serial.printf("[ToyThrow] rebound entry push=%d replay=%u x=%d y=%d vx=%d vy=%d noCatch=%lu\n",
+                      pushDir,
+                      toyReplayReadyAfterImpact ? 1 : 0,
+                      (int)roundf(toyX),
+                      (int)roundf(toyY),
+                      (int)roundf(toyVx),
+                      (int)roundf(toyVy),
+                      (unsigned long)TOY_NO_CATCH_AFTER_REBOUND_MS);
+    }
 }
 
 void TerrariumScene::triggerVisitorToyHit(uint32_t nowMs, int pushDir, float chargeRatio) {
@@ -312,4 +437,3 @@ void TerrariumScene::triggerVisitorToyHit(uint32_t nowMs, int pushDir, float cha
     visitor.actor.stateTimer = 0;
     visitor.actor.stateDuration = (TOY_ATTACK_UP_MS / 50) + 4;
 }
-

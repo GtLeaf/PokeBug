@@ -527,4 +527,3 @@ float Bug::getEnvMultiplier(int attrIndex) const {
 
     return mult;
 }
-

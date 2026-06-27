@@ -195,9 +195,9 @@ SceneID LobbyScene::update() {
         case State::GIFT_WAITING: {
             gift_item_t gift;
             if (BattleLink::ins().takeReceivedGift(gift)) {
-                if (ItemCatalog::kind(gift.item_id) != ItemKind::FOOD) {
+                if (!ItemCatalog::isExchangeable(gift.item_id)) {
                     enterMessage(UiStrings::GIFT_UNSUPPORTED, true);
-                } else if (GameEngine::ins().getBug().addItem(gift.item_id, gift.amount)) {
+                } else if (GameEngine::ins().addItem(gift.item_id, gift.amount)) {
                     GameEngine::ins().forceSave();
                     formatGiftMessage(UiStrings::GIFT_RECEIVED, gift.item_id, gift.amount);
                     enterMessage(messageBuf, true);
@@ -220,7 +220,7 @@ SceneID LobbyScene::update() {
                 }
             } else if (giftSendStarted && !BattleLink::ins().isSending()) {
                 bool ok = BattleLink::ins().takeLastSendSuccess();
-                if (ok && GameEngine::ins().getBug().removeItem(gift.id, gift.amount)) {
+                if (ok && GameEngine::ins().removeItem(gift.id, gift.amount)) {
                     GameEngine::ins().forceSave();
                     GameEngine::ins().clearPendingGiftItem();
                     formatGiftMessage(UiStrings::GIFT_SENT, gift.id, gift.amount);
@@ -304,4 +304,3 @@ SceneID LobbyScene::update() {
 
     return nextScene;
 }
-

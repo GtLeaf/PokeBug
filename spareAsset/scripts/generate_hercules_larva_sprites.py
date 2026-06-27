@@ -32,8 +32,8 @@ GENERATED = SPARE / "generated/src_assets"
 #    placeholders so the generated table keeps stable indexing.
 # 3. Generated frames use BASE_FRAME_* multiplied by LARVA_SIZE_SCALE,
 #    bottom-aligned. Walk keeps its existing per-age scale. Idle reuses the
-#    first walk frame, and eat is scaled to fit the first walk frame's final
-#    visible size. Sleep uses a separate per-age scale for compatibility.
+#    first walk frame, and eat/sleep are scaled to fit the first walk frame's
+#    final visible size so the larva keeps a consistent visual body size.
 #    Change LARVA_SIZE_SCALE to resize all larva frames.
 # 4. Run:
 #      python3 spareAsset/scripts/generate_hercules_larva_sprites.py
@@ -204,12 +204,12 @@ def make_frames():
             walk_scale = max(idle_visible_w / first_walk_crop.width,
                              idle_visible_h / first_walk_crop.height)
 
-        sleep_max_w = max(crop.width for _, _, _, _, crop in sleep_crops)
-        sleep_max_h = max(crop.height for _, _, _, _, crop in sleep_crops)
-        sleep_scale = min(LARVA_MAX_W / sleep_max_w, LARVA_MAX_H / sleep_max_h)
-
         first_walk_visible_w = first_walk_crop.width * walk_scale
         first_walk_visible_h = first_walk_crop.height * walk_scale
+        sleep_max_w = max(crop.width for _, _, _, _, crop in sleep_crops)
+        sleep_max_h = max(crop.height for _, _, _, _, crop in sleep_crops)
+        sleep_scale = min(first_walk_visible_w / sleep_max_w,
+                          first_walk_visible_h / sleep_max_h)
         eat_max_w = max(crop.width for _, _, _, _, crop in eat_crops)
         eat_max_h = max(crop.height for _, _, _, _, crop in eat_crops)
         eat_scale = min(first_walk_visible_w / eat_max_w,

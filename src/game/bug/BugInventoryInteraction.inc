@@ -429,5 +429,3 @@ void Bug::resetAfterDeath(uint64_t now) {
     initNew(now);
     generation = prevGen + 1;
 }
-
-void Bug::release(uint64_t now) {

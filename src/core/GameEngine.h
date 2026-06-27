@@ -135,6 +135,7 @@ public:
         gameSpeed = next;
         return true;
     }
+    static bool prepareJuvenileStarterTray(Bug& targetBug, uint8_t selectedBowlStyle);
     void saveSettingsSnapshot() {
         SaveManager::ins().saveSettings(
             PixelRenderer::getContentFontScale(),
@@ -186,6 +187,8 @@ public:
     uint8_t getMainSceneBg() const { return mainSceneBg; }
     void setMainSceneBg(uint8_t id);
     void cycleMainSceneBg();
+    bool isMainSceneBgUnlocked(uint8_t id) const;
+    bool unlockMainSceneBg(uint8_t id);
     const char* getMainSceneBgName() const;
 
     uint8_t getWoodStyle() const { return woodStyle; }
@@ -202,6 +205,8 @@ public:
     uint8_t getFoodStyle() const { return foodStyle; }
     void setFoodStyle(uint8_t id);
     void cycleFoodStyle();
+    bool isFoodUnlocked(FoodType type) const;
+    bool unlockFood(FoodType type);
     const char* getFoodStyleName() const;
 
     enum ToyStyle : uint8_t {
@@ -209,9 +214,33 @@ public:
         TOY_BALL = 1,
         TOY_COUNT = 2,
     };
+    static constexpr uint8_t TOY_BALL_MAX_DURABILITY = 8;
     uint8_t getToyStyle() const { return toyStyle; }
     void setToyStyle(uint8_t id);
+    bool isToyStyleUnlocked(uint8_t id) const;
+    uint8_t getToyBallCount() const { return progression.toyBallCount; }
+    uint8_t getActiveToyBallDurability() const { return progression.activeToyBallDurability; }
+    void addToyBall(uint8_t amount);
+    bool equipToyBall();
+    bool damageActiveToyBall();
+    void clearActiveToyBall();
     const char* getToyStyleName() const;
+
+    enum ProgressFeature : uint32_t {
+        FEATURE_CUP_UNLOCKED = 1UL << 0,
+        FEATURE_TOY_BALL_UNLOCKED = 1UL << 1,
+        FEATURE_BG_LAB_UNLOCKED = 1UL << 2,
+        FEATURE_BG_SCHOOL_UNLOCKED = 1UL << 3,
+        FEATURE_BOWL_ALL_UNLOCKED = 1UL << 4,
+    };
+    bool isFeatureUnlocked(ProgressFeature feature) const {
+        return (progression.featureFlags & (uint32_t)feature) != 0;
+    }
+    bool unlockFeature(ProgressFeature feature);
+    void unlockAllProgression();
+    uint8_t getItemCount(ItemId id) const;
+    bool addItem(ItemId id, uint8_t amount);
+    bool removeItem(ItemId id, uint8_t amount);
 
     enum ExploreLocation : uint8_t {
         EXPLORE_PARK = 0,
@@ -465,6 +494,7 @@ private:
     float fontScale = 1.5f;
 
     uint8_t brightness = 128;
+    ProgressionState progression;
     uint8_t mainSceneBg = BG_MOSS;
     uint8_t woodStyle = 0;
     uint8_t bowlStyle = 0;
@@ -479,6 +509,9 @@ private:
     ItemStack pendingGiftItem;
     VisitBugSnapshot pendingVisitBug;
     VisitSession visitSession;
+
+    void updateBugWithStageDefaults(uint64_t now);
+    void applyStageTransitionDefaults(Stage prevStage, Stage nextStage);
 
     void applyVisitRewards() {
         uint8_t eatCount = visitSession.localEatCount;
@@ -584,6 +617,8 @@ private:
     bool handleGlobalButtonEvent(const ButtonEvent& ev);
     void processIMU();
     void checkCupCycle();
+    void ensureDefaultProgression();
+    void saveProgression();
     uint8_t naturalExploreTimeOfDay() const;
     void saveExploreGlobal();
     uint32_t targetFrameTime() const;

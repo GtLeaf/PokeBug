@@ -212,14 +212,15 @@ void MenuScene::drawFoodLayout() {
         bool isFood = !isVisibleFoodBackIndex(i);
         FoodType ft = isFood ? visibleFoodAt(i) : FoodType::DROP;
         uint8_t count = isFood ? bug.getFoodCount(ft) : 1;
+        bool unlocked = !isFood || giftMode || GameEngine::ins().isFoodUnlocked(ft);
         bool hasStock = (count > 0);
 
-        // 无库存的食物显示为灰色；选中时统一高亮为黄色，但无库存的黄色更灰一些
+        // 未解锁或无库存的食物显示为灰色；选中时统一高亮为黄色，但不可用项的黄色更灰一些
         uint16_t color;
         if (isSelected) {
-            color = hasStock ? PixelRenderer::YELLOW : PixelRenderer::rgb565(180, 180, 0);
+            color = (unlocked && hasStock) ? PixelRenderer::YELLOW : PixelRenderer::rgb565(180, 180, 0);
         } else {
-            color = hasStock ? PixelRenderer::WHITE : PixelRenderer::GRAY;
+            color = (unlocked && hasStock) ? PixelRenderer::WHITE : PixelRenderer::GRAY;
         }
 
         const char* label;
@@ -234,7 +235,7 @@ void MenuScene::drawFoodLayout() {
         // 全局食物标记：在当前设置的食物名字前面绘制一个青色小菱形
         // 无库存的食物不能挂上菱形标记，也不能被选作全局食物
         int globalFood = GameEngine::ins().getFoodStyle();
-        if (!giftMode && isFood && (uint8_t)ft == globalFood && hasStock) {
+        if (!giftMode && isFood && (uint8_t)ft == globalFood && unlocked && hasStock) {
             int cx = TEXT_X - 8;
             int cy = textY + (int)(4 * fs);
             uint16_t diamondColor = PixelRenderer::CYAN;
@@ -253,6 +254,7 @@ void MenuScene::drawFoodLayout() {
     if (selected >= 0 && selected < listCount && !isVisibleFoodBackIndex(selected)) {
         FoodType ft = visibleFoodAt(selected);
         int idx = (int)ft;
+        bool unlocked = giftMode || GameEngine::ins().isFoodUnlocked(ft);
 
         // 菜单预览保持独立视觉大小，不跟随主界面食物资源放大。
         uint16_t foodOffset = pgm_read_word(&FoodAssets::SPRITE_FRAMES[idx].offset);
@@ -265,7 +267,11 @@ void MenuScene::drawFoodLayout() {
         const char* name = FoodTypeInfo::name(ft);
         uint8_t count = bug.getFoodCount(ft);
         char storageBuf[16];
-        snprintf(storageBuf, sizeof(storageBuf), UiStrings::COUNT_X_FMT, count);
+        if (!unlocked) {
+            snprintf(storageBuf, sizeof(storageBuf), "%s", UiStrings::LOCKED);
+        } else {
+            snprintf(storageBuf, sizeof(storageBuf), UiStrings::COUNT_X_FMT, count);
+        }
 
         PixelRenderer::applyTextStyle(fs);
         int nameW = canvas.textWidth(name);
@@ -288,7 +294,7 @@ void MenuScene::drawFoodLayout() {
         // 名字在右上，库存在右下
         PixelRenderer::drawPixelText(textX, nameY, name, PixelRenderer::WHITE, fs);
         PixelRenderer::drawPixelText(textX, storageY, storageBuf,
-                                     count > 0 ? PixelRenderer::CREAM : PixelRenderer::GRAY, fs);
+                                     (unlocked && count > 0) ? PixelRenderer::CREAM : PixelRenderer::GRAY, fs);
 
         // 描述：放在容器下方，严格限制在右侧面板内
         int descX = RIGHT_X + 2;
@@ -300,7 +306,7 @@ void MenuScene::drawFoodLayout() {
             FoodTypeInfo::descLine3(ft),
         };
         drawScrollableDescription(descLines, 3, descX, descY, descW,
-                                  PixelRenderer::CREAM, fs, 0x100 + idx);
+                                  unlocked ? PixelRenderer::CREAM : PixelRenderer::GRAY, fs, 0x100 + idx);
     } else if (selected == listCount - 1) {
         // Back 选中时的右侧提示
         PixelRenderer::drawPixelText(RIGHT_X + 20, 80,
